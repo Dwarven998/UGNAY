@@ -1,10 +1,12 @@
 // features/media/pages/MediaRepository.tsx
 import { useState, useEffect, useRef } from 'react';
 import type { ChangeEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { mediaApi } from '../api/mediaApi.ts';
 import type { MediaFolder, MediaAsset } from '../../../types';
 
 export default function MediaRepository() {
+  const navigate = useNavigate();
   const [folders, setFolders] = useState<MediaFolder[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<MediaFolder | null>(null);
   const [assets, setAssets] = useState<MediaAsset[]>([]);
@@ -118,7 +120,10 @@ export default function MediaRepository() {
                       className="w-full h-36 object-cover" />
                   ) : (
                     <video src={asset.fileUrl}
-                      className="w-full h-36 object-cover" />
+                      className="w-full h-36 object-cover"
+                      aria-label={asset.fileName}>
+                      <track kind="captions" label="Preview captions" srcLang="en" src="" />
+                    </video>
                   )}
                   <div className="p-2">
                     <p className="text-xs text-gray-600 truncate">{asset.fileName}</p>
@@ -129,6 +134,12 @@ export default function MediaRepository() {
                     className="absolute top-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition"
                   >
                     Copy URL
+                  </button>
+                  <button
+                    onClick={() => navigate(`/caption/select-tone?imageUrl=${encodeURIComponent(asset.fileUrl)}`)}
+                    className="absolute bottom-2 right-2 bg-blue-600 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition"
+                  >
+                    Use in Caption Studio
                   </button>
                 </div>
               ))}

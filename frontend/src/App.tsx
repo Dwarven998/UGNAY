@@ -7,9 +7,10 @@ import RegistrationForm from './features/registrationform/pages/RegistrationForm
 import PostManager from './features/posts/pages/PostManager.tsx';
 import MediaRepository from './features/media/pages/MediaRepository.tsx';
 import CaptionStudio from './features/caption/pages/CaptionStudio.tsx';
+import CaptionToneSelection from './features/caption/pages/CaptionToneSelection.tsx';
 import Analytics from './features/analytics/pages/Analytics.tsx';
 
-function ProtectedRoute({ children }: { children: ReactNode }) {
+function ProtectedRoute({ children }: Readonly<{ children: ReactNode }>) {
   const { user, isLoading } = useAuth();
   if (isLoading) return <div className="flex h-screen items-center justify-center">Loading...</div>;
   return user ? <>{children}</> : <Navigate to="/login" replace />;
@@ -27,6 +28,7 @@ export default function App() {
             <Route path="posts" element={<PostManager />} />
             <Route path="media" element={<MediaRepository />} />
             <Route path="caption" element={<CaptionStudio />} />
+            <Route path="caption/select-tone" element={<CaptionToneSelection />} />
             <Route path="analytics" element={<Analytics />} />
           </Route>
         </Routes>
