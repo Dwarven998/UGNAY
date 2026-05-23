@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import Dashboard from './features/pages/Dashboard.tsx';
+import Dashboard from './features/dashboard/UnifiedManagementDashboard.tsx';
 import LoginForm from './features/loginform/pages/LoginForm.tsx';
 import RegistrationForm from './features/registrationform/pages/RegistrationForm.tsx';
 import PostManager from './features/posts/pages/PostManager.tsx';
