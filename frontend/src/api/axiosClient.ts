@@ -13,6 +13,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse
     window.location.href = '/login';
     throw new Error('Unauthorized');
   }
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => null);
+    const errorMessage = errorData?.message || errorData?.error || `Request failed with status ${res.status}`;
+    throw new Error(errorMessage);
+  }
+
   const data = res.status === 204 ? null : await res.json();
   return { data } as ApiResponse<T>;
 }

@@ -41,8 +41,8 @@ export default function CaptionToneSelection() {
       setCaptions(result);
       setSelectedCaption('');
       setHashtags([]);
-    } catch {
-      alert('Caption generation failed. Check your Gemini API key.');
+    } catch (err: any) {
+      alert(err.message || 'Caption generation failed. Check your Gemini API key.');
     } finally {
       setIsGenerating(false);
     }
@@ -55,6 +55,8 @@ export default function CaptionToneSelection() {
     try {
       const rewritten = await captionApi.rewrite(selectedCaption, tone);
       setSelectedCaption(rewritten);
+    } catch (err: any) {
+      alert(err.message || 'Failed to rewrite caption.');
     } finally {
       setIsRewriting(false);
     }
@@ -62,8 +64,12 @@ export default function CaptionToneSelection() {
 
   const handleHashtags = async () => {
     if (!selectedCaption) return;
-    const tags = await captionApi.hashtags(selectedCaption);
-    setHashtags(tags);
+    try {
+      const tags = await captionApi.hashtags(selectedCaption);
+      setHashtags(tags);
+    } catch (err: any) {
+      alert(err.message || 'Failed to generate hashtags.');
+    }
   };
 
   const handleSendToScheduler = () => {

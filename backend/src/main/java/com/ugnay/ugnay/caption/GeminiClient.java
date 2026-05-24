@@ -34,6 +34,14 @@ public class GeminiClient {
             .uri(apiUrl + "?key=" + apiKey)
             .bodyValue(requestBody)
             .retrieve()
+            .onStatus(
+                status -> status.isError(),
+                clientResponse -> clientResponse.bodyToMono(String.class)
+                    .map(body -> {
+                        System.out.println("🔥 GEMINI ERROR: " + clientResponse.statusCode() + " - " + body);
+                        return new RuntimeException("Gemini API Error (check API key and quota): " + body);
+                    })
+            )
             .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
             .block();
 
@@ -68,6 +76,14 @@ public class GeminiClient {
             .uri(apiUrl + "?key=" + apiKey)
             .bodyValue(requestBody)
             .retrieve()
+            .onStatus(
+                status -> status.isError(),
+                clientResponse -> clientResponse.bodyToMono(String.class)
+                    .map(body -> {
+                        System.out.println("🔥 GEMINI ERROR: " + clientResponse.statusCode() + " - " + body);
+                        return new RuntimeException("Gemini API Error (check API key and quota): " + body);
+                    })
+            )
             .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
             .block();
 
@@ -96,13 +112,20 @@ public class GeminiClient {
             "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt))))
         );
 
-        Map<String, Object> response = webClient.post()
-            .uri(apiUrl + "?key=" + apiKey)
-            .bodyValue(requestBody)
-            .retrieve()
-            .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
-            .block();
-
+       Map<String, Object> response = webClient.post()
+    .uri(apiUrl + "?key=" + apiKey)
+    .bodyValue(requestBody)
+    .retrieve()
+    .onStatus(
+        status -> status.isError(),
+        clientResponse -> clientResponse.bodyToMono(String.class)
+            .map(body -> {
+                System.out.println("🔥 GEMINI ERROR RESPONSE: " + body);
+                return new RuntimeException("Gemini API Error: " + body);
+            })
+    )
+    .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+    .block();
         String raw = extractText(response).trim();
         // Parse JSON array
         try {
@@ -140,6 +163,30 @@ public class GeminiClient {
         );
     }
 
+    private byte[] downloadImageBytes(String imageUrl) {
+        try {
+            return webClient.get()
+                .uri(imageUrl)
+                .retrieve()
+                .bodyToMono(byte[].class)
+                .block();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to download image from URL: " + imageUrl, e);
+        }
+    }
+
+    private String getMimeType(String imageUrl) {
+        String lower = imageUrl.toLowerCase();
+        if (lower.endsWith(".png")) {
+            return "image/png";
+        } else if (lower.endsWith(".webp")) {
+            return "image/webp";
+        } else if (lower.endsWith(".gif")) {
+            return "image/gif";
+        }
+        return "image/jpeg";
+    }
+
     private Map<String, Object> buildGeminiRequest(String imageUrl, String prompt) {
         // Gemini multimodal: image URL + text prompt
         List<Map<String, Object>> parts = new ArrayList<>();
@@ -151,6 +198,14 @@ public class GeminiClient {
             parts.add(Map.of("inline_data", Map.of(
                 "mime_type", mimeType,
                 "data", splits[1]
+            )));
+        } else if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) {
+            byte[] imageBytes = downloadImageBytes(imageUrl);
+            String base64Image = Base64.getEncoder().encodeToString(imageBytes);
+            String mimeType = getMimeType(imageUrl);
+            parts.add(Map.of("inline_data", Map.of(
+                "mime_type", mimeType,
+                "data", base64Image
             )));
         } else {
             parts.add(Map.of("file_data", Map.of(
