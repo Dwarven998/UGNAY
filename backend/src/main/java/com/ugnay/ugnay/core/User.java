@@ -37,4 +37,38 @@ public class User {
     public enum TonePreference {
         FORMAL, ENERGETIC, CELEBRATORY, URGENT
     }
+
+    @Column(name = "fb_page_name")
+    private String fbPageName;
+
+    @Column(name = "fb_page_avatar")
+    private String fbPageAvatar;
+
+    @Column(name = "fb_user_id")
+    private String fbUserId;
+
+    // Add getters and setters
+    public String getFbPageName() {
+        return fbPageName;
+    }
+
+    public void setFbPageName(String fbPageName) {
+        this.fbPageName = fbPageName;
+    }
+
+    public String getFbPageAvatar() {
+        return fbPageAvatar;
+    }
+
+    public void setFbPageAvatar(String fbPageAvatar) {
+        this.fbPageAvatar = fbPageAvatar;
+    }
+
+    public String getFbUserId() {
+        return fbUserId;
+    }
+
+    public void setFbUserId(String fbUserId) {
+        this.fbUserId = fbUserId;
+    }
 }

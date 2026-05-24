@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { to: '/caption',  icon: '✨', label: 'Caption Studio'      },
   { to: '/media',    icon: '🗂️', label: 'Media Repository'   },
   { to: '/analytics',icon: '📊', label: 'Analytics'          },
+  { to: '/settings', icon: '⚙️', label: 'Settings'          }
 ];
 
 export default function Dashboard() {

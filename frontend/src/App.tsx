@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Dashboard from './features/dashboard/UnifiedManagementDashboard.tsx';
 import LoginForm from './features/loginform/pages/LoginForm.tsx';
 import RegistrationForm from './features/registrationform/pages/RegistrationForm.tsx';
+import SettingsPage from './features/settings/pages/SettingsPage';
 import PostManager from './features/posts/pages/PostManager.tsx';
 import MediaRepository from './features/media/pages/MediaRepository.tsx';
 import CaptionStudio from './features/caption/pages/CaptionStudio.tsx';
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/register" element={<RegistrationForm />} />
           <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>}>
             <Route index element={<Navigate to="/posts" replace />} />
+            <Route path="settings" element={<SettingsPage />} />
             <Route path="posts" element={<PostManager />} />
             <Route path="media" element={<MediaRepository />} />
             <Route path="caption" element={<CaptionStudio />} />
