@@ -29,10 +29,10 @@ public class CaptionController {
     }
 
     @PostMapping("/rewrite")
-    public ResponseEntity<String> rewrite(@AuthenticationPrincipal User user,
-                                           @RequestBody RewriteRequest req) {
+    public ResponseEntity<Map<String, String>> rewrite(@AuthenticationPrincipal User user,
+                                                    @RequestBody RewriteRequest req) {
         String rewritten = geminiClient.rewriteWithTone(req.caption(), req.tone(), user.getOrgName());
-        return ResponseEntity.ok(rewritten);
+        return ResponseEntity.ok(Map.of("rewritten", rewritten));
     }
 
     @PostMapping("/hashtags")
