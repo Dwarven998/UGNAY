@@ -1,15 +1,59 @@
-// features/posts/pages/PostManager.tsx
-import { useState, useEffect } from 'react';
-import { postApi } from '../api/postApi.ts';
-import type { Post } from '../../../types';
+import { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+
+import { ApiError } from '../../../api/axiosClient';
+import { useAuth } from '../../../context/AuthContext';
+import type { Post, PostConflict } from '../../../types';
+import { postApi, type PostUpsertPayload } from '../api/postApi';
+import FacebookPageConnectButton from '../components/FacebookPageConnectButton';
+import PostEditorModal, { type PostEditorDraft } from '../components/PostEditorModal';
+import PostSchedulerCalendar from '../components/PostSchedulerCalendar';
+
+type EditorState = {
+  mode: 'create' | 'edit';
+  post?: Post | null;
+  draft?: Partial<PostEditorDraft> | null;
+};
+
+function parseCaptionDraftFromSession(): Partial<PostEditorDraft> | null {
+  const saved = sessionStorage.getItem('caption_draft');
+  if (!saved) {
+    return null;
+  }
+
+  sessionStorage.removeItem('caption_draft');
+  try {
+    const data = JSON.parse(saved) as { caption?: string; hashtags?: string[]; tone?: string };
+    return {
+      caption: data.caption ?? '',
+      hashtags: data.hashtags ?? [],
+      tone: data.tone ?? 'FORMAL',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getDefaultDraft(date?: Date | null, initial?: Partial<PostEditorDraft> | null): Partial<PostEditorDraft> {
+  return {
+    caption: initial?.caption ?? '',
+    hashtags: initial?.hashtags ?? [],
+    tone: initial?.tone ?? 'FORMAL',
+    mediaAssetId: initial?.mediaAssetId ?? '',
+    scheduledAt: date ? date.toISOString() : initial?.scheduledAt,
+  };
+}
 
 export default function PostManager() {
+  const { user, refreshUserProfile } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [posts, setPosts] = useState<Post[]>([]);
-  const [showForm, setShowForm] = useState(false);
-  const [draft, setDraft] = useState({
-    caption: '', hashtags: [] as string[], tone: 'FORMAL',
-    scheduledAt: '', mediaAssetId: '',
-  });
+  const [editor, setEditor] = useState<EditorState | null>(null);
+  const [conflict, setConflict] = useState<PostConflict | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
+  const [error, setError] = useState('');
 
   const loadPosts = async () => {
     const data = await postApi.getAll();
@@ -18,638 +62,648 @@ export default function PostManager() {
 
   useEffect(() => {
     loadPosts();
-    // Check if caption studio sent a draft
-    const saved = sessionStorage.getItem('caption_draft');
-    if (saved) {
-      const data = JSON.parse(saved);
-      queueMicrotask(() => setDraft(d => ({
-        ...d,
-        caption: data.caption,
-        hashtags: data.hashtags || [],
-        tone: data.tone,
-      })));
-      sessionStorage.removeItem('caption_draft');
-      setShowForm(true);
+
+    const initialDraft = parseCaptionDraftFromSession();
+    if (initialDraft) {
+      setEditor({ mode: 'create', draft: initialDraft });
     }
   }, []);
 
-  const handleCreate = async () => {
-    await postApi.create({
-      ...draft,
-      hashtags: draft.hashtags,
+  useEffect(() => {
+    const facebookState = searchParams.get('facebook');
+    if (!facebookState) {
+      return;
+    }
+
+    const message = searchParams.get('message');
+    void refreshUserProfile();
+    if (facebookState === 'failed') {
+      setError(message || 'Facebook connection failed.');
+    } else {
+      setError('');
+    }
+
+    navigate('/posts', { replace: true });
+  }, [navigate, refreshUserProfile, searchParams]);
+
+  const openCreate = (date?: Date) => {
+    if (!user?.facebookConnected) {
+      setError('Connect your Facebook Page to enable post scheduling.');
+      return;
+    }
+    setConflict(null);
+    setError('');
+    setEditor({ mode: 'create', draft: getDefaultDraft(date) });
+  };
+
+  const openEdit = (post: Post) => {
+    setConflict(null);
+    setError('');
+    setEditor({
+      mode: 'edit',
+      post,
+      draft: getDefaultDraft(post.scheduledAt ? new Date(post.scheduledAt) : null, {
+        caption: post.caption,
+        hashtags: post.hashtags,
+        tone: post.tone,
+      }),
     });
-    setShowForm(false);
-    loadPosts();
+  };
+
+  const closeEditor = () => {
+    setEditor(null);
+    setConflict(null);
+    setError('');
+  };
+
+  const saveDraft = async (draft: PostEditorDraft) => {
+    const payload: PostUpsertPayload = {
+      caption: draft.caption,
+      hashtags: draft.hashtags,
+      tone: draft.tone,
+      mediaAssetId: draft.mediaAssetId || undefined,
+      scheduledAt: draft.scheduledAt || undefined,
+    };
+
+    try {
+      setLoading(true);
+      setError('');
+      if (editor?.mode === 'edit' && editor.post) {
+        await postApi.update(editor.post.id, payload);
+      } else {
+        await postApi.create(payload);
+      }
+      await loadPosts();
+      closeEditor();
+    } catch (caughtError) {
+      if (caughtError instanceof ApiError && caughtError.status === 409) {
+        setConflict(caughtError.data as PostConflict);
+        return;
+      }
+      if (caughtError instanceof ApiError && caughtError.status === 428) {
+        setError(caughtError.message);
+        return;
+      }
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save post');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleDelete = async (id: string) => {
     await postApi.delete(id);
-    setPosts(prev => prev.filter(p => p.id !== id));
+    setPosts(current => current.filter(post => post.id !== id));
   };
 
-  const handlePublishNow = async (id: string) => {
-    const updated = await postApi.publish(id);
-    setPosts(prev => prev.map(p => p.id === id ? updated : p));
+  const handlePublish = async (post: Post) => {
+    try {
+      setPublishingPostId(post.id);
+      setError('');
+      await postApi.publish(post.id);
+      await loadPosts();
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to publish post');
+    } finally {
+      setPublishingPostId(null);
+    }
   };
-
-  const statusConfig = (s: Post['status']) => ({
-    DRAFT:     { dot: '#94a3b8', bg: 'rgba(148,163,184,0.08)', text: '#64748b', border: 'rgba(148,163,184,0.15)', label: 'Draft' },
-    SCHEDULED: { dot: '#3b82f6', bg: 'rgba(59,130,246,0.06)',  text: '#2563eb', border: 'rgba(59,130,246,0.15)',  label: 'Scheduled' },
-    PUBLISHED: { dot: '#059669', bg: 'rgba(5,150,105,0.06)',   text: '#059669', border: 'rgba(5,150,105,0.15)',   label: 'Published' },
-    FAILED:    { dot: '#dc2626', bg: 'rgba(220,38,38,0.06)',   text: '#dc2626', border: 'rgba(220,38,38,0.15)',   label: 'Failed' },
-  }[s]);
 
   return (
-    <>
-      <div className="pm-container">
-        {/* Header */}
-        <div className="pm-header" style={{ animationDelay: '0s' }}>
-          <div>
-            <div className="pm-breadcrumb">
-              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
-              </svg>
-              <span>Post Manager</span>
-            </div>
-            <h1 className="pm-title">Manage Posts</h1>
-            <p className="pm-subtitle">Create, schedule, and publish your organization&apos;s content.</p>
-          </div>
-          {!showForm && (
-            <button onClick={() => setShowForm(true)} className="pm-btn-new">
-              <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              New Post
-            </button>
+    <div className="upe-page">
+      <div className="upe-hero">
+        <div>
+          <div className="upe-section-kicker">Post Scheduler</div>
+          <h1>Automated Facebook Publishing</h1>
+          <p>Schedule posts, resolve time conflicts before saving, and let the backend publish them exactly at the chosen time.</p>
+          {!user?.facebookConnected && (
+            <div className="upe-connection-notice">Connect your Facebook Page to enable post scheduling.</div>
           )}
         </div>
 
-        {/* Post create form */}
-        {showForm && (
-          <div className="pm-form-card" style={{ animation: 'fadeUp 0.4s cubic-bezier(0.16,1,0.3,1)' }}>
-            <div className="pm-form-header">
-              <div className="pm-form-header-left">
-                <div className="pm-form-header-icon">
-                  <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                </div>
-                <h2 className="pm-form-title">Compose Post</h2>
-              </div>
-              <button onClick={() => setShowForm(false)} className="pm-form-close">
-                <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="pm-form-body">
-              <div className="pm-field">
-                <label className="pm-label">
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" />
-                  </svg>
-                  Caption
-                </label>
-                <textarea
-                  value={draft.caption}
-                  onChange={e => setDraft(d => ({ ...d, caption: e.target.value }))}
-                  placeholder="Write your post caption..."
-                  rows={5}
-                  className="pm-textarea"
-                />
-              </div>
-
-              <div className="pm-fields-grid">
-                <div className="pm-field">
-                  <label className="pm-label">
-                    <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
-                    </svg>
-                    Hashtags
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. event update announcement"
-                    value={draft.hashtags.join(' ')}
-                    onChange={e => setDraft(d => ({ ...d, hashtags: e.target.value.split(' ').filter(Boolean) }))}
-                    className="pm-input"
-                  />
-                  <p className="pm-hint">Separate tags with a space</p>
-                </div>
-                <div className="pm-field">
-                  <label className="pm-label">
-                    <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
-                    Schedule Date &amp; Time
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={draft.scheduledAt}
-                    onChange={e => setDraft(d => ({ ...d, scheduledAt: e.target.value }))}
-                    className="pm-input"
-                  />
-                </div>
-              </div>
-
-              <div className="pm-form-actions">
-                <button onClick={() => setShowForm(false)} className="pm-btn-cancel">
-                  Cancel
-                </button>
-                <button onClick={handleCreate} className="pm-btn-save">
-                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                  Save Post
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Posts list */}
-        <div className="pm-posts-list">
-          {posts.map((post, i) => {
-            const sc = statusConfig(post.status);
-            return (
-              <div key={post.id} className="pm-post-card" style={{ animationDelay: `${i * 0.06}s` }}>
-                {/* Status bar on left */}
-                <div className="pm-post-status-bar" style={{ background: sc.dot }}></div>
-
-                <div className="pm-post-inner">
-                  {post.mediaUrl && (
-                    <div className="pm-post-media">
-                      <img src={post.mediaUrl} alt="" />
-                    </div>
-                  )}
-                  <div className="pm-post-content">
-                    <div className="pm-post-meta">
-                      <span className="pm-post-badge" style={{
-                        background: sc.bg,
-                        color: sc.text,
-                        borderColor: sc.border,
-                      }}>
-                        <span className="pm-badge-dot" style={{ background: sc.dot }}></span>
-                        {sc.label}
-                      </span>
-                      {post.scheduledAt && (
-                        <span className="pm-post-date">
-                          <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                          {new Date(post.scheduledAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
-                        </span>
-                      )}
-                    </div>
-                    <p className="pm-post-caption">{post.caption}</p>
-                    {post.hashtags?.length > 0 && (
-                      <div className="pm-post-tags">
-                        {post.hashtags.map((tag, idx) => (
-                          <span key={idx} className="pm-tag">#{tag}</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="pm-post-actions">
-                    {post.status !== 'PUBLISHED' && (
-                      <button onClick={() => handlePublishNow(post.id)} className="pm-btn-publish">
-                        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 3l14 9-14 9V3z" />
-                        </svg>
-                        Publish
-                      </button>
-                    )}
-                    <button onClick={() => handleDelete(post.id)} className="pm-btn-delete">
-                      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          {posts.length === 0 && !showForm && (
-            <div className="pm-empty">
-              <div className="pm-empty-icon">
-                <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
-                </svg>
-              </div>
-              <h3 className="pm-empty-title">No posts planned yet</h3>
-              <p className="pm-empty-text">Create your first post or send one from the Caption Studio.</p>
-              <button onClick={() => setShowForm(true)} className="pm-btn-empty-cta">
-                <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                Create First Post
-              </button>
-            </div>
-          )}
+        <div className="upe-hero-actions">
+          <FacebookPageConnectButton />
+          <button type="button" className="upe-primary-cta" onClick={() => openCreate()} disabled={!user?.facebookConnected}>
+            New Post
+          </button>
         </div>
       </div>
 
+      {error && <div className="upe-error-banner">{error}</div>}
+
+      <div className="upe-layout">
+        <PostSchedulerCalendar posts={posts} onDateClick={openCreate} onEventClick={openEdit} />
+
+        <div className="upe-sidebar-card">
+          <div className="upe-section-kicker">Queue</div>
+          <h3>Upcoming Posts</h3>
+          <div className="upe-queue-list">
+            {posts.slice(0, 6).map(post => (
+              <article key={post.id} className="upe-queue-item">
+                <div className={`upe-status-dot is-${post.status.toLowerCase()}`} />
+                <div className="upe-queue-copy">
+                  <strong>{post.caption}</strong>
+                  <span>{post.status}</span>
+                  {post.scheduledAt && <time>{new Date(post.scheduledAt).toLocaleString()}</time>}
+                </div>
+                <button type="button" className="upe-publish-btn" onClick={() => handlePublish(post)} disabled={publishingPostId === post.id || post.status === 'PUBLISHED'}>
+                  {publishingPostId === post.id ? 'Publishing...' : 'Publish'}
+                </button>
+                <button type="button" onClick={() => openEdit(post)}>Edit</button>
+                <button type="button" className="is-danger" onClick={() => handleDelete(post.id)}>Delete</button>
+              </article>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <PostEditorModal
+        open={Boolean(editor)}
+        initialPost={editor?.post ?? null}
+        initialDraft={editor?.draft ?? null}
+        conflict={conflict}
+        onClose={closeEditor}
+        onSubmit={saveDraft}
+        onClearConflict={() => setConflict(null)}
+      />
+
+      {loading && <div className="upe-loading-hint">Saving post...</div>}
+
       <style>{`
-        .pm-container {
-          padding: 36px 40px 48px;
-          max-width: 960px;
-          margin: 0 auto;
+        .upe-page {
+          padding: 32px;
+          background:
+            radial-gradient(circle at top left, rgba(59,130,246,0.18), transparent 28%),
+            radial-gradient(circle at top right, rgba(16,185,129,0.12), transparent 26%),
+            linear-gradient(180deg, #0f172a 0%, #111827 100%);
+          min-height: 100vh;
+          color: #e5eefc;
         }
 
-        /* Header */
-        .pm-header {
+        .upe-hero {
           display: flex;
-          align-items: flex-start;
           justify-content: space-between;
-          margin-bottom: 32px;
-          animation: fadeUp 0.5s cubic-bezier(0.16,1,0.3,1);
+          gap: 16px;
+          align-items: flex-end;
+          margin-bottom: 24px;
         }
-        .pm-breadcrumb {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          color: #0C447C;
-          font-size: 12px;
-          font-weight: 600;
+
+        .upe-section-kicker {
           text-transform: uppercase;
-          letter-spacing: 0.06em;
-          margin-bottom: 8px;
-        }
-        .pm-title {
-          font-size: 28px;
-          font-weight: 800;
-          color: #0f172a;
-          letter-spacing: -0.03em;
-          margin: 0 0 6px;
-          line-height: 1.2;
-        }
-        .pm-subtitle {
-          font-size: 14px;
-          color: #64748b;
-          margin: 0;
-          font-weight: 400;
-        }
-        .pm-btn-new {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          padding: 10px 22px;
-          background: #0C447C;
-          color: #fff;
-          font-size: 13px;
-          font-weight: 600;
-          border: none;
-          border-radius: 12px;
-          cursor: pointer;
-          transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
-          box-shadow: 0 4px 14px rgba(12,68,124,0.2);
-          font-family: inherit;
-          flex-shrink: 0;
-        }
-        .pm-btn-new:hover {
-          background: #0a3867;
-          transform: translateY(-1px);
-          box-shadow: 0 6px 20px rgba(12,68,124,0.3);
+          letter-spacing: 0.16em;
+          font-size: 0.72rem;
+          color: #93c5fd;
+          margin-bottom: 10px;
         }
 
-        /* Form card */
-        .pm-form-card {
-          background: #ffffff;
-          border-radius: 20px;
-          border: 1px solid #e2e8f0;
-          box-shadow: 0 8px 32px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.02);
-          overflow: hidden;
-          margin-bottom: 32px;
-        }
-        .pm-form-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 20px 28px;
-          background: linear-gradient(135deg, rgba(12,68,124,0.03) 0%, rgba(59,130,246,0.03) 100%);
-          border-bottom: 1px solid #f1f5f9;
-        }
-        .pm-form-header-left {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-        .pm-form-header-icon {
-          width: 36px; height: 36px;
-          background: linear-gradient(135deg, #0C447C, #3b82f6);
-          border-radius: 10px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: white;
-        }
-        .pm-form-title {
-          font-size: 16px;
-          font-weight: 700;
-          color: #0f172a;
+        .upe-hero h1, .upe-calendar-header h3, .upe-sidebar-card h3, .upe-modal-header h2 {
           margin: 0;
         }
-        .pm-form-close {
-          width: 32px; height: 32px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border: none;
-          background: transparent;
-          color: #94a3b8;
-          cursor: pointer;
-          border-radius: 8px;
-          transition: all 0.15s;
-        }
-        .pm-form-close:hover { color: #0f172a; background: #f1f5f9; }
-        .pm-form-body { padding: 28px; }
-        .pm-field { margin-bottom: 20px; }
-        .pm-label {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          font-size: 12px;
-          font-weight: 600;
-          color: #475569;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-          margin-bottom: 8px;
-        }
-        .pm-textarea, .pm-input {
-          width: 100%;
-          border: 2px solid #e2e8f0;
-          border-radius: 12px;
-          padding: 12px 16px;
-          font-size: 14px;
-          color: #0f172a;
-          background: #ffffff;
-          font-family: inherit;
-          outline: none;
-          transition: all 0.2s ease;
-        }
-        .pm-textarea { resize: vertical; min-height: 120px; line-height: 1.6; }
-        .pm-input { height: 46px; }
-        .pm-textarea:focus, .pm-input:focus {
-          border-color: #3b82f6;
-          box-shadow: 0 0 0 4px rgba(59,130,246,0.1);
-        }
-        .pm-textarea::placeholder, .pm-input::placeholder { color: #94a3b8; }
-        .pm-hint {
-          font-size: 11px;
-          color: #94a3b8;
-          margin-top: 6px;
-        }
-        .pm-fields-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 20px;
-        }
-        .pm-form-actions {
-          display: flex;
-          gap: 12px;
-          justify-content: flex-end;
-          padding-top: 20px;
-          border-top: 1px solid #f1f5f9;
-          margin-top: 8px;
-        }
-        .pm-btn-cancel {
-          padding: 10px 20px;
-          border: none;
-          background: transparent;
-          color: #64748b;
-          font-size: 13px;
-          font-weight: 600;
-          border-radius: 10px;
-          cursor: pointer;
-          transition: all 0.15s;
-          font-family: inherit;
-        }
-        .pm-btn-cancel:hover { background: #f1f5f9; color: #334155; }
-        .pm-btn-save {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          padding: 10px 24px;
-          background: #0C447C;
-          color: #fff;
-          font-size: 13px;
-          font-weight: 600;
-          border: none;
-          border-radius: 10px;
-          cursor: pointer;
-          transition: all 0.2s;
-          box-shadow: 0 2px 8px rgba(12,68,124,0.2);
-          font-family: inherit;
-        }
-        .pm-btn-save:hover { background: #0a3867; box-shadow: 0 4px 14px rgba(12,68,124,0.25); }
 
-        /* Post cards */
-        .pm-posts-list {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
+        .upe-hero p {
+          max-width: 760px;
+          color: #cbd5e1;
+          line-height: 1.6;
         }
-        .pm-post-card {
-          background: #ffffff;
-          border-radius: 16px;
-          border: 1px solid #e2e8f0;
-          overflow: hidden;
-          transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
-          display: flex;
-          animation: fadeUp 0.4s cubic-bezier(0.16,1,0.3,1) backwards;
-        }
-        .pm-post-card:hover {
-          border-color: #cbd5e1;
-          box-shadow: 0 8px 24px rgba(0,0,0,0.06);
-          transform: translateY(-1px);
-        }
-        .pm-post-status-bar {
-          width: 4px;
-          flex-shrink: 0;
-          border-radius: 4px 0 0 4px;
-        }
-        .pm-post-inner {
-          flex: 1;
-          display: flex;
-          gap: 20px;
-          padding: 20px 24px;
-          align-items: flex-start;
-        }
-        .pm-post-media {
-          width: 80px; height: 80px;
-          border-radius: 12px;
-          overflow: hidden;
-          flex-shrink: 0;
-          border: 1px solid #f1f5f9;
-        }
-        .pm-post-media img {
-          width: 100%; height: 100%;
-          object-fit: cover;
-        }
-        .pm-post-content { flex: 1; min-width: 0; }
-        .pm-post-meta {
-          display: flex;
+
+        .upe-connection-notice {
+          margin-top: 14px;
+          display: inline-flex;
           align-items: center;
           gap: 10px;
-          margin-bottom: 10px;
-          flex-wrap: wrap;
-        }
-        .pm-post-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          font-size: 11px;
-          font-weight: 600;
-          padding: 4px 10px;
-          border-radius: 20px;
-          border: 1px solid;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-        }
-        .pm-badge-dot {
-          width: 6px; height: 6px;
-          border-radius: 50%;
-          flex-shrink: 0;
-        }
-        .pm-post-date {
-          display: inline-flex;
-          align-items: center;
-          gap: 5px;
-          font-size: 12px;
-          color: #64748b;
-          font-weight: 500;
-        }
-        .pm-post-caption {
-          font-size: 14px;
-          color: #334155;
-          line-height: 1.65;
-          margin: 0 0 10px;
-          display: -webkit-box;
-          -webkit-line-clamp: 3;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-          white-space: pre-wrap;
-        }
-        .pm-post-tags {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 6px;
-        }
-        .pm-tag {
-          font-size: 11px;
-          font-weight: 600;
-          color: #0C447C;
-          background: rgba(12,68,124,0.06);
-          padding: 3px 10px;
-          border-radius: 6px;
-        }
-        .pm-post-actions {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          flex-shrink: 0;
-        }
-        .pm-btn-publish {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 8px 16px;
-          background: #059669;
-          color: #fff;
-          font-size: 12px;
-          font-weight: 600;
-          border: none;
-          border-radius: 8px;
-          cursor: pointer;
-          transition: all 0.15s;
-          font-family: inherit;
-          white-space: nowrap;
-        }
-        .pm-btn-publish:hover { background: #047857; }
-        .pm-btn-delete {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 8px 16px;
-          background: transparent;
-          color: #94a3b8;
-          font-size: 12px;
-          font-weight: 600;
-          border: 1px solid #e2e8f0;
-          border-radius: 8px;
-          cursor: pointer;
-          transition: all 0.15s;
-          font-family: inherit;
-          white-space: nowrap;
-        }
-        .pm-btn-delete:hover {
-          color: #dc2626;
-          border-color: #fecaca;
-          background: rgba(220,38,38,0.04);
+          border-radius: 999px;
+          padding: 10px 14px;
+          background: rgba(245, 158, 11, 0.12);
+          color: #fde68a;
+          border: 1px solid rgba(245, 158, 11, 0.24);
         }
 
-        /* Empty state */
-        .pm-empty {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          padding: 64px 24px;
-          background: #ffffff;
-          border-radius: 20px;
-          border: 2px dashed #e2e8f0;
-          text-align: center;
-          animation: fadeUp 0.5s cubic-bezier(0.16,1,0.3,1);
+        .upe-hero-actions {
+          display: grid;
+          gap: 12px;
+          justify-items: end;
         }
-        .pm-empty-icon {
-          width: 72px; height: 72px;
-          background: linear-gradient(135deg, rgba(12,68,124,0.06), rgba(59,130,246,0.06));
-          border-radius: 20px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #94a3b8;
-          margin-bottom: 20px;
-        }
-        .pm-empty-title {
-          font-size: 18px;
+
+        .upe-primary-cta, .upe-primary-btn, .upe-secondary-btn, .upe-queue-item button, .upe-suggested-toggle {
+          border: 0;
+          border-radius: 999px;
+          padding: 12px 18px;
           font-weight: 700;
-          color: #0f172a;
-          margin: 0 0 8px;
+          cursor: pointer;
         }
-        .pm-empty-text {
-          font-size: 14px;
-          color: #64748b;
-          margin: 0 0 24px;
-          max-width: 320px;
+
+        .upe-primary-cta, .upe-primary-btn {
+          background: linear-gradient(135deg, #38bdf8, #2563eb);
+          color: white;
         }
-        .pm-btn-empty-cta {
+
+        .upe-primary-cta:disabled, .upe-primary-btn:disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
+        }
+
+        .upe-secondary-btn {
+          background: rgba(148,163,184,0.14);
+          color: #e2e8f0;
+        }
+
+        .upe-layout {
+          display: grid;
+          grid-template-columns: minmax(0, 1.8fr) minmax(280px, 0.85fr);
+          gap: 24px;
+        }
+
+        .upe-calendar-card, .upe-sidebar-card {
+          background: rgba(15, 23, 42, 0.82);
+          border: 1px solid rgba(148,163,184,0.16);
+          border-radius: 28px;
+          padding: 22px;
+          box-shadow: 0 24px 48px rgba(2, 6, 23, 0.32);
+        }
+
+        .upe-calendar-header {
+          display: flex;
+          justify-content: space-between;
+          gap: 16px;
+          align-items: center;
+          margin-bottom: 16px;
+        }
+
+        .upe-calendar-legend {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+        }
+
+        .upe-legend-item {
           display: inline-flex;
           align-items: center;
           gap: 8px;
-          padding: 10px 24px;
-          background: #0C447C;
-          color: #fff;
-          font-size: 13px;
-          font-weight: 600;
-          border: none;
-          border-radius: 10px;
-          cursor: pointer;
-          transition: all 0.2s;
-          box-shadow: 0 2px 8px rgba(12,68,124,0.2);
-          font-family: inherit;
+          color: #cbd5e1;
+          font-size: 0.86rem;
         }
-        .pm-btn-empty-cta:hover { background: #0a3867; }
 
-        @media (max-width: 768px) {
-          .pm-container { padding: 24px 20px; }
-          .pm-header { flex-direction: column; gap: 16px; }
-          .pm-fields-grid { grid-template-columns: 1fr; }
-          .pm-post-inner { flex-direction: column; }
-          .pm-post-actions { flex-direction: row; }
+        .upe-legend-item i {
+          width: 10px;
+          height: 10px;
+          border-radius: 999px;
+          display: inline-block;
+        }
+
+        .upe-fb-connection-card {
+          display: flex;
+          justify-content: space-between;
+          gap: 14px;
+          align-items: center;
+          border-radius: 20px;
+          padding: 14px 16px;
+          background: rgba(30, 41, 59, 0.72);
+          border: 1px solid rgba(148, 163, 184, 0.16);
+        }
+
+        .upe-fb-connection-meta {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .upe-fb-connection-meta img {
+          width: 42px;
+          height: 42px;
+          border-radius: 50%;
+          object-fit: cover;
+        }
+
+        .upe-fb-connection-avatar {
+          width: 42px;
+          height: 42px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #2563eb, #38bdf8);
+          display: grid;
+          place-items: center;
+          font-weight: 800;
+          color: white;
+        }
+
+        .upe-fb-connection-label {
+          font-size: 0.72rem;
+          text-transform: uppercase;
+          letter-spacing: 0.14em;
+          color: #93c5fd;
+          margin-bottom: 4px;
+        }
+
+        .upe-error-banner, .upe-loading-hint {
+          margin-bottom: 16px;
+          border-radius: 16px;
+          padding: 14px 16px;
+          background: rgba(220,38,38,0.12);
+          color: #fecaca;
+          border: 1px solid rgba(248,113,113,0.24);
+        }
+
+        .upe-queue-list {
+          display: grid;
+          gap: 12px;
+          margin-top: 16px;
+        }
+
+        .upe-queue-item {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+          gap: 12px;
+          align-items: center;
+          padding: 14px;
+          background: rgba(30,41,59,0.72);
+          border: 1px solid rgba(148,163,184,0.14);
+          border-radius: 18px;
+        }
+
+        .upe-queue-copy {
+          min-width: 0;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .upe-queue-copy strong,
+        .upe-queue-copy span,
+        .upe-queue-copy time {
+          display: inline;
+        }
+
+        .upe-queue-copy strong {
+          color: #f8fafc;
+        }
+
+        .upe-queue-copy span,
+        .upe-queue-copy time {
+          color: #94a3b8;
+          font-size: 0.82rem;
+        }
+
+        .upe-queue-item button.is-danger {
+          color: #fecaca;
+          background: rgba(220,38,38,0.16);
+        }
+
+        .upe-publish-btn {
+          color: #dbeafe;
+          background: rgba(59,130,246,0.18);
+        }
+
+        .upe-publish-btn:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+
+        .upe-status-dot {
+          width: 12px;
+          height: 12px;
+          border-radius: 999px;
+        }
+
+        .upe-status-dot.is-scheduled { background: #3b82f6; }
+        .upe-status-dot.is-draft { background: #94a3b8; }
+        .upe-status-dot.is-published { background: #10b981; }
+        .upe-status-dot.is-failed { background: #ef4444; }
+
+        .upe-modal-backdrop {
+          position: fixed;
+          inset: 0;
+          background: rgba(2, 6, 23, 0.68);
+          display: grid;
+          place-items: center;
+          padding: 24px;
+          z-index: 30;
+        }
+
+        .upe-modal-card {
+          width: min(920px, 100%);
+          background: #0f172a;
+          color: #e2e8f0;
+          border-radius: 28px;
+          border: 1px solid rgba(148,163,184,0.18);
+          box-shadow: 0 32px 70px rgba(15,23,42,0.5);
+          padding: 24px;
+        }
+
+        .upe-modal-header, .upe-modal-footer {
+          display: flex;
+          justify-content: space-between;
+          gap: 16px;
+          align-items: center;
+        }
+
+        .upe-modal-close {
+          width: 40px;
+          height: 40px;
+          border-radius: 999px;
+          border: 0;
+          background: rgba(148,163,184,0.18);
+          color: #e2e8f0;
+          font-size: 1.4rem;
+          cursor: pointer;
+        }
+
+        .upe-modal-body {
+          display: grid;
+          gap: 16px;
+          margin-top: 18px;
+        }
+
+        .upe-field {
+          display: grid;
+          gap: 8px;
+        }
+
+        .upe-field > span {
+          font-weight: 700;
+          color: #cbd5e1;
+        }
+
+        .upe-field input,
+        .upe-field textarea,
+        .upe-field select,
+        .upe-datepicker {
+          width: 100%;
+          border-radius: 16px;
+          border: 1px solid rgba(148,163,184,0.18);
+          background: rgba(15,23,42,0.72);
+          color: #e2e8f0;
+          padding: 14px 16px;
+        }
+
+        .upe-grid-two {
+          display: grid;
+          grid-template-columns: 1.2fr 0.8fr;
+          gap: 16px;
+        }
+
+        .upe-media-preview-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 180px;
+          gap: 16px;
+          align-items: end;
+        }
+
+        .upe-media-preview {
+          height: 120px;
+          border-radius: 18px;
+          overflow: hidden;
+          border: 1px solid rgba(148,163,184,0.18);
+        }
+
+        .upe-media-preview img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
+        .upe-chip-input-shell {
+          min-height: 58px;
+          border-radius: 16px;
+          border: 1px solid rgba(148,163,184,0.18);
+          background: rgba(15,23,42,0.72);
+          padding: 10px;
+        }
+
+        .upe-chip-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .upe-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          border: 0;
+          border-radius: 999px;
+          padding: 8px 12px;
+          background: rgba(59,130,246,0.14);
+          color: #bfdbfe;
+        }
+
+        .upe-chip input {
+          flex: 1;
+          border: 0;
+          background: transparent;
+          padding: 8px 6px;
+          min-width: 220px;
+        }
+
+        .upe-datetime-panel {
+          display: grid;
+          gap: 10px;
+        }
+
+        .upe-suggested-toggle {
+          width: fit-content;
+          background: rgba(16,185,129,0.16);
+          color: #bbf7d0;
+        }
+
+        .upe-suggested-toggle.is-active {
+          background: rgba(59,130,246,0.24);
+          color: #dbeafe;
+        }
+
+        .upe-datetime-hint {
+          color: #94a3b8;
+          font-size: 0.82rem;
+        }
+
+        .upe-conflict-banner {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+          padding: 14px 16px;
+          border-radius: 18px;
+          background: rgba(245,158,11,0.12);
+          border: 1px solid rgba(245,158,11,0.22);
+          color: #fde68a;
+          margin-top: 16px;
+        }
+
+        .upe-conflict-icon {
+          width: 28px;
+          height: 28px;
+          border-radius: 999px;
+          display: grid;
+          place-items: center;
+          background: rgba(245,158,11,0.2);
+          font-weight: 800;
+        }
+
+        .upe-conflict-title {
+          font-weight: 800;
+          margin-bottom: 4px;
+        }
+
+        .upe-conflict-body {
+          color: #fef3c7;
+          line-height: 1.5;
+        }
+
+        .upe-calendar-event {
+          display: grid;
+          gap: 4px;
+        }
+
+        .upe-calendar-event-status {
+          font-size: 0.7rem;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          opacity: 0.9;
+        }
+
+        .upe-calendar-event-title {
+          font-size: 0.84rem;
+          line-height: 1.3;
+        }
+
+        .upe-datepicker-wrapper {
+          width: 100%;
+        }
+
+        .upe-flex-1 {
+          flex: 1;
+        }
+
+        @media (max-width: 1100px) {
+          .upe-layout {
+            grid-template-columns: 1fr;
+          }
+
+          .upe-grid-two,
+          .upe-media-preview-row {
+            grid-template-columns: 1fr;
+          }
+
+          .upe-queue-item {
+            grid-template-columns: auto minmax(0, 1fr);
+          }
+        }
+
+        @media (max-width: 720px) {
+          .upe-page {
+            padding: 20px;
+          }
+
+          .upe-hero,
+          .upe-calendar-header,
+          .upe-modal-header,
+          .upe-modal-footer {
+            flex-direction: column;
+            align-items: flex-start;
+          }
+
+          .upe-calendar-legend {
+            gap: 8px;
+          }
         }
       `}</style>
-    </>
+    </div>
   );
 }

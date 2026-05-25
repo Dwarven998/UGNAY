@@ -2,9 +2,11 @@ package com.ugnay.ugnay.auth;
 
 
 import com.ugnay.ugnay.core.*;
+import com.ugnay.ugnay.facebook.FacebookOAuthService;
 import lombok.*;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
 
@@ -16,6 +18,7 @@ public class AuthController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
+    private final FacebookOAuthService facebookOAuthService;
 
     @PostMapping("/register")
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest req) {
@@ -44,6 +47,19 @@ public class AuthController {
             .orElse(ResponseEntity.status(401).build());
     }
 
+    @GetMapping("/me")
+    public ResponseEntity<CurrentUserResponse> me(@AuthenticationPrincipal User user) {
+        var connection = facebookOAuthService.buildConnectionDetails(user);
+        return ResponseEntity.ok(new CurrentUserResponse(
+            user.getId(),
+            user.getOrgName(),
+            connection.facebookConnected(),
+            connection.facebookPageId(),
+            connection.facebookPageName(),
+            connection.facebookPagePictureUrl()
+        ));
+    }
+
     // --- DTOs (inner records for brevity) ---
     public record RegisterRequest(
         @jakarta.validation.constraints.Email String email,
@@ -54,4 +70,13 @@ public class AuthController {
     public record LoginRequest(String email, String password) {}
 
     public record AuthResponse(String token, java.util.UUID userId, String orgName) {}
+
+    public record CurrentUserResponse(
+        java.util.UUID userId,
+        String orgName,
+        boolean facebookConnected,
+        String facebookPageId,
+        String facebookPageName,
+        String facebookPagePictureUrl
+    ) {}
 }

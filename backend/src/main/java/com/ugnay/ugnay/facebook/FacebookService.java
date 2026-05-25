@@ -20,25 +20,19 @@ public class FacebookService {
     private final WebClient webClient = WebClient.builder().build();
 
     /**
-     * Publish a text-only or photo post to a Facebook Page.
+     * Publish a post to a Facebook Page feed.
      * Returns the fb_post_id on success.
      */
     public String publishPost(String accessToken, String pageId, String message, String imageUrl) {
-        String endpoint;
-        Map<String, String> body;
-
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("message", message);
+        body.put("access_token", accessToken);
         if (imageUrl != null && !imageUrl.isBlank()) {
-            // Photo post
-            endpoint = fbApiUrl + "/" + pageId + "/photos";
-            body = Map.of("message", message, "url", imageUrl, "access_token", accessToken);
-        } else {
-            // Text-only post
-            endpoint = fbApiUrl + "/" + pageId + "/feed";
-            body = Map.of("message", message, "access_token", accessToken);
+            body.put("link", imageUrl);
         }
 
         Map<String, Object> response = webClient.post()
-            .uri(endpoint)
+            .uri(fbApiUrl + "/" + pageId + "/feed")
             .bodyValue(body)
             .retrieve()
             .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
