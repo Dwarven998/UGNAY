@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 
 import { ApiError } from '../../../api/axiosClient';
+import { useAuth } from '../../../context/AuthContext';
 import type { Post, PostConflict } from '../../../types';
 import { postApi, type PostUpsertPayload } from '../api/postApi';
+import FacebookPageConnectButton from '../components/FacebookPageConnectButton';
 import PostEditorModal, { type PostEditorDraft } from '../components/PostEditorModal';
 import PostSchedulerCalendar from '../components/PostSchedulerCalendar';
 
@@ -42,6 +44,7 @@ function getDefaultDraft(date?: Date | null, initial?: Partial<PostEditorDraft> 
 }
 
 export default function PostManager() {
+  const { user } = useAuth();
   const [posts, setPosts] = useState<Post[]>([]);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [conflict, setConflict] = useState<PostConflict | null>(null);
@@ -63,6 +66,10 @@ export default function PostManager() {
   }, []);
 
   const openCreate = (date?: Date) => {
+    if (!user?.facebookConnected) {
+      setError('Connect your Facebook Page to enable post scheduling.');
+      return;
+    }
     setConflict(null);
     setError('');
     setEditor({ mode: 'create', draft: getDefaultDraft(date) });
@@ -112,6 +119,10 @@ export default function PostManager() {
         setConflict(caughtError.data as PostConflict);
         return;
       }
+      if (caughtError instanceof ApiError && caughtError.status === 428) {
+        setError(caughtError.message);
+        return;
+      }
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to save post');
     } finally {
       setLoading(false);
@@ -130,11 +141,17 @@ export default function PostManager() {
           <div className="upe-section-kicker">Post Scheduler</div>
           <h1>Automated Facebook Publishing</h1>
           <p>Schedule posts, resolve time conflicts before saving, and let the backend publish them exactly at the chosen time.</p>
+          {!user?.facebookConnected && (
+            <div className="upe-connection-notice">Connect your Facebook Page to enable post scheduling.</div>
+          )}
         </div>
 
-        <button type="button" className="upe-primary-cta" onClick={() => openCreate()}>
-          New Post
-        </button>
+        <div className="upe-hero-actions">
+          <FacebookPageConnectButton />
+          <button type="button" className="upe-primary-cta" onClick={() => openCreate()} disabled={!user?.facebookConnected}>
+            New Post
+          </button>
+        </div>
       </div>
 
       {error && <div className="upe-error-banner">{error}</div>}
@@ -211,6 +228,24 @@ export default function PostManager() {
           line-height: 1.6;
         }
 
+        .upe-connection-notice {
+          margin-top: 14px;
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          border-radius: 999px;
+          padding: 10px 14px;
+          background: rgba(245, 158, 11, 0.12);
+          color: #fde68a;
+          border: 1px solid rgba(245, 158, 11, 0.24);
+        }
+
+        .upe-hero-actions {
+          display: grid;
+          gap: 12px;
+          justify-items: end;
+        }
+
         .upe-primary-cta, .upe-primary-btn, .upe-secondary-btn, .upe-queue-item button, .upe-suggested-toggle {
           border: 0;
           border-radius: 999px;
@@ -222,6 +257,11 @@ export default function PostManager() {
         .upe-primary-cta, .upe-primary-btn {
           background: linear-gradient(135deg, #38bdf8, #2563eb);
           color: white;
+        }
+
+        .upe-primary-cta:disabled, .upe-primary-btn:disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
         }
 
         .upe-secondary-btn {
@@ -270,6 +310,49 @@ export default function PostManager() {
           height: 10px;
           border-radius: 999px;
           display: inline-block;
+        }
+
+        .upe-fb-connection-card {
+          display: flex;
+          justify-content: space-between;
+          gap: 14px;
+          align-items: center;
+          border-radius: 20px;
+          padding: 14px 16px;
+          background: rgba(30, 41, 59, 0.72);
+          border: 1px solid rgba(148, 163, 184, 0.16);
+        }
+
+        .upe-fb-connection-meta {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .upe-fb-connection-meta img {
+          width: 42px;
+          height: 42px;
+          border-radius: 50%;
+          object-fit: cover;
+        }
+
+        .upe-fb-connection-avatar {
+          width: 42px;
+          height: 42px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #2563eb, #38bdf8);
+          display: grid;
+          place-items: center;
+          font-weight: 800;
+          color: white;
+        }
+
+        .upe-fb-connection-label {
+          font-size: 0.72rem;
+          text-transform: uppercase;
+          letter-spacing: 0.14em;
+          color: #93c5fd;
+          margin-bottom: 4px;
         }
 
         .upe-error-banner, .upe-loading-hint {

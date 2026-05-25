@@ -11,8 +11,10 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import com.ugnay.ugnay.core.User;
+import com.ugnay.ugnay.core.UserRepository;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +32,7 @@ public class FacebookPublishingJob {
     private String facebookApiUrl;
 
     private final PostRepository postRepository;
+    private final UserRepository userRepository;
     private final WebClient webClient = WebClient.builder().build();
 
     public void publishScheduledPost(UUID postId) {
@@ -44,7 +47,13 @@ public class FacebookPublishingJob {
         Post post = postRepository.findDetailedById(postId)
             .orElseThrow(() -> new IllegalArgumentException("Post not found"));
 
-        User user = post.getUser();
+        User user = userRepository.findById(post.getUser().getId())
+            .orElseThrow(() -> new IllegalArgumentException("User not found"));
+        if (user.getFbPageId() == null || user.getFbPageId().isBlank()
+            || user.getFbAccessToken() == null || user.getFbAccessToken().isBlank()) {
+            markFailed(postId, new IllegalStateException("Facebook Page connection is missing"));
+            return;
+        }
         String message = buildMessage(post);
         Map<String, Object> payload = buildPayload(user, post, message);
 
@@ -92,7 +101,7 @@ public class FacebookPublishingJob {
     }
 
     private boolean isRetryable(Throwable error) {
-        return true;
+        return !isConnectionInvalid(error);
     }
 
     @Transactional
@@ -114,7 +123,26 @@ public class FacebookPublishingJob {
         postRepository.findById(postId).ifPresent(post -> {
             post.setStatus(Post.PostStatus.FAILED);
             postRepository.save(post);
+            if (isConnectionInvalid(error)) {
+                userRepository.findById(post.getUser().getId()).ifPresent(user -> {
+                    user.setFbPageId(null);
+                    user.setFbAccessToken(null);
+                    userRepository.save(user);
+                });
+            }
             log.error("Failed to publish post {}", postId, error);
         });
+    }
+
+    private boolean isConnectionInvalid(Throwable error) {
+        if (error instanceof WebClientResponseException webClientError) {
+            int status = webClientError.getStatusCode().value();
+            if (status == 401 || status == 403) {
+                return true;
+            }
+            String body = webClientError.getResponseBodyAsString();
+            return body != null && (body.contains("OAuthException") || body.contains("190") || body.contains("Invalid OAuth access token"));
+        }
+        return false;
     }
 }

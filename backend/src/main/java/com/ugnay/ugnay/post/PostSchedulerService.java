@@ -88,6 +88,7 @@ public class PostSchedulerService {
     private void applyRequest(Post post, User user, PostController.CreatePostRequest req, UUID excludePostId) {
         Instant scheduledAt = parseScheduledAt(req.scheduledAt());
         if (scheduledAt != null) {
+            requireFacebookConnection(user);
             conflictDetectionService.findConflict(user.getOrgName(), scheduledAt, excludePostId)
                 .ifPresent(conflict -> { throw new SchedulingConflictException(conflict); });
         }
@@ -106,6 +107,14 @@ public class PostSchedulerService {
         if (scheduledAt == null) {
             post.setPublishedAt(null);
             post.setFbPostId(null);
+        }
+    }
+
+    private void requireFacebookConnection(User user) {
+        boolean connected = user.getFbPageId() != null && !user.getFbPageId().isBlank()
+            && user.getFbAccessToken() != null && !user.getFbAccessToken().isBlank();
+        if (!connected) {
+            throw new FacebookConnectionRequiredException("Connect your Facebook Page to enable post scheduling.");
         }
     }
 
