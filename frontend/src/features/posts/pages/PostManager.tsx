@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { ApiError } from '../../../api/axiosClient';
 import { useAuth } from '../../../context/AuthContext';
@@ -44,11 +45,14 @@ function getDefaultDraft(date?: Date | null, initial?: Partial<PostEditorDraft> 
 }
 
 export default function PostManager() {
-  const { user } = useAuth();
+  const { user, refreshUserProfile } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [posts, setPosts] = useState<Post[]>([]);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [conflict, setConflict] = useState<PostConflict | null>(null);
   const [loading, setLoading] = useState(false);
+  const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   const loadPosts = async () => {
@@ -64,6 +68,23 @@ export default function PostManager() {
       setEditor({ mode: 'create', draft: initialDraft });
     }
   }, []);
+
+  useEffect(() => {
+    const facebookState = searchParams.get('facebook');
+    if (!facebookState) {
+      return;
+    }
+
+    const message = searchParams.get('message');
+    void refreshUserProfile();
+    if (facebookState === 'failed') {
+      setError(message || 'Facebook connection failed.');
+    } else {
+      setError('');
+    }
+
+    navigate('/posts', { replace: true });
+  }, [navigate, refreshUserProfile, searchParams]);
 
   const openCreate = (date?: Date) => {
     if (!user?.facebookConnected) {
@@ -134,6 +155,19 @@ export default function PostManager() {
     setPosts(current => current.filter(post => post.id !== id));
   };
 
+  const handlePublish = async (post: Post) => {
+    try {
+      setPublishingPostId(post.id);
+      setError('');
+      await postApi.publish(post.id);
+      await loadPosts();
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to publish post');
+    } finally {
+      setPublishingPostId(null);
+    }
+  };
+
   return (
     <div className="upe-page">
       <div className="upe-hero">
@@ -171,6 +205,9 @@ export default function PostManager() {
                   <span>{post.status}</span>
                   {post.scheduledAt && <time>{new Date(post.scheduledAt).toLocaleString()}</time>}
                 </div>
+                <button type="button" className="upe-publish-btn" onClick={() => handlePublish(post)} disabled={publishingPostId === post.id || post.status === 'PUBLISHED'}>
+                  {publishingPostId === post.id ? 'Publishing...' : 'Publish'}
+                </button>
                 <button type="button" onClick={() => openEdit(post)}>Edit</button>
                 <button type="button" className="is-danger" onClick={() => handleDelete(post.id)}>Delete</button>
               </article>
@@ -372,7 +409,7 @@ export default function PostManager() {
 
         .upe-queue-item {
           display: grid;
-          grid-template-columns: auto minmax(0, 1fr) auto auto;
+          grid-template-columns: auto minmax(0, 1fr) auto auto auto;
           gap: 12px;
           align-items: center;
           padding: 14px;
@@ -381,16 +418,26 @@ export default function PostManager() {
           border-radius: 18px;
         }
 
-        .upe-queue-item strong, .upe-queue-item span, .upe-queue-item time {
-          display: block;
+        .upe-queue-copy {
+          min-width: 0;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 8px;
         }
 
-        .upe-queue-item strong {
+        .upe-queue-copy strong,
+        .upe-queue-copy span,
+        .upe-queue-copy time {
+          display: inline;
+        }
+
+        .upe-queue-copy strong {
           color: #f8fafc;
-          margin-bottom: 4px;
         }
 
-        .upe-queue-item span, .upe-queue-item time {
+        .upe-queue-copy span,
+        .upe-queue-copy time {
           color: #94a3b8;
           font-size: 0.82rem;
         }
@@ -398,6 +445,16 @@ export default function PostManager() {
         .upe-queue-item button.is-danger {
           color: #fecaca;
           background: rgba(220,38,38,0.16);
+        }
+
+        .upe-publish-btn {
+          color: #dbeafe;
+          background: rgba(59,130,246,0.18);
+        }
+
+        .upe-publish-btn:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
         }
 
         .upe-status-dot {
