@@ -13,9 +13,11 @@ import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.facebook.FacebookService;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class PostService {
 
     private final PostRepository postRepository;
@@ -65,6 +67,7 @@ public class PostService {
             post.setPublishedAt(Instant.now());
         } catch (Exception e) {
             post.setStatus(Post.PostStatus.FAILED);
+            log.error("Manual publish failed for post {}", postId, e);
         }
 
         postRepository.save(post);

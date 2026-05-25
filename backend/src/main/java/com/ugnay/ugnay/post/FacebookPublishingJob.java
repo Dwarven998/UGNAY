@@ -87,9 +87,6 @@ public class FacebookPublishingJob {
         if (post.getMediaAsset() != null && post.getMediaAsset().getFileUrl() != null) {
             payload.put("link", post.getMediaAsset().getFileUrl());
         }
-        if (post.getScheduledAt() != null) {
-            payload.put("scheduled_publish_time", post.getScheduledAt().getEpochSecond());
-        }
         return payload;
     }
 
