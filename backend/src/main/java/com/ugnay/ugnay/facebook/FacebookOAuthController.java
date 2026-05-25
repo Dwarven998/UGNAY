@@ -40,7 +40,8 @@ public class FacebookOAuthController {
             URI success = UriComponentsBuilder.fromHttpUrl(frontendUrl)
                 .path("/posts")
                 .queryParam("facebook", "connected")
-                .build(true)
+                .build()
+                .encode()
                 .toUri();
             return ResponseEntity.status(302).location(success).build();
         } catch (Exception ex) {
@@ -48,7 +49,8 @@ public class FacebookOAuthController {
                 .path("/posts")
                 .queryParam("facebook", "failed")
                 .queryParam("message", ex.getMessage() != null ? ex.getMessage() : "Facebook connection failed")
-                .build(true)
+                .build()
+                .encode()
                 .toUri();
             return ResponseEntity.status(302).location(failure).build();
         }
