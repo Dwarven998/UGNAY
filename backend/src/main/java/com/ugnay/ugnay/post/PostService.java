@@ -1,19 +1,16 @@
 package com.ugnay.ugnay.post;
 
 
-import java.time.Instant;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.time.Instant;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.facebook.FacebookService;
-import com.ugnay.ugnay.media.MediaAsset;
-import com.ugnay.ugnay.media.MediaAssetRepository;
 
 import lombok.RequiredArgsConstructor;
 
@@ -22,8 +19,8 @@ import lombok.RequiredArgsConstructor;
 public class PostService {
 
     private final PostRepository postRepository;
-    private final MediaAssetRepository assetRepository;
     private final FacebookService facebookService;
+    private final PostSchedulerService postSchedulerService;
 
     public List<PostController.PostDto> getPostsByUser(User user) {
         return postRepository.findByUserOrderByCreatedAtDesc(user).stream()
@@ -33,48 +30,12 @@ public class PostService {
 
     @Transactional
     public PostController.PostDto createPost(User user, PostController.CreatePostRequest req) {
-        // Conflict detection: check 30-min window around scheduledAt
-        if (req.scheduledAt() != null) {
-            Instant desired = Instant.parse(req.scheduledAt());
-            Instant windowStart = desired.minusSeconds(1800);
-            Instant windowEnd = desired.plusSeconds(1800);
-            boolean conflict = postRepository.existsByUserAndScheduledAtBetween(
-                user, windowStart, windowEnd);
-            if (conflict) throw new IllegalStateException("Schedule conflict detected within 30-minute window");
-        }
-
-        MediaAsset asset = req.mediaAssetId() != null
-            ? assetRepository.findById(req.mediaAssetId()).orElse(null) : null;
-
-        Post post = Post.builder()
-            .user(user)
-            .mediaAsset(asset)
-            .caption(req.caption())
-            .hashtags(req.hashtags())
-            .tone(req.tone())
-            .status(req.scheduledAt() != null ? Post.PostStatus.SCHEDULED : Post.PostStatus.DRAFT)
-            .scheduledAt(req.scheduledAt() != null ? Instant.parse(req.scheduledAt()) : null)
-            .build();
-
-        postRepository.save(post);
-        return toDto(post);
+        return postSchedulerService.createPost(user, req);
     }
 
     @Transactional
     public PostController.PostDto updatePost(User user, UUID postId, PostController.CreatePostRequest req) {
-        Post post = postRepository.findById(postId)
-            .filter(p -> p.getUser().getId().equals(user.getId()))
-            .orElseThrow(() -> new NoSuchElementException("Post not found"));
-
-        post.setCaption(req.caption());
-        post.setHashtags(req.hashtags());
-        post.setTone(req.tone());
-        if (req.scheduledAt() != null) {
-            post.setScheduledAt(Instant.parse(req.scheduledAt()));
-            post.setStatus(Post.PostStatus.SCHEDULED);
-        }
-        postRepository.save(post);
-        return toDto(post);
+        return postSchedulerService.updatePost(user, postId, req);
     }
 
     @Transactional

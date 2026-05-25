@@ -9,6 +9,14 @@ export interface Post {
   fbPostId?: string;
 }
 
+export interface PostConflict {
+  postId: string;
+  caption: string;
+  scheduledAt: string;
+  status: string;
+  mediaUrl?: string | null;
+}
+
 export interface MediaFolder {
   id: string;
   name: string;

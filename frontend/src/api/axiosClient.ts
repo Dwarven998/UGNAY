@@ -2,6 +2,19 @@ type ApiResponse<T> = { data: T };
 
 const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
+class ApiError extends Error {
+  status: number;
+
+  data: unknown;
+
+  constructor(status: number, message: string, data: unknown) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.data = data;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
   const token = localStorage.getItem('ugnay_token');
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -17,7 +30,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse
   if (!res.ok) {
     const errorData = await res.json().catch(() => null);
     const errorMessage = errorData?.message || errorData?.error || `Request failed with status ${res.status}`;
-    throw new Error(errorMessage);
+    throw new ApiError(res.status, errorMessage, errorData);
   }
 
   const data = res.status === 204 ? null : await res.json();
@@ -32,4 +45,5 @@ const axiosClient = {
 };
 
 export type { ApiResponse };
+export { ApiError };
 export default axiosClient;
