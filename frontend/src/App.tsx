@@ -2,8 +2,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Dashboard from './features/dashboard/UnifiedManagementDashboard.tsx';
-import LoginForm from './features/loginform/pages/LoginForm.tsx';
-import RegistrationForm from './features/registrationform/pages/RegistrationForm.tsx';
+import LoginPage from './features/loginform/pages/LoginPage.tsx';
+import RegistrationForm from './features/registrationform/pages/RegisterPage.tsx';
 import PostManager from './features/posts/pages/PostManager.tsx';
 import MediaRepository from './features/media/pages/MediaRepository.tsx';
 import CaptionStudio from './features/caption/pages/CaptionStudio.tsx';
@@ -21,7 +21,7 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/login" element={<LoginForm />} />
+          <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegistrationForm />} />
           <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>}>
             <Route index element={<Navigate to="/posts" replace />} />
