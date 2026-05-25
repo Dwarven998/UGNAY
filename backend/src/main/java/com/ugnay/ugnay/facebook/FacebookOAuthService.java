@@ -21,7 +21,6 @@ import com.ugnay.ugnay.core.UserRepository;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 @Service
@@ -58,13 +57,13 @@ public class FacebookOAuthService {
     public String buildAuthorizationUrl(User user) {
         String state = jwtUtil.generateToken(user.getEmail(), user.getId().toString());
         return UriComponentsBuilder.fromHttpUrl(facebookAuthorizeUrl)
-            .queryParam("client_id", facebookAppId)
-            .queryParam("redirect_uri", facebookRedirectUri)
-            .queryParam("state", state)
-            .queryParam("response_type", "code")
-            .queryParam("scope", "pages_show_list,pages_manage_posts,pages_read_engagement")
-            .build(true)
-            .toUriString();
+                .queryParam("client_id", facebookAppId)
+                .queryParam("redirect_uri", facebookRedirectUri)
+                .queryParam("state", state)
+                .queryParam("response_type", "code")
+                .queryParam("scope", "pages_show_list,pages_manage_posts,pages_read_engagement")
+                .build(true)
+                .toUriString();
     }
 
     @Transactional
@@ -78,12 +77,12 @@ public class FacebookOAuthService {
 
         UUID userId = UUID.fromString(jwtUtil.extractUserId(state));
         User user = userRepository.findById(userId)
-            .orElseThrow(() -> new IllegalArgumentException("User not found"));
+                .orElseThrow(() -> new IllegalArgumentException("User not found"));
 
         FacebookPageAccount pageAccount;
         try {
             log.info("Completing Facebook OAuth for user={}, codePresent={}, statePresent={}", user.getId(), code != null,
-                state != null);
+                    state != null);
 
             String shortLivedToken = exchangeCodeForUserToken(code);
             log.debug("Obtained short-lived token for user={}", user.getId());
@@ -99,22 +98,22 @@ public class FacebookOAuthService {
             userRepository.save(user);
         } catch (Exception ex) {
             log.error("Facebook OAuth completion failed for user={}, state={}: {}", user.getId(), state,
-                ex.getMessage(), ex);
+                    ex.getMessage(), ex);
             throw ex;
         }
 
         return new FacebookConnectionDetails(
-            true,
-            pageAccount.pageId(),
-            pageAccount.pageName(),
-            pageAccount.pagePictureUrl()
+                true,
+                pageAccount.pageId(),
+                pageAccount.pageName(),
+                pageAccount.pagePictureUrl()
         );
     }
 
     @Transactional(readOnly = true)
     public FacebookConnectionDetails buildConnectionDetails(User user) {
         if (user.getFbPageId() == null || user.getFbPageId().isBlank()
-            || user.getFbAccessToken() == null || user.getFbAccessToken().isBlank()) {
+                || user.getFbAccessToken() == null || user.getFbAccessToken().isBlank()) {
             return new FacebookConnectionDetails(false, null, null, null);
         }
 
@@ -135,13 +134,13 @@ public class FacebookOAuthService {
 
     private String exchangeCodeForUserToken(String code) {
         String uri = UriComponentsBuilder.fromHttpUrl(facebookTokenUrl)
-            .queryParam("client_id", facebookAppId)
-            .queryParam("client_secret", facebookAppSecret)
-            .queryParam("redirect_uri", facebookRedirectUri)
-            .queryParam("code", code)
-            .build()
-            .encode()
-            .toUriString();
+                .queryParam("client_id", facebookAppId)
+                .queryParam("client_secret", facebookAppSecret)
+                .queryParam("redirect_uri", facebookRedirectUri)
+                .queryParam("code", code)
+                .build()
+                .encode()
+                .toUriString();
 
         Map<String, Object> response = executeGraphGet(uri);
 
@@ -150,13 +149,13 @@ public class FacebookOAuthService {
 
     private String exchangeForLongLivedToken(String shortLivedToken) {
         String uri = UriComponentsBuilder.fromHttpUrl(facebookTokenUrl)
-            .queryParam("grant_type", "fb_exchange_token")
-            .queryParam("client_id", facebookAppId)
-            .queryParam("client_secret", facebookAppSecret)
-            .queryParam("fb_exchange_token", shortLivedToken)
-            .build()
-            .encode()
-            .toUriString();
+                .queryParam("grant_type", "fb_exchange_token")
+                .queryParam("client_id", facebookAppId)
+                .queryParam("client_secret", facebookAppSecret)
+                .queryParam("fb_exchange_token", shortLivedToken)
+                .build()
+                .encode()
+                .toUriString();
 
         Map<String, Object> response = executeGraphGet(uri);
 
@@ -165,12 +164,12 @@ public class FacebookOAuthService {
 
     private FacebookPageAccount fetchPrimaryPage(String userAccessToken) {
         String uri = UriComponentsBuilder.fromHttpUrl(facebookApiUrl)
-            .path("/me/accounts")
-            .queryParam("fields", "id,name,access_token")
-            .queryParam("access_token", userAccessToken)
-            .build()
-            .encode()
-            .toUriString();
+                .path("/me/accounts")
+                .queryParam("fields", "id,name,access_token")
+                .queryParam("access_token", userAccessToken)
+                .build()
+                .encode()
+                .toUriString();
 
         Map<String, Object> response = executeGraphGet(uri);
 
@@ -183,12 +182,11 @@ public class FacebookOAuthService {
 
     private FacebookPageDetails fetchPageDetails(String pageId, String accessToken) {
         String uri = UriComponentsBuilder.fromHttpUrl(facebookApiUrl)
-            .pathSegment(pageId)
-            .queryParam("fields", "id,name,picture{url}")
-            .queryParam("access_token", accessToken)
-            .build()
-            .encode()
-            .toUriString();
+                .pathSegment(pageId)
+                .queryParam("fields", "id,name,picture{url}")
+                .queryParam("access_token", accessToken)
+                .build(false) // false = don't re-encode, prevents %7B%7D double-encoding of { }
+                .toUriString();
 
         Map<String, Object> response = executeGraphGet(uri);
 
@@ -196,18 +194,18 @@ public class FacebookOAuthService {
             throw new IllegalStateException("Failed to load Facebook Page details");
         }
         return new FacebookPageDetails(
-            stringValue(response.get("id")),
-            stringValue(response.get("name")),
-            nestedPictureUrl(response.get("picture"))
+                stringValue(response.get("id")),
+                stringValue(response.get("name")),
+                nestedPictureUrl(response.get("picture"))
         );
     }
 
     private FacebookPageAccount toPageAccount(Map<String, Object> pageData) {
         return new FacebookPageAccount(
-            stringValue(pageData.get("id")),
-            stringValue(pageData.get("name")),
-            stringValue(pageData.get("access_token")),
-            null
+                stringValue(pageData.get("id")),
+                stringValue(pageData.get("name")),
+                stringValue(pageData.get("access_token")),
+                null
         );
     }
 
@@ -244,58 +242,65 @@ public class FacebookOAuthService {
 
     private Map<String, Object> executeGraphGet(String uri) {
         return webClient.get()
-            .uri(uri)
-            .retrieve()
-            .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
-            .timeout(GRAPH_REQUEST_TIMEOUT)
-            .retryWhen(
-                Retry.backoff(GRAPH_REQUEST_RETRIES, GRAPH_REQUEST_BACKOFF)
-                    .filter(this::isRetryableGraphError)
-                    .doBeforeRetry(signal -> log.warn(
-                        "Retrying Facebook Graph request attempt {} for {}",
-                        signal.totalRetries() + 1,
-                        uri
-                    ))
-            )
-            .doOnError(error -> {
-                if (error instanceof WebClientResponseException wre) {
-                    try {
-                        log.error("Facebook Graph response error for {}: status={}, body={}", uri, wre.getRawStatusCode(),
-                            wre.getResponseBodyAsString());
-                    } catch (Exception e) {
-                        log.error("Failed to log response body for {}: {}", uri, e.getMessage(), e);
+                .uri(uri)
+                .retrieve()
+                .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {
+                })
+                .timeout(GRAPH_REQUEST_TIMEOUT)
+                .retryWhen(
+                        Retry.backoff(GRAPH_REQUEST_RETRIES, GRAPH_REQUEST_BACKOFF)
+                                .filter(this::isRetryableGraphError)
+                                .doBeforeRetry(signal -> log.warn(
+                                "Retrying Facebook Graph request attempt {} for {}",
+                                signal.totalRetries() + 1,
+                                uri
+                        ))
+                )
+                .doOnError(error -> {
+                    if (error instanceof WebClientResponseException wre) {
+                        try {
+                            log.error("Facebook Graph response error for {}: status={}, body={}", uri, wre.getRawStatusCode(),
+                                    wre.getResponseBodyAsString());
+                        } catch (Exception e) {
+                            log.error("Failed to log response body for {}: {}", uri, e.getMessage(), e);
+                        }
+                    } else {
+                        log.error("Facebook Graph request failed for {}: {}", uri, error.getMessage(), error);
                     }
-                } else {
-                    log.error("Facebook Graph request failed for {}: {}", uri, error.getMessage(), error);
-                }
-            })
-            .onErrorMap(error -> error instanceof RuntimeException ? error : new IllegalStateException(error.getMessage(), error))
-            .block();
+                })
+                .onErrorMap(error -> error instanceof RuntimeException ? error : new IllegalStateException(error.getMessage(), error))
+                .block();
     }
 
     private boolean isRetryableGraphError(Throwable error) {
         return error instanceof TimeoutException
-            || error instanceof WebClientRequestException
-            || (error instanceof WebClientResponseException webClientError && webClientError.getStatusCode().is5xxServerError());
+                || error instanceof WebClientRequestException
+                || (error instanceof WebClientResponseException webClientError && webClientError.getStatusCode().is5xxServerError());
     }
 
     public record FacebookConnectionDetails(
-        boolean facebookConnected,
-        String facebookPageId,
-        String facebookPageName,
-        String facebookPagePictureUrl
-    ) {}
+            boolean facebookConnected,
+            String facebookPageId,
+            String facebookPageName,
+            String facebookPagePictureUrl
+            ) {
+
+    }
 
     private record FacebookPageAccount(
-        String pageId,
-        String pageName,
-        String pageAccessToken,
-        String pagePictureUrl
-    ) {}
+            String pageId,
+            String pageName,
+            String pageAccessToken,
+            String pagePictureUrl
+            ) {
+
+    }
 
     private record FacebookPageDetails(
-        String pageId,
-        String pageName,
-        String pagePictureUrl
-    ) {}
+            String pageId,
+            String pageName,
+            String pagePictureUrl
+            ) {
+
+    }
 }

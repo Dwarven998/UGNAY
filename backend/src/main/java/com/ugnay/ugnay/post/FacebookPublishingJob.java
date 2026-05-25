@@ -18,7 +18,6 @@ import com.ugnay.ugnay.core.UserRepository;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 @Component
@@ -49,16 +48,30 @@ public class FacebookPublishingJob {
 
         User user = userRepository.findById(post.getUser().getId())
             .orElseThrow(() -> new IllegalArgumentException("User not found"));
+
         if (user.getFbPageId() == null || user.getFbPageId().isBlank()
             || user.getFbAccessToken() == null || user.getFbAccessToken().isBlank()) {
             markFailed(postId, new IllegalStateException("Facebook Page connection is missing"));
             return;
         }
-        String message = buildMessage(post);
-        Map<String, Object> payload = buildPayload(user, post, message);
+
+        boolean hasImage = post.getMediaAsset() != null
+            && post.getMediaAsset().getFileUrl() != null
+            && !post.getMediaAsset().getFileUrl().isBlank();
+
+        // Route to the correct endpoint:
+        // - /photos  → publishes an actual image + caption (visible as a photo post)
+        // - /feed    → publishes text only
+        String endpoint = hasImage
+            ? facebookApiUrl + "/" + user.getFbPageId() + "/photos"
+            : facebookApiUrl + "/" + user.getFbPageId() + "/feed";
+
+        Map<String, Object> payload = buildPayload(user, post, hasImage);
+
+        log.info("Publishing post {} to Facebook endpoint: {} (hasImage={})", postId, endpoint, hasImage);
 
         webClient.post()
-            .uri(facebookApiUrl + "/" + user.getFbPageId() + "/feed")
+            .uri(endpoint)
             .bodyValue(payload)
             .retrieve()
             .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
@@ -80,13 +93,21 @@ public class FacebookPublishingJob {
         }
     }
 
-    private Map<String, Object> buildPayload(User user, Post post, String message) {
+    private Map<String, Object> buildPayload(User user, Post post, boolean hasImage) {
         Map<String, Object> payload = new HashMap<>();
-        payload.put("message", message);
         payload.put("access_token", user.getFbAccessToken());
-        if (post.getMediaAsset() != null && post.getMediaAsset().getFileUrl() != null) {
-            payload.put("link", post.getMediaAsset().getFileUrl());
+
+        String message = buildMessage(post);
+
+        if (hasImage) {
+            // /photos endpoint uses "url" for the image and "caption" for the text
+            payload.put("url",     post.getMediaAsset().getFileUrl());
+            payload.put("caption", message);
+        } else {
+            // /feed endpoint uses "message" for text-only posts
+            payload.put("message", message);
         }
+
         return payload;
     }
 
@@ -106,12 +127,17 @@ public class FacebookPublishingJob {
         postRepository.findById(postId).ifPresent(post -> {
             post.setStatus(Post.PostStatus.PUBLISHED);
             post.setPublishedAt(Instant.now());
-            Object fbPostId = response.get("id");
+            // /photos returns { "id": "photo_id", "post_id": "page_post_id" }
+            // /feed   returns { "id": "page_post_id" }
+            // Prefer post_id (the timeline post) when available
+            Object fbPostId = response.containsKey("post_id")
+                ? response.get("post_id")
+                : response.get("id");
             if (fbPostId != null) {
                 post.setFbPostId(String.valueOf(fbPostId));
             }
             postRepository.save(post);
-            log.info("Published post {} to Facebook", postId);
+            log.info("Published post {} to Facebook, fb_post_id={}", postId, fbPostId);
         });
     }
 
@@ -125,6 +151,7 @@ public class FacebookPublishingJob {
                     user.setFbPageId(null);
                     user.setFbAccessToken(null);
                     userRepository.save(user);
+                    log.warn("Cleared invalid FB credentials for user {}", user.getId());
                 });
             }
             log.error("Failed to publish post {}", postId, error);
@@ -134,11 +161,11 @@ public class FacebookPublishingJob {
     private boolean isConnectionInvalid(Throwable error) {
         if (error instanceof WebClientResponseException webClientError) {
             int status = webClientError.getStatusCode().value();
-            if (status == 401 || status == 403) {
-                return true;
-            }
+            if (status == 401 || status == 403) return true;
             String body = webClientError.getResponseBodyAsString();
-            return body != null && (body.contains("OAuthException") || body.contains("190") || body.contains("Invalid OAuth access token"));
+            return body != null && (body.contains("OAuthException")
+                || body.contains("190")
+                || body.contains("Invalid OAuth access token"));
         }
         return false;
     }

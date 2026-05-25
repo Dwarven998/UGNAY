@@ -1,16 +1,13 @@
 package com.ugnay.ugnay.post;
 
-
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import java.time.Instant;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.ugnay.ugnay.core.User;
-import com.ugnay.ugnay.facebook.FacebookService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,7 +18,6 @@ import lombok.extern.slf4j.Slf4j;
 public class PostService {
 
     private final PostRepository postRepository;
-    private final FacebookService facebookService;
     private final PostSchedulerService postSchedulerService;
 
     public List<PostController.PostDto> getPostsByUser(User user) {
@@ -42,36 +38,19 @@ public class PostService {
 
     @Transactional
     public void deletePost(User user, UUID postId) {
-        postRepository.findById(postId)
-            .filter(p -> p.getUser().getId().equals(user.getId()))
-            .ifPresent(postRepository::delete);
+        postSchedulerService.deletePost(user, postId);
     }
 
     @Transactional
     public PostController.PostDto publishPost(User user, UUID postId) {
-        Post post = postRepository.findById(postId)
-            .filter(p -> p.getUser().getId().equals(user.getId()))
+        // Delegates entirely to PostSchedulerService → FacebookPublishingJob
+        // which uses findDetailedById (eager fetch) and the correct FB endpoint
+        postSchedulerService.publishNow(user, postId);
+
+        // Return the latest state after publish attempt
+        return postRepository.findDetailedById(postId)
+            .map(this::toDto)
             .orElseThrow();
-
-        // Build caption with hashtags
-        String fullCaption = post.getCaption()
-            + (post.getHashtags() != null ? "\n\n" + String.join(" ", post.getHashtags()) : "");
-
-        try {
-            String fbPostId = facebookService.publishPost(
-                user.getFbAccessToken(), user.getFbPageId(),
-                fullCaption, post.getMediaAsset() != null ? post.getMediaAsset().getFileUrl() : null
-            );
-            post.setFbPostId(fbPostId);
-            post.setStatus(Post.PostStatus.PUBLISHED);
-            post.setPublishedAt(Instant.now());
-        } catch (Exception e) {
-            post.setStatus(Post.PostStatus.FAILED);
-            log.error("Manual publish failed for post {}", postId, e);
-        }
-
-        postRepository.save(post);
-        return toDto(post);
     }
 
     private PostController.PostDto toDto(Post p) {

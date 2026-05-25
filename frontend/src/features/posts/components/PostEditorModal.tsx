@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import type { Post, PostConflict } from '../../../types';
+import type { Post, PostConflict, MediaAsset, MediaFolder } from '../../../types';
 import ConflictAlertBanner from './ConflictAlertBanner';
 import DateTimePickerPanel from './DateTimePickerPanel';
+import { mediaApi } from '../../media/api/mediaApi';
 
 export interface PostEditorDraft {
   caption: string;
@@ -43,33 +44,66 @@ export default function PostEditorModal({
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [tone, setTone] = useState('FORMAL');
   const [mediaAssetId, setMediaAssetId] = useState('');
+  const [mediaPreviewUrl, setMediaPreviewUrl] = useState<string | null>(null);
   const [scheduledAt, setScheduledAt] = useState<Date | null>(suggestedTime);
   const [hashtagInput, setHashtagInput] = useState('');
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
+  // Media picker state
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [folders, setFolders] = useState<MediaFolder[]>([]);
+  const [selectedFolder, setSelectedFolder] = useState<MediaFolder | null>(null);
+  const [assets, setAssets] = useState<MediaAsset[]>([]);
+  const [loadingAssets, setLoadingAssets] = useState(false);
 
+  useEffect(() => {
+    if (!open) return;
     const mergedHashtags = initialPost?.hashtags ?? initialDraft?.hashtags ?? [];
     setCaption(initialPost?.caption ?? initialDraft?.caption ?? '');
     setHashtags(mergedHashtags);
     setTone(initialPost?.tone ?? initialDraft?.tone ?? 'FORMAL');
     setMediaAssetId(initialDraft?.mediaAssetId ?? '');
-    setScheduledAt(initialDraft?.scheduledAt ? new Date(initialDraft.scheduledAt) : initialPost?.scheduledAt ? new Date(initialPost.scheduledAt) : suggestedTime);
+    setMediaPreviewUrl(initialPost?.mediaUrl ?? null);
+    setScheduledAt(
+      initialDraft?.scheduledAt
+        ? new Date(initialDraft.scheduledAt)
+        : initialPost?.scheduledAt
+          ? new Date(initialPost.scheduledAt)
+          : suggestedTime
+    );
     setHashtagInput('');
+    setPickerOpen(false);
   }, [initialDraft, initialPost, open, suggestedTime]);
 
-  if (!open) {
-    return null;
-  }
+  // Load folders when picker opens
+  useEffect(() => {
+    if (!pickerOpen) return;
+    mediaApi.getFolders().then(setFolders).catch(console.error);
+  }, [pickerOpen]);
+
+  // Load assets when a folder is selected in picker
+  const loadPickerAssets = async (folder: MediaFolder) => {
+    setSelectedFolder(folder);
+    setLoadingAssets(true);
+    try {
+      const data = await mediaApi.getAssets(folder.id);
+      setAssets(data);
+    } finally {
+      setLoadingAssets(false);
+    }
+  };
+
+  const selectAsset = (asset: MediaAsset) => {
+    setMediaAssetId(asset.id);         // ✅ send UUID to backend
+    setMediaPreviewUrl(asset.fileUrl); // show preview
+    setPickerOpen(false);
+    onClearConflict?.();
+  };
+
+  if (!open) return null;
 
   const addHashtag = (value: string) => {
     const cleaned = value.replace(/^#/, '').trim();
-    if (!cleaned) {
-      return;
-    }
-
+    if (!cleaned) return;
     setHashtags(current => (current.includes(cleaned) ? current : [...current, cleaned]));
     setHashtagInput('');
     onClearConflict?.();
@@ -85,19 +119,15 @@ export default function PostEditorModal({
     });
   };
 
-  const currentMediaUrl = initialPost?.mediaUrl ?? null;
-
   return (
     <div className="upe-modal-backdrop" role="presentation" onClick={onClose}>
-      <div className="upe-modal-card" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}>
+      <div className="upe-modal-card" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
         <div className="upe-modal-header">
           <div>
             <div className="upe-modal-kicker">Post Scheduler</div>
             <h2>{initialPost ? 'Edit Scheduled Post' : 'Create Post'}</h2>
           </div>
-          <button type="button" className="upe-modal-close" onClick={onClose}>
-            ×
-          </button>
+          <button type="button" className="upe-modal-close" onClick={onClose}>×</button>
         </div>
 
         {conflict && <ConflictAlertBanner conflict={conflict} />}
@@ -107,30 +137,79 @@ export default function PostEditorModal({
             <span>Caption</span>
             <textarea
               value={caption}
-              onChange={event => {
-                setCaption(event.target.value);
-                onClearConflict?.();
-              }}
+              onChange={e => { setCaption(e.target.value); onClearConflict?.(); }}
               rows={6}
               placeholder="Write your post caption..."
             />
           </label>
 
-          <div className="upe-media-preview-row">
-            <label className="upe-field upe-flex-1">
-              <span>Media file reference</span>
-              <input
-                value={mediaAssetId}
-                onChange={event => {
-                  setMediaAssetId(event.target.value);
-                  onClearConflict?.();
-                }}
-                placeholder="Media asset UUID"
-              />
-            </label>
-            {currentMediaUrl && (
-              <div className="upe-media-preview">
-                <img src={currentMediaUrl} alt="Post media preview" />
+          {/* ── Media picker ── */}
+          <div className="upe-field">
+            <span>Media</span>
+            <div className="upe-media-picker-row">
+              {mediaPreviewUrl ? (
+                <div className="upe-media-thumb">
+                  <img src={mediaPreviewUrl} alt="Selected media" />
+                  <button
+                    type="button"
+                    className="upe-media-thumb-remove"
+                    onClick={() => { setMediaAssetId(''); setMediaPreviewUrl(null); }}
+                    title="Remove"
+                  >×</button>
+                </div>
+              ) : (
+                <div className="upe-media-empty-thumb">No image selected</div>
+              )}
+              <button
+                type="button"
+                className="upe-secondary-btn"
+                onClick={() => setPickerOpen(p => !p)}
+              >
+                {pickerOpen ? 'Close picker' : mediaPreviewUrl ? 'Change image' : 'Choose from library'}
+              </button>
+            </div>
+
+            {/* Inline folder + asset picker */}
+            {pickerOpen && (
+              <div className="upe-picker-panel">
+                <div className="upe-picker-folders">
+                  {folders.map(folder => (
+                    <button
+                      key={folder.id}
+                      type="button"
+                      className={`upe-picker-folder${selectedFolder?.id === folder.id ? ' upe-picker-folder-active' : ''}`}
+                      onClick={() => loadPickerAssets(folder)}
+                    >
+                      {folder.name}
+                      <span className="upe-picker-folder-count">{folder.assetCount}</span>
+                    </button>
+                  ))}
+                  {folders.length === 0 && <p className="upe-picker-empty">No folders yet</p>}
+                </div>
+
+                <div className="upe-picker-assets">
+                  {loadingAssets && <p className="upe-picker-empty">Loading...</p>}
+                  {!loadingAssets && selectedFolder && assets.length === 0 && (
+                    <p className="upe-picker-empty">No assets in this folder</p>
+                  )}
+                  {!loadingAssets && !selectedFolder && (
+                    <p className="upe-picker-empty">Select a folder to browse assets</p>
+                  )}
+                  {assets.map(asset => (
+                    <button
+                      key={asset.id}
+                      type="button"
+                      className={`upe-picker-asset${mediaAssetId === asset.id ? ' upe-picker-asset-selected' : ''}`}
+                      onClick={() => selectAsset(asset)}
+                      title={asset.fileName}
+                    >
+                      <img src={asset.fileUrl} alt={asset.fileName} />
+                      {mediaAssetId === asset.id && (
+                        <div className="upe-picker-asset-check">✓</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -145,20 +224,17 @@ export default function PostEditorModal({
                       key={tag}
                       type="button"
                       className="upe-chip"
-                      onClick={() => {
-                        setHashtags(current => current.filter(item => item !== tag));
-                        onClearConflict?.();
-                      }}
+                      onClick={() => { setHashtags(c => c.filter(i => i !== tag)); onClearConflict?.(); }}
                     >
                       #{tag} <span>×</span>
                     </button>
                   ))}
                   <input
                     value={hashtagInput}
-                    onChange={event => setHashtagInput(event.target.value)}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter' || event.key === ',' || event.key === 'Tab') {
-                        event.preventDefault();
+                    onChange={e => setHashtagInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ',' || e.key === 'Tab') {
+                        e.preventDefault();
                         addHashtag(hashtagInput);
                       }
                     }}
@@ -170,13 +246,7 @@ export default function PostEditorModal({
 
             <label className="upe-field">
               <span>Tone</span>
-              <select
-                value={tone}
-                onChange={event => {
-                  setTone(event.target.value);
-                  onClearConflict?.();
-                }}
-              >
+              <select value={tone} onChange={e => { setTone(e.target.value); onClearConflict?.(); }}>
                 <option value="FORMAL">Formal</option>
                 <option value="ENERGETIC">Energetic</option>
                 <option value="CELEBRATORY">Celebratory</option>
@@ -189,24 +259,165 @@ export default function PostEditorModal({
             <span>Scheduled time</span>
             <DateTimePickerPanel
               value={scheduledAt}
-              onChange={nextValue => {
-                setScheduledAt(nextValue);
-                onClearConflict?.();
-              }}
+              onChange={v => { setScheduledAt(v); onClearConflict?.(); }}
               suggestedValue={suggestedTime}
             />
           </label>
         </div>
 
         <div className="upe-modal-footer">
-          <button type="button" className="upe-secondary-btn" onClick={onClose}>
-            Cancel
-          </button>
+          <button type="button" className="upe-secondary-btn" onClick={onClose}>Cancel</button>
           <button type="button" className="upe-primary-btn" onClick={submit} disabled={Boolean(conflict)}>
             {initialPost ? 'Update Post' : 'Schedule Post'}
           </button>
         </div>
       </div>
+
+      <style>{`
+        .upe-media-picker-row {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-top: 6px;
+        }
+        .upe-media-thumb {
+          position: relative;
+          width: 64px;
+          height: 64px;
+          border-radius: 8px;
+          overflow: hidden;
+          border: 2px solid #e2e8f0;
+          flex-shrink: 0;
+        }
+        .upe-media-thumb img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+        .upe-media-thumb-remove {
+          position: absolute;
+          top: 2px; right: 2px;
+          width: 18px; height: 18px;
+          background: rgba(0,0,0,0.6);
+          color: #fff;
+          border: none;
+          border-radius: 50%;
+          font-size: 12px;
+          line-height: 1;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .upe-media-empty-thumb {
+          width: 64px; height: 64px;
+          border-radius: 8px;
+          border: 2px dashed #cbd5e1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 10px;
+          color: #94a3b8;
+          text-align: center;
+          padding: 4px;
+          flex-shrink: 0;
+        }
+        .upe-picker-panel {
+          margin-top: 10px;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          overflow: hidden;
+          display: flex;
+          max-height: 280px;
+        }
+        .upe-picker-folders {
+          width: 140px;
+          flex-shrink: 0;
+          border-right: 1px solid #e2e8f0;
+          overflow-y: auto;
+          padding: 8px;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          background: #f8fafc;
+        }
+        .upe-picker-folder {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 7px 10px;
+          border-radius: 8px;
+          border: 1px solid transparent;
+          background: transparent;
+          font-size: 12px;
+          font-weight: 500;
+          color: #475569;
+          cursor: pointer;
+          text-align: left;
+          font-family: inherit;
+          transition: all 0.15s;
+        }
+        .upe-picker-folder:hover { background: #fff; border-color: #e2e8f0; }
+        .upe-picker-folder-active {
+          background: rgba(12,68,124,0.06) !important;
+          border-color: rgba(12,68,124,0.15) !important;
+          color: #0C447C !important;
+          font-weight: 600 !important;
+        }
+        .upe-picker-folder-count {
+          font-size: 10px;
+          background: #e2e8f0;
+          padding: 1px 6px;
+          border-radius: 10px;
+          color: #64748b;
+        }
+        .upe-picker-assets {
+          flex: 1;
+          overflow-y: auto;
+          padding: 10px;
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+          gap: 8px;
+          align-content: start;
+        }
+        .upe-picker-asset {
+          position: relative;
+          aspect-ratio: 1;
+          border-radius: 8px;
+          overflow: hidden;
+          border: 2px solid #e2e8f0;
+          cursor: pointer;
+          padding: 0;
+          background: #f1f5f9;
+          transition: all 0.15s;
+        }
+        .upe-picker-asset:hover { border-color: #3b82f6; }
+        .upe-picker-asset-selected { border-color: #0C447C !important; }
+        .upe-picker-asset img {
+          width: 100%; height: 100%;
+          object-fit: cover;
+        }
+        .upe-picker-asset-check {
+          position: absolute;
+          inset: 0;
+          background: rgba(12,68,124,0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #fff;
+          font-size: 18px;
+          font-weight: 700;
+        }
+        .upe-picker-empty {
+          grid-column: 1 / -1;
+          font-size: 12px;
+          color: #94a3b8;
+          text-align: center;
+          padding: 20px 0;
+          margin: 0;
+        }
+      `}</style>
     </div>
   );
 }
