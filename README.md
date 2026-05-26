@@ -21,10 +21,6 @@ UGNAY provides college organizations with tools to:
 - **Google Gemini API Key**
 - **Facebook API Credentials**
 
-## 🏗️ Project Structure
-
-```
-
 ## 🔧 Setup Instructions
 
 ### 1. Clone & Navigate
