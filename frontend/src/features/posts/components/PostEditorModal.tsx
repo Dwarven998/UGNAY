@@ -158,7 +158,11 @@ export default function PostEditorModal({
                   >×</button>
                 </div>
               ) : (
-                <div className="upe-media-empty-thumb">No image selected</div>
+                <div className="upe-media-empty-thumb">
+                  <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </div>
               )}
               <button
                 type="button"
@@ -284,7 +288,7 @@ export default function PostEditorModal({
           position: relative;
           width: 64px;
           height: 64px;
-          border-radius: 8px;
+          border-radius: 10px;
           overflow: hidden;
           border: 2px solid #e2e8f0;
           flex-shrink: 0;
@@ -296,9 +300,9 @@ export default function PostEditorModal({
         }
         .upe-media-thumb-remove {
           position: absolute;
-          top: 2px; right: 2px;
+          top: 3px; right: 3px;
           width: 18px; height: 18px;
-          background: rgba(0,0,0,0.6);
+          background: rgba(0,0,0,0.55);
           color: #fff;
           border: none;
           border-radius: 50%;
@@ -308,30 +312,33 @@ export default function PostEditorModal({
           display: flex;
           align-items: center;
           justify-content: center;
+          transition: background 0.15s;
+        }
+        .upe-media-thumb-remove:hover {
+          background: rgba(0,0,0,0.75);
         }
         .upe-media-empty-thumb {
           width: 64px; height: 64px;
-          border-radius: 8px;
+          border-radius: 10px;
           border: 2px dashed #cbd5e1;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 10px;
           color: #94a3b8;
-          text-align: center;
-          padding: 4px;
           flex-shrink: 0;
+          background: #f8fafc;
         }
         .upe-picker-panel {
           margin-top: 10px;
           border: 1px solid #e2e8f0;
-          border-radius: 12px;
+          border-radius: 14px;
           overflow: hidden;
           display: flex;
           max-height: 280px;
+          background: #ffffff;
         }
         .upe-picker-folders {
-          width: 140px;
+          width: 150px;
           flex-shrink: 0;
           border-right: 1px solid #e2e8f0;
           overflow-y: auto;
@@ -346,7 +353,7 @@ export default function PostEditorModal({
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 7px 10px;
+          padding: 8px 10px;
           border-radius: 8px;
           border: 1px solid transparent;
           background: transparent;
@@ -358,7 +365,7 @@ export default function PostEditorModal({
           font-family: inherit;
           transition: all 0.15s;
         }
-        .upe-picker-folder:hover { background: #fff; border-color: #e2e8f0; }
+        .upe-picker-folder:hover { background: #ffffff; border-color: #e2e8f0; }
         .upe-picker-folder-active {
           background: rgba(12,68,124,0.06) !important;
           border-color: rgba(12,68,124,0.15) !important;
@@ -384,7 +391,7 @@ export default function PostEditorModal({
         .upe-picker-asset {
           position: relative;
           aspect-ratio: 1;
-          border-radius: 8px;
+          border-radius: 10px;
           overflow: hidden;
           border: 2px solid #e2e8f0;
           cursor: pointer;

@@ -145,16 +145,22 @@ public class GeminiClient {
     public List<String> generateHashtags(String caption, String orgName) {
         String prompt = String.format(
             """
-            Generate 7 relevant Facebook hashtags for this post by the Philippine college organization "%s".
+            You are a social media hashtag expert for "%s", a Philippine college organization.
+            
+            Analyze the following caption and generate exactly 7 highly relevant Facebook hashtags.
+            
             Caption: %s
             
             Rules:
-            - Use campus/student/Philippine context
-            - Mix broad (#StudentLife) and specific (#CITUniversity) tags
-            - Return ONLY a JSON array of strings like: ["#tag1", "#tag2", ...]
-            - No explanation, no markdown, just the JSON array
+            - Hashtags MUST be directly relevant to the specific content, topics, and themes in the caption above
+            - Include hashtags about the subject matter discussed in the caption
+            - Include 1-2 hashtags related to the organization name "%s"
+            - Each hashtag must start with #
+            - Do NOT use only generic tags — they must relate to what the caption is actually about
+            - Return ONLY a valid JSON array of exactly 7 strings, no markdown, no explanation
+            - Example format: ["#hashtag1", "#hashtag2", "#hashtag3", "#hashtag4", "#hashtag5", "#hashtag6", "#hashtag7"]
             """,
-            orgName, caption
+            orgName, caption, orgName
         );
 
         Map<String, Object> requestBody = Map.of(
@@ -179,8 +185,22 @@ public class GeminiClient {
                     .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
                     .block();
 
-                String raw = extractText(response).trim()
-                    .replaceAll("```json|```", "").trim();
+                String raw = extractText(response);
+                if (raw == null || raw.isBlank()) {
+                    System.out.println("⚠️ Gemini returned empty text for hashtags on attempt " + attempt);
+                    continue;
+                }
+
+                raw = raw.trim().replaceAll("```json|```", "").trim();
+
+                // Defensively find JSON array bounds (same approach as parseCaptions)
+                int start = raw.indexOf('[');
+                int end = raw.lastIndexOf(']');
+                if (start == -1 || end == -1 || end <= start) {
+                    System.out.println("⚠️ No valid JSON array found in hashtag response: " + raw);
+                    continue;
+                }
+                raw = raw.substring(start, end + 1);
 
                 com.fasterxml.jackson.databind.ObjectMapper mapper =
                     new com.fasterxml.jackson.databind.ObjectMapper();
@@ -196,7 +216,17 @@ public class GeminiClient {
             }
         }
 
-        return List.of("#StudentLife", "#CollegeOrg", "#Philippines");
+        // Derive fallback hashtags from the caption words instead of hardcoding
+        List<String> fallback = new ArrayList<>();
+        fallback.add("#" + orgName.replaceAll("[^a-zA-Z0-9]", ""));
+        String[] words = caption.split("\\s+");
+        for (String word : words) {
+            String cleaned = word.replaceAll("[^a-zA-Z0-9]", "");
+            if (cleaned.length() >= 4 && fallback.size() < 5) {
+                fallback.add("#" + cleaned.substring(0, 1).toUpperCase() + cleaned.substring(1).toLowerCase());
+            }
+        }
+        return fallback.isEmpty() ? List.of("#" + orgName.replaceAll("[^a-zA-Z0-9]", "")) : fallback;
     }
 
     // --- Private helpers ---
