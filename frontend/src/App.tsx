@@ -16,13 +16,19 @@ function ProtectedRoute({ children }: Readonly<{ children: ReactNode }>) {
   return user ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
+function PublicRoute({ children }: Readonly<{ children: ReactNode }>) {
+  const { user, isLoading } = useAuth();
+  if (isLoading) return <div className="flex h-screen items-center justify-center">Loading...</div>;
+  return user ? <Navigate to="/posts" replace /> : <>{children}</>;
+}
+
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/login" element={<LoginForm />} />
-          <Route path="/register" element={<RegistrationForm />} />
+          <Route path="/login" element={<PublicRoute><LoginForm /></PublicRoute>} />
+          <Route path="/register" element={<PublicRoute><RegistrationForm /></PublicRoute>} />
           <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>}>
             <Route index element={<Navigate to="/posts" replace />} />
             <Route path="posts" element={<PostManager />} />
