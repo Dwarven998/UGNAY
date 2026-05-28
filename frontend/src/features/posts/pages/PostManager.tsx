@@ -23,11 +23,22 @@ function parseCaptionDraftFromSession(): Partial<PostEditorDraft> | null {
 
   sessionStorage.removeItem('caption_draft');
   try {
-    const data = JSON.parse(saved) as { caption?: string; hashtags?: string[]; tone?: string };
+    const data = JSON.parse(saved) as {
+      caption?: string;
+      hashtags?: string[];
+      tone?: string;
+      imageUrl?: string;
+      assetId?: string;
+    };
     return {
       caption: data.caption ?? '',
+      /* Keep hashtags as-is (with # prefix) — the backend's FacebookPublishingJob
+         uses String.join(" ", hashtags) and expects # to already be present. */
       hashtags: data.hashtags ?? [],
       tone: data.tone ?? 'FORMAL',
+      mediaAssetId: data.assetId || undefined,
+      mediaPreviewUrl: data.imageUrl || undefined,
+      fromCaptionStudio: true,
     };
   } catch {
     return null;
@@ -41,6 +52,8 @@ function getDefaultDraft(date?: Date | null, initial?: Partial<PostEditorDraft> 
     tone: initial?.tone ?? 'FORMAL',
     mediaAssetId: initial?.mediaAssetId ?? '',
     scheduledAt: date ? date.toISOString() : initial?.scheduledAt,
+    mediaPreviewUrl: initial?.mediaPreviewUrl,
+    fromCaptionStudio: initial?.fromCaptionStudio,
   };
 }
 

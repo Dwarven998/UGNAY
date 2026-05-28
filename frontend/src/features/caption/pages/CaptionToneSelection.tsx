@@ -10,21 +10,31 @@ export default function CaptionToneSelection() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [imageUrl, setImageUrl] = useState('');
+  const [assetId, setAssetId] = useState('');
   const [selectedTone, setSelectedTone] = useState<Tone>(DEFAULT_TONE);
   const [captions, setCaptions] = useState<string[]>([]);
   const [selectedCaption, setSelectedCaption] = useState('');
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isRewriting, setIsRewriting] = useState(false);
+  const [isGeneratingHashtags, setIsGeneratingHashtags] = useState(false);
 
   useEffect(() => {
     const urlFromQuery = searchParams.get('imageUrl');
     const urlFromSession = sessionStorage.getItem('caption_image_url');
     const resolvedImageUrl = urlFromQuery ?? urlFromSession ?? '';
 
+    const assetIdFromQuery = searchParams.get('assetId');
+    const assetIdFromSession = sessionStorage.getItem('caption_asset_id');
+    const resolvedAssetId = assetIdFromQuery ?? assetIdFromSession ?? '';
+
     setImageUrl(resolvedImageUrl);
+    setAssetId(resolvedAssetId);
     if (resolvedImageUrl) {
       sessionStorage.setItem('caption_image_url', resolvedImageUrl);
+    }
+    if (resolvedAssetId) {
+      sessionStorage.setItem('caption_asset_id', resolvedAssetId);
     }
   }, [searchParams]);
 
@@ -64,11 +74,14 @@ export default function CaptionToneSelection() {
 
   const handleHashtags = async () => {
     if (!selectedCaption) return;
+    setIsGeneratingHashtags(true);
     try {
       const tags = await captionApi.hashtags(selectedCaption);
       setHashtags(tags);
     } catch (err: any) {
       alert(err.message || 'Failed to generate hashtags.');
+    } finally {
+      setIsGeneratingHashtags(false);
     }
   };
 
@@ -77,6 +90,7 @@ export default function CaptionToneSelection() {
       caption: selectedCaption,
       hashtags,
       imageUrl,
+      assetId,
       tone: selectedTone,
     }));
     navigate('/posts');
@@ -254,11 +268,23 @@ export default function CaptionToneSelection() {
             <div className="cts-section-header">
               <div className="cts-step-badge">4</div>
               <h2 className="cts-section-title" style={{ flex: 1 }}>Final Touches</h2>
-              <button type="button" onClick={handleHashtags} className="cts-btn-hashtag">
-                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
-                </svg>
-                Generate Hashtags
+              <button type="button" onClick={handleHashtags} className="cts-btn-hashtag" disabled={isGeneratingHashtags}>
+                {isGeneratingHashtags ? (
+                  <>
+                    <svg className="cts-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path style={{ opacity: 0.75 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Generating…
+                  </>
+                ) : (
+                  <>
+                    <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
+                    </svg>
+                    Generate Hashtags
+                  </>
+                )}
               </button>
             </div>
             <div className="cts-section-body">
@@ -599,7 +625,8 @@ const ctsStyles = `
     font-family: inherit;
     margin-left: auto;
   }
-  .cts-btn-hashtag:hover { background: #047857; }
+  .cts-btn-hashtag:hover:not(:disabled) { background: #047857; }
+  .cts-btn-hashtag:disabled { opacity: 0.65; cursor: not-allowed; }
   .cts-hashtag-pills {
     display: flex;
     flex-wrap: wrap;

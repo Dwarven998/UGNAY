@@ -174,7 +174,7 @@ export default function MediaRepository() {
                           Copy URL
                         </button>
                         <button
-                          onClick={() => navigate(`/caption/select-tone?imageUrl=${encodeURIComponent(asset.fileUrl)}`)}
+                          onClick={() => navigate(`/caption/select-tone?imageUrl=${encodeURIComponent(asset.fileUrl)}&assetId=${asset.id}`)}
                           className="mr-overlay-btn mr-overlay-btn-primary"
                         >
                           <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

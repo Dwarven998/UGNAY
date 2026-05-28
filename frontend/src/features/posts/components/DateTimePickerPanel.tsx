@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import DatePicker from 'react-datepicker';
 
 import 'react-datepicker/dist/react-datepicker.css';
@@ -12,18 +12,23 @@ export interface DateTimePickerPanelProps {
 export default function DateTimePickerPanel({ value, onChange, suggestedValue }: DateTimePickerPanelProps) {
   const [useSuggestedTime, setUseSuggestedTime] = useState(false);
 
-  useEffect(() => {
-    if (useSuggestedTime) {
+  /* Toggle handler — directly applies or clears the suggested time.
+     No useEffect needed, which avoids stale-closure re-fire issues
+     that were overriding manual time selections. */
+  const handleToggle = () => {
+    const next = !useSuggestedTime;
+    setUseSuggestedTime(next);
+    if (next) {
       onChange(suggestedValue);
     }
-  }, [onChange, suggestedValue, useSuggestedTime]);
+  };
 
   return (
     <div className="upe-datetime-panel">
       <button
         type="button"
         className={`upe-suggested-toggle ${useSuggestedTime ? 'is-active' : ''}`}
-        onClick={() => setUseSuggestedTime(current => !current)}
+        onClick={handleToggle}
       >
         Use AI-Suggested Time
       </button>

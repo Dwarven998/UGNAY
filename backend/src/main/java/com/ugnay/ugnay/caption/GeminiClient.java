@@ -19,7 +19,7 @@ public class GeminiClient {
     @Value("${gemini.api.url}")
     private String apiUrl;
 
-    private static final int MAX_RETRIES = 3;
+    private static final int MAX_RETRIES = 5;
     private static final long RETRY_DELAY_MS = 1500;
 
     private final WebClient webClient = WebClient.builder()
@@ -157,7 +157,7 @@ public class GeminiClient {
             - Include 1-2 hashtags related to the organization name "%s"
             - Each hashtag must start with #
             - Do NOT use only generic tags — they must relate to what the caption is actually about
-            - Return ONLY a valid JSON array of exactly 7 strings, no markdown, no explanation
+            - Return ONLY a valid JSON array of exactly 7 strings, no markdown, no explanation, no conversational filler
             - Example format: ["#hashtag1", "#hashtag2", "#hashtag3", "#hashtag4", "#hashtag5", "#hashtag6", "#hashtag7"]
             """,
             orgName, caption, orgName
@@ -165,7 +165,7 @@ public class GeminiClient {
 
         Map<String, Object> requestBody = Map.of(
             "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
-            "generationConfig", Map.of("temperature", 0.7, "maxOutputTokens", 256)
+            "generationConfig", Map.of("temperature", 0.7, "maxOutputTokens", 1024)
         );
 
         for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {

@@ -11,6 +11,10 @@ export interface PostEditorDraft {
   tone: string;
   mediaAssetId: string;
   scheduledAt: string;
+  /** Preview URL carried from Caption Studio (not an asset ID). */
+  mediaPreviewUrl?: string;
+  /** True when the draft originated from Caption Studio (tone was pre-selected). */
+  fromCaptionStudio?: boolean;
 }
 
 export interface PostEditorModalProps {
@@ -62,7 +66,7 @@ export default function PostEditorModal({
     setHashtags(mergedHashtags);
     setTone(initialPost?.tone ?? initialDraft?.tone ?? 'FORMAL');
     setMediaAssetId(initialDraft?.mediaAssetId ?? '');
-    setMediaPreviewUrl(initialPost?.mediaUrl ?? null);
+    setMediaPreviewUrl(initialPost?.mediaUrl ?? initialDraft?.mediaPreviewUrl ?? null);
     setScheduledAt(
       initialDraft?.scheduledAt
         ? new Date(initialDraft.scheduledAt)
@@ -218,21 +222,24 @@ export default function PostEditorModal({
             )}
           </div>
 
-          <div className="upe-grid-two">
+          <div className={initialDraft?.fromCaptionStudio ? '' : 'upe-grid-two'}>
             <label className="upe-field">
               <span>Hashtags</span>
               <div className="upe-chip-input-shell">
                 <div className="upe-chip-row">
-                  {hashtags.map(tag => (
-                    <button
-                      key={tag}
-                      type="button"
-                      className="upe-chip"
-                      onClick={() => { setHashtags(c => c.filter(i => i !== tag)); onClearConflict?.(); }}
-                    >
-                      #{tag} <span>×</span>
-                    </button>
-                  ))}
+                  {hashtags.map(tag => {
+                    const display = tag.replace(/^#/, '');
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        className="upe-chip"
+                        onClick={() => { setHashtags(c => c.filter(i => i !== tag)); onClearConflict?.(); }}
+                      >
+                        #{display} <span>×</span>
+                      </button>
+                    );
+                  })}
                   <input
                     value={hashtagInput}
                     onChange={e => setHashtagInput(e.target.value)}
@@ -248,15 +255,18 @@ export default function PostEditorModal({
               </div>
             </label>
 
-            <label className="upe-field">
-              <span>Tone</span>
-              <select value={tone} onChange={e => { setTone(e.target.value); onClearConflict?.(); }}>
-                <option value="FORMAL">Formal</option>
-                <option value="ENERGETIC">Energetic</option>
-                <option value="CELEBRATORY">Celebratory</option>
-                <option value="URGENT">Urgent</option>
-              </select>
-            </label>
+            {/* Hide tone selector when it was already chosen in Caption Studio */}
+            {!initialDraft?.fromCaptionStudio && (
+              <label className="upe-field">
+                <span>Tone</span>
+                <select value={tone} onChange={e => { setTone(e.target.value); onClearConflict?.(); }}>
+                  <option value="FORMAL">Formal</option>
+                  <option value="ENERGETIC">Energetic</option>
+                  <option value="CELEBRATORY">Celebratory</option>
+                  <option value="URGENT">Urgent</option>
+                </select>
+              </label>
+            )}
           </div>
 
           <label className="upe-field">
