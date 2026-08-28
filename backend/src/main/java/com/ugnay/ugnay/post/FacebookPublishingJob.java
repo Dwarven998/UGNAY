@@ -15,6 +15,8 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.core.UserRepository;
+import com.ugnay.ugnay.org.Organization;
+import com.ugnay.ugnay.org.OrganizationRepository;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,7 +34,19 @@ public class FacebookPublishingJob {
 
     private final PostRepository postRepository;
     private final UserRepository userRepository;
+    private final OrganizationRepository organizationRepository;
     private final WebClient webClient = WebClient.builder().build();
+
+    /** Resolves which (pageId, accessToken) to publish with: the post's org if it has one, else the author's legacy personal connection. */
+    private record PublishCredentials(String pageId, String accessToken, boolean orgScoped) {}
+
+    private PublishCredentials resolveCredentials(Post post, User user) {
+        Organization organization = post.getOrganization();
+        if (organization != null) {
+            return new PublishCredentials(organization.getFbPageId(), organization.getFbAccessToken(), true);
+        }
+        return new PublishCredentials(user.getFbPageId(), user.getFbAccessToken(), false);
+    }
 
     public void publishScheduledPost(UUID postId) {
         publishInternal(postId, false);
@@ -49,8 +63,9 @@ public class FacebookPublishingJob {
         User user = userRepository.findById(post.getUser().getId())
             .orElseThrow(() -> new IllegalArgumentException("User not found"));
 
-        if (user.getFbPageId() == null || user.getFbPageId().isBlank()
-            || user.getFbAccessToken() == null || user.getFbAccessToken().isBlank()) {
+        PublishCredentials credentials = resolveCredentials(post, user);
+        if (credentials.pageId() == null || credentials.pageId().isBlank()
+            || credentials.accessToken() == null || credentials.accessToken().isBlank()) {
             markFailed(postId, new IllegalStateException("Facebook Page connection is missing"));
             return;
         }
@@ -63,10 +78,10 @@ public class FacebookPublishingJob {
         // - /photos  → publishes an actual image + caption (visible as a photo post)
         // - /feed    → publishes text only
         String endpoint = hasImage
-            ? facebookApiUrl + "/" + user.getFbPageId() + "/photos"
-            : facebookApiUrl + "/" + user.getFbPageId() + "/feed";
+            ? facebookApiUrl + "/" + credentials.pageId() + "/photos"
+            : facebookApiUrl + "/" + credentials.pageId() + "/feed";
 
-        Map<String, Object> payload = buildPayload(user, post, hasImage);
+        Map<String, Object> payload = buildPayload(credentials, post, hasImage);
 
         log.info("Publishing post {} to Facebook endpoint: {} (hasImage={})", postId, endpoint, hasImage);
 
@@ -93,9 +108,9 @@ public class FacebookPublishingJob {
         }
     }
 
-    private Map<String, Object> buildPayload(User user, Post post, boolean hasImage) {
+    private Map<String, Object> buildPayload(PublishCredentials credentials, Post post, boolean hasImage) {
         Map<String, Object> payload = new HashMap<>();
-        payload.put("access_token", user.getFbAccessToken());
+        payload.put("access_token", credentials.accessToken());
 
         String message = buildMessage(post);
 
@@ -147,12 +162,21 @@ public class FacebookPublishingJob {
             post.setStatus(Post.PostStatus.FAILED);
             postRepository.save(post);
             if (isConnectionInvalid(error)) {
-                userRepository.findById(post.getUser().getId()).ifPresent(user -> {
-                    user.setFbPageId(null);
-                    user.setFbAccessToken(null);
-                    userRepository.save(user);
-                    log.warn("Cleared invalid FB credentials for user {}", user.getId());
-                });
+                if (post.getOrganization() != null) {
+                    organizationRepository.findById(post.getOrganization().getId()).ifPresent(org -> {
+                        org.setFbPageId(null);
+                        org.setFbAccessToken(null);
+                        organizationRepository.save(org);
+                        log.warn("Cleared invalid FB credentials for organization {}", org.getId());
+                    });
+                } else {
+                    userRepository.findById(post.getUser().getId()).ifPresent(user -> {
+                        user.setFbPageId(null);
+                        user.setFbAccessToken(null);
+                        userRepository.save(user);
+                        log.warn("Cleared invalid FB credentials for user {}", user.getId());
+                    });
+                }
             }
             log.error("Failed to publish post {}", postId, error);
         });

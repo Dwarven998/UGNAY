@@ -3,10 +3,12 @@ import { useState, useEffect, useRef } from 'react';
 import type { ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { mediaApi } from '../api/mediaApi.ts';
-import type { MediaFolder, MediaAsset } from '../../../types';
+import { useOrganization } from '../../../context/OrganizationContext';
+import type { MediaFolder, MediaAsset, MediaRecommendation } from '../../../types';
 
 export default function MediaRepository() {
   const navigate = useNavigate();
+  const { activeOrgId, activeOrg } = useOrganization();
   const [folders, setFolders] = useState<MediaFolder[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<MediaFolder | null>(null);
   const [assets, setAssets] = useState<MediaAsset[]>([]);
@@ -14,24 +16,72 @@ export default function MediaRepository() {
   const [isUploading, setIsUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const [aiDescription, setAiDescription] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [aiResults, setAiResults] = useState<MediaRecommendation[] | null>(null);
+
+  // Only officers/admins may create directories inside an org's shared Media Repository.
+  const canCreateFolder = !activeOrgId || activeOrg?.role === 'ADMIN' || activeOrg?.role === 'OFFICER';
+
   const loadFolders = async () => {
-    const data = await mediaApi.getFolders();
+    const data = await mediaApi.getFolders(activeOrgId);
     setFolders(data);
   };
 
-  useEffect(() => { loadFolders(); }, []);
+  useEffect(() => {
+    setSelectedFolder(null);
+    setAssets([]);
+    loadFolders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrgId]);
 
   const loadAssets = async (folder: MediaFolder) => {
     setSelectedFolder(folder);
+    setAiResults(null);
+    setAiDescription('');
+    setAiError('');
     const data = await mediaApi.getAssets(folder.id);
     setAssets(data);
   };
 
+  const runRecommendation = async () => {
+    if (!selectedFolder || !aiDescription.trim()) return;
+    setAiLoading(true);
+    setAiError('');
+    try {
+      const results = await mediaApi.recommend(selectedFolder.id, aiDescription.trim());
+      if (results.length === 0) {
+        setAiError('No images to score in this folder yet — upload some first.');
+        setAiResults(null);
+      } else {
+        setAiResults(results);
+      }
+    } catch {
+      setAiError('AI recommendation failed. Please try again.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const clearRecommendation = () => {
+    setAiResults(null);
+    setAiDescription('');
+    setAiError('');
+  };
+
   const createFolder = async () => {
-    if (!newFolderName.trim()) return;
-    const folder = await mediaApi.createFolder(newFolderName.trim());
+    if (!newFolderName.trim() || !canCreateFolder) return;
+    const folder = await mediaApi.createFolder(newFolderName.trim(), activeOrgId);
     setFolders(prev => [...prev, folder]);
     setNewFolderName('');
+  };
+
+  const handleDeleteAsset = async (assetId: string) => {
+    await mediaApi.deleteAsset(assetId);
+    setAssets(prev => prev.filter(a => a.id !== assetId));
+    setAiResults(prev => prev ? prev.filter(r => r.id !== assetId) : prev);
+    loadFolders(); // refresh asset count
   };
 
   const handleUpload = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -62,22 +112,26 @@ export default function MediaRepository() {
             </div>
           </div>
 
-          {/* Create folder */}
-          <div className="mr-create-folder">
-            <input
-              type="text"
-              placeholder="New folder name..."
-              value={newFolderName}
-              onChange={e => setNewFolderName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && createFolder()}
-              className="mr-folder-input"
-            />
-            <button onClick={createFolder} className="mr-folder-add-btn" aria-label="Create folder">
-              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-            </button>
-          </div>
+          {/* Create folder — org directories are officer/admin only */}
+          {canCreateFolder ? (
+            <div className="mr-create-folder">
+              <input
+                type="text"
+                placeholder="New folder name..."
+                value={newFolderName}
+                onChange={e => setNewFolderName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && createFolder()}
+                className="mr-folder-input"
+              />
+              <button onClick={createFolder} className="mr-folder-add-btn" aria-label="Create folder">
+                <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+            </div>
+          ) : (
+            <p className="mr-folder-restricted-hint">Only officers/admins can create new directories in {activeOrg?.orgName}.</p>
+          )}
 
           {/* Folder list */}
           <div className="mr-folder-list">
@@ -151,6 +205,65 @@ export default function MediaRepository() {
                 />
               </div>
 
+              <div className="mr-ai-panel">
+                <div className="mr-ai-panel-row">
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="mr-ai-icon">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                  </svg>
+                  <input
+                    type="text"
+                    placeholder={'Describe the image you need, e.g. "students smiling at the registration booth"...'}
+                    value={aiDescription}
+                    onChange={e => setAiDescription(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && runRecommendation()}
+                    className="mr-ai-input"
+                  />
+                  <button onClick={runRecommendation} disabled={aiLoading || !aiDescription.trim()} className="mr-ai-btn">
+                    {aiLoading ? 'Thinking…' : 'Find best match'}
+                  </button>
+                  {aiResults && (
+                    <button onClick={clearRecommendation} className="mr-ai-clear-btn">Clear</button>
+                  )}
+                </div>
+                {aiError && <p className="mr-ai-error">{aiError}</p>}
+              </div>
+
+              {aiResults ? (
+                <div className="mr-assets-grid">
+                  {aiResults.map((result, i) => (
+                    <div key={result.id} className="mr-asset-card mr-asset-card-ranked" style={{ animationDelay: `${i * 0.04}s` }}>
+                      <div className="mr-asset-preview">
+                        <img src={result.fileUrl} alt={result.fileName} />
+                        <span className="mr-ai-score-badge">{result.score}% match</span>
+                        <div className="mr-asset-overlay">
+                          <button
+                            onClick={() => navigator.clipboard.writeText(result.fileUrl)}
+                            className="mr-overlay-btn"
+                          >
+                            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                            </svg>
+                            Copy URL
+                          </button>
+                          <button
+                            onClick={() => navigate(`/caption/select-tone?imageUrl=${encodeURIComponent(result.fileUrl)}&assetId=${result.id}`)}
+                            className="mr-overlay-btn mr-overlay-btn-primary"
+                          >
+                            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                            </svg>
+                            Caption Studio
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mr-asset-info mr-asset-info-reason">
+                        <p className="mr-asset-name">{result.fileName}</p>
+                        <p className="mr-ai-reason">{result.reason}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
               <div className="mr-assets-grid">
                 {assets.map((asset, i) => (
                   <div key={asset.id} className="mr-asset-card" style={{ animationDelay: `${i * 0.04}s` }}>
@@ -182,6 +295,15 @@ export default function MediaRepository() {
                           </svg>
                           Caption Studio
                         </button>
+                        <button
+                          onClick={() => handleDeleteAsset(asset.id)}
+                          className="mr-overlay-btn mr-overlay-btn-danger"
+                        >
+                          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                          Delete
+                        </button>
                       </div>
                     </div>
                     <div className="mr-asset-info">
@@ -202,6 +324,7 @@ export default function MediaRepository() {
                   </div>
                 )}
               </div>
+              )}
             </>
           ) : (
             <div className="mr-no-selection">
@@ -289,6 +412,13 @@ export default function MediaRepository() {
           flex-shrink: 0;
         }
         .mr-folder-add-btn:hover { background: #0a3867; }
+        .mr-folder-restricted-hint {
+          font-size: 12px;
+          color: #94a3b8;
+          line-height: 1.5;
+          padding: 8px;
+          margin: 0 0 20px;
+        }
 
         /* Folder list */
         .mr-folder-list {
@@ -390,6 +520,82 @@ export default function MediaRepository() {
           color: #64748b;
           margin: 0;
         }
+
+        /* ── AI recommendation panel ── */
+        .mr-ai-panel {
+          background: linear-gradient(135deg, rgba(12,68,124,0.03), rgba(59,130,246,0.03));
+          border: 1px solid rgba(12,68,124,0.1);
+          border-radius: 14px;
+          padding: 14px 16px;
+          margin-bottom: 20px;
+        }
+        .mr-ai-panel-row { display: flex; align-items: center; gap: 10px; }
+        .mr-ai-icon { color: #0C447C; flex-shrink: 0; }
+        .mr-ai-input {
+          flex: 1;
+          height: 40px;
+          border: 2px solid #e2e8f0;
+          border-radius: 10px;
+          padding: 0 14px;
+          font-size: 13px;
+          color: #0f172a;
+          outline: none;
+          background: #ffffff;
+          font-family: inherit;
+        }
+        .mr-ai-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+        .mr-ai-btn {
+          height: 40px;
+          padding: 0 18px;
+          background: #0C447C;
+          color: #fff;
+          border: none;
+          border-radius: 10px;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          font-family: inherit;
+          white-space: nowrap;
+          flex-shrink: 0;
+        }
+        .mr-ai-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .mr-ai-btn:hover:not(:disabled) { background: #0a3867; }
+        .mr-ai-clear-btn {
+          height: 40px;
+          padding: 0 14px;
+          background: #f1f5f9;
+          color: #475569;
+          border: none;
+          border-radius: 10px;
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          font-family: inherit;
+          flex-shrink: 0;
+        }
+        .mr-ai-clear-btn:hover { background: #e2e8f0; }
+        .mr-ai-error { margin: 10px 0 0; font-size: 12px; color: #b91c1c; }
+        .mr-ai-score-badge {
+          position: absolute;
+          top: 10px; left: 10px;
+          background: rgba(12,68,124,0.85);
+          backdrop-filter: blur(4px);
+          color: #fff;
+          font-size: 11px;
+          font-weight: 700;
+          padding: 4px 10px;
+          border-radius: 999px;
+          z-index: 1;
+        }
+        .mr-asset-card-ranked { border-color: rgba(12,68,124,0.18); }
+        .mr-asset-info-reason { flex-direction: column; align-items: flex-start; gap: 4px; }
+        .mr-ai-reason {
+          font-size: 11px;
+          color: #64748b;
+          margin: 0;
+          line-height: 1.4;
+        }
+
         .mr-btn-upload {
           display: inline-flex;
           align-items: center;
@@ -486,6 +692,13 @@ export default function MediaRepository() {
         }
         .mr-overlay-btn-primary:hover {
           background: rgba(12,68,124,0.9);
+        }
+        .mr-overlay-btn-danger {
+          background: rgba(220,38,38,0.65);
+          border-color: rgba(248,113,113,0.4);
+        }
+        .mr-overlay-btn-danger:hover {
+          background: rgba(220,38,38,0.9);
         }
         .mr-asset-info {
           padding: 12px 14px;

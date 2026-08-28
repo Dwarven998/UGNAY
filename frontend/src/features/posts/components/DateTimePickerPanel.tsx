@@ -44,6 +44,7 @@ export default function DateTimePickerPanel({ value, onChange, suggestedValue }:
         placeholderText="Select date and time"
         className="upe-datepicker"
         wrapperClassName="upe-datepicker-wrapper"
+        portalId="datepicker-portal"
       />
       <div className="upe-datetime-hint">
         Suggested time: {suggestedValue.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}

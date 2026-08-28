@@ -2,6 +2,7 @@ package com.ugnay.ugnay.facebook;
 
 import java.net.URI;
 import java.util.Map;
+import java.util.UUID;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -28,8 +29,15 @@ public class FacebookOAuthController {
     private String frontendUrl;
 
     @GetMapping("/url")
-    public ResponseEntity<Map<String, String>> authorizationUrl(@AuthenticationPrincipal User user) {
-        return ResponseEntity.ok(Map.of("url", facebookOAuthService.buildAuthorizationUrl(user)));
+    public ResponseEntity<Map<String, String>> authorizationUrl(@AuthenticationPrincipal User user,
+                                                                 @RequestParam(required = false) UUID orgId) {
+        return ResponseEntity.ok(Map.of("url", facebookOAuthService.buildAuthorizationUrl(user, orgId)));
+    }
+
+    @GetMapping("/status")
+    public ResponseEntity<FacebookOAuthService.FacebookConnectionDetails> status(@AuthenticationPrincipal User user,
+                                                                                  @RequestParam UUID orgId) {
+        return ResponseEntity.ok(facebookOAuthService.buildConnectionDetailsForOrg(user, orgId));
     }
 
     @GetMapping("/callback")
@@ -57,8 +65,9 @@ public class FacebookOAuthController {
     }
 
     @DeleteMapping
-    public ResponseEntity<Void> disconnect(@AuthenticationPrincipal User user) {
-        facebookOAuthService.disconnect(user);
+    public ResponseEntity<Void> disconnect(@AuthenticationPrincipal User user,
+                                           @RequestParam(required = false) UUID orgId) {
+        facebookOAuthService.disconnect(user, orgId);
         return ResponseEntity.noContent().build();
     }
 }

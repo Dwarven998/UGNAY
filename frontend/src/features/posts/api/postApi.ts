@@ -11,14 +11,25 @@ export interface PostUpsertPayload {
 }
 
 export const postApi = {
-  getAll: () => axiosClient.get<Post[]>('/api/posts').then((r: ApiResponse<Post[]>) => r.data),
+  getAll: (orgId?: string | null) =>
+    axiosClient
+      .get<Post[]>(orgId ? `/api/posts?orgId=${orgId}` : '/api/posts')
+      .then((r: ApiResponse<Post[]>) => r.data),
 
-  create: (data: PostUpsertPayload) => axiosClient.post<Post>('/api/posts', data).then((r: ApiResponse<Post>) => r.data),
+  create: (data: PostUpsertPayload, orgId?: string | null) =>
+    axiosClient.post<Post>('/api/posts', { ...data, orgId: orgId ?? undefined }).then((r: ApiResponse<Post>) => r.data),
 
-  update: (id: string, data: PostUpsertPayload) =>
-    axiosClient.put<Post>(`/api/posts/${id}`, data).then((r: ApiResponse<Post>) => r.data),
+  update: (id: string, data: PostUpsertPayload, orgId?: string | null) =>
+    axiosClient.put<Post>(`/api/posts/${id}`, { ...data, orgId: orgId ?? undefined }).then((r: ApiResponse<Post>) => r.data),
 
   delete: (id: string) => axiosClient.delete(`/api/posts/${id}`),
 
   publish: (id: string) => axiosClient.post<Post>(`/api/posts/${id}/publish`).then((r: ApiResponse<Post>) => r.data),
+
+  getModerationQueue: (orgId: string) =>
+    axiosClient.get<Post[]>(`/api/posts/moderation?orgId=${orgId}`).then((r: ApiResponse<Post[]>) => r.data),
+
+  approve: (id: string) => axiosClient.post<Post>(`/api/posts/${id}/approve`).then((r: ApiResponse<Post>) => r.data),
+
+  reject: (id: string) => axiosClient.post<Post>(`/api/posts/${id}/reject`).then((r: ApiResponse<Post>) => r.data),
 };

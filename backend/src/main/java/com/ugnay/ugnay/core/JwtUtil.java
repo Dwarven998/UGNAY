@@ -31,12 +31,29 @@ public class JwtUtil {
             .compact();
     }
 
+    /** OAuth "state" token that additionally carries which organization the flow is scoped to, if any. */
+    public String generateFacebookState(String email, String userId, String orgId) {
+        var builder = Jwts.builder()
+            .subject(email)
+            .claim("userId", userId)
+            .issuedAt(new Date())
+            .expiration(new Date(System.currentTimeMillis() + expiration));
+        if (orgId != null) {
+            builder.claim("orgId", orgId);
+        }
+        return builder.signWith(getKey()).compact();
+    }
+
     public String extractEmail(String token) {
         return getClaims(token).getSubject();
     }
 
     public String extractUserId(String token) {
         return getClaims(token).get("userId", String.class);
+    }
+
+    public String extractOrgId(String token) {
+        return getClaims(token).get("orgId", String.class);
     }
 
     public boolean isValid(String token) {

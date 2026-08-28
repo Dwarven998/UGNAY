@@ -1,16 +1,18 @@
 // pages/Dashboard.tsx
 import { Outlet, NavLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import OrgSwitcher from '../organizations/user/components/OrgSwitcher';
 
 const NAV_ITEMS = [
   { to: '/posts',     icon: '📅', label: 'Post Manager'       },
   { to: '/caption',  icon: '✨', label: 'Caption Studio'      },
   { to: '/media',    icon: '🗂️', label: 'Media Repository'   },
   { to: '/analytics',icon: '📊', label: 'Analytics'          },
+  { to: '/organizations', icon: '🏛️', label: 'Organizations' },
 ];
 
 export default function Dashboard() {
-  const { user, logout } = useAuth();
+  const { logout } = useAuth();
 
   return (
     <>
@@ -31,16 +33,8 @@ export default function Dashboard() {
             <span className="sidebar-logo-text">UGNAY</span>
           </div>
 
-          {/* Org badge */}
-          <div className="sidebar-org">
-            <div className="sidebar-org-avatar">
-              {user?.orgName?.charAt(0)?.toUpperCase() || 'U'}
-            </div>
-            <div className="sidebar-org-info">
-              <span className="sidebar-org-name">{user?.orgName}</span>
-              <span className="sidebar-org-role">Organization</span>
-            </div>
-          </div>
+          {/* Org switcher */}
+          <OrgSwitcher />
 
           {/* Divider */}
           <div className="sidebar-divider"></div>

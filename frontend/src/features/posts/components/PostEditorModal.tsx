@@ -22,6 +22,8 @@ export interface PostEditorModalProps {
   initialPost?: Post | null;
   initialDraft?: Partial<PostEditorDraft> | null;
   conflict?: PostConflict | null;
+  loading?: boolean;
+  error?: string;
   onClose: () => void;
   onSubmit: (draft: PostEditorDraft) => Promise<void>;
   onClearConflict?: () => void;
@@ -39,6 +41,8 @@ export default function PostEditorModal({
   initialPost,
   initialDraft,
   conflict,
+  loading = false,
+  error = '',
   onClose,
   onSubmit,
   onClearConflict,
@@ -135,6 +139,14 @@ export default function PostEditorModal({
         </div>
 
         {conflict && <ConflictAlertBanner conflict={conflict} />}
+        {error && (
+          <div className="upe-modal-error-banner">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>{error}</span>
+          </div>
+        )}
 
         <div className="upe-modal-body">
           <label className="upe-field">
@@ -281,13 +293,29 @@ export default function PostEditorModal({
 
         <div className="upe-modal-footer">
           <button type="button" className="upe-secondary-btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="upe-primary-btn" onClick={submit} disabled={Boolean(conflict)}>
-            {initialPost ? 'Update Post' : 'Schedule Post'}
+          <button type="button" className="upe-primary-btn" onClick={submit} disabled={Boolean(conflict) || loading}>
+            {loading ? (initialPost ? 'Saving…' : 'Scheduling…') : (initialPost ? 'Update Post' : 'Schedule Post')}
           </button>
         </div>
       </div>
 
       <style>{`
+        .upe-modal-error-banner {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-top: 16px;
+          padding: 12px 16px;
+          background: #fef2f2;
+          border: 1px solid #fecaca;
+          border-left: 4px solid #ef4444;
+          border-radius: 10px;
+          font-size: 13px;
+          font-weight: 500;
+          color: #991b1b;
+        }
+        .upe-modal-error-banner svg { color: #ef4444; flex-shrink: 0; }
+
         .upe-media-picker-row {
           display: flex;
           align-items: center;
