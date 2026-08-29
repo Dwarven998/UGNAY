@@ -3,7 +3,6 @@ package com.ugnay.ugnay.media;
 
 
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.http.ResponseEntity;
@@ -14,6 +13,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.ugnay.ugnay.core.User;
@@ -29,14 +29,15 @@ public class MediaController {
 
     // --- FOLDERS ---
     @GetMapping("/folders")
-    public ResponseEntity<List<FolderDto>> getFolders(@AuthenticationPrincipal User user) {
-        return ResponseEntity.ok().body(mediaService.getFolders(user));
+    public ResponseEntity<List<FolderDto>> getFolders(@AuthenticationPrincipal User user,
+                                                       @RequestParam(required = false) UUID orgId) {
+        return ResponseEntity.ok().body(mediaService.getFolders(user, orgId));
     }
 
     @PostMapping("/folders")
     public ResponseEntity<FolderDto> createFolder(@AuthenticationPrincipal User user,
-                                                  @RequestBody Map<String,String> body) {
-        return ResponseEntity.ok().body(mediaService.createFolder(user, body.get("name")));
+                                                  @RequestBody CreateFolderRequest req) {
+        return ResponseEntity.ok().body(mediaService.createFolder(user, req.name(), req.orgId()));
     }
 
     @DeleteMapping("/folders/{folderId}")
@@ -68,8 +69,19 @@ public class MediaController {
         return ResponseEntity.noContent().build();
     }
 
+    // --- AI RECOMMENDATION ---
+    @PostMapping("/folders/{folderId}/recommend")
+    public ResponseEntity<List<RecommendationDto>> recommend(@AuthenticationPrincipal User user,
+                                                              @PathVariable UUID folderId,
+                                                              @RequestBody RecommendRequest req) {
+        return ResponseEntity.ok(mediaService.recommendImages(user, folderId, req.description()));
+    }
+
     // DTOs
     public record FolderDto(UUID id, String name, int assetCount) {}
     public record AssetDto(UUID id, String fileName, String fileUrl, String fileType) {}
     public record AssetMetaRequest(UUID folderId, String fileName, String fileUrl, String fileType) {}
+    public record CreateFolderRequest(String name, UUID orgId) {}
+    public record RecommendRequest(String description) {}
+    public record RecommendationDto(UUID id, String fileName, String fileUrl, String fileType, int score, String reason) {}
 }

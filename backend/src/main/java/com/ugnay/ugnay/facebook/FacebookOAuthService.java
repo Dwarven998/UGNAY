@@ -18,6 +18,9 @@ import org.springframework.web.util.UriComponentsBuilder;
 import com.ugnay.ugnay.core.JwtUtil;
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.core.UserRepository;
+import com.ugnay.ugnay.org.Organization;
+import com.ugnay.ugnay.org.OrganizationPermissionService;
+import com.ugnay.ugnay.org.OrganizationRepository;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,10 +55,21 @@ public class FacebookOAuthService {
 
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
+    private final OrganizationRepository organizationRepository;
+    private final OrganizationPermissionService organizationPermissionService;
     private final WebClient webClient = WebClient.builder().build();
 
-    public String buildAuthorizationUrl(User user) {
-        String state = jwtUtil.generateToken(user.getEmail(), user.getId().toString());
+    /**
+     * Builds the Facebook OAuth URL. When orgId is present, the resulting Page
+     * connection is stored on that Organization (requires officer/admin there)
+     * instead of on the User's legacy personal connection.
+     */
+    public String buildAuthorizationUrl(User user, UUID orgId) {
+        if (orgId != null) {
+            organizationPermissionService.requireOfficerOrAdmin(user.getId(), orgId);
+        }
+        String state = jwtUtil.generateFacebookState(user.getEmail(), user.getId().toString(),
+                orgId != null ? orgId.toString() : null);
         return UriComponentsBuilder.fromHttpUrl(facebookAuthorizeUrl)
                 .queryParam("client_id", facebookAppId)
                 .queryParam("redirect_uri", facebookRedirectUri)
@@ -78,11 +92,13 @@ public class FacebookOAuthService {
         UUID userId = UUID.fromString(jwtUtil.extractUserId(state));
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));
+        String orgIdStr = jwtUtil.extractOrgId(state);
+        UUID orgId = orgIdStr != null ? UUID.fromString(orgIdStr) : null;
 
         FacebookPageAccount pageAccount;
         try {
-            log.info("Completing Facebook OAuth for user={}, codePresent={}, statePresent={}", user.getId(), code != null,
-                    state != null);
+            log.info("Completing Facebook OAuth for user={}, org={}, codePresent={}, statePresent={}", user.getId(),
+                    orgId, code != null, state != null);
 
             String shortLivedToken = exchangeCodeForUserToken(code);
             log.debug("Obtained short-lived token for user={}", user.getId());
@@ -91,11 +107,19 @@ public class FacebookOAuthService {
             log.debug("Exchanged for long-lived token for user={}", user.getId());
 
             pageAccount = fetchPrimaryPage(longLivedToken);
-            log.info("Fetched primary Facebook Page for user={} pageId={}", user.getId(), pageAccount.pageId());
+            log.info("Fetched primary Facebook Page for user={} org={} pageId={}", user.getId(), orgId, pageAccount.pageId());
 
-            user.setFbPageId(pageAccount.pageId());
-            user.setFbAccessToken(pageAccount.pageAccessToken());
-            userRepository.save(user);
+            if (orgId != null) {
+                Organization org = organizationRepository.findById(orgId)
+                        .orElseThrow(() -> new IllegalArgumentException("Organization not found"));
+                org.setFbPageId(pageAccount.pageId());
+                org.setFbAccessToken(pageAccount.pageAccessToken());
+                organizationRepository.save(org);
+            } else {
+                user.setFbPageId(pageAccount.pageId());
+                user.setFbAccessToken(pageAccount.pageAccessToken());
+                userRepository.save(user);
+            }
         } catch (Exception ex) {
             log.error("Facebook OAuth completion failed for user={}, state={}: {}", user.getId(), state,
                     ex.getMessage(), ex);
@@ -110,26 +134,47 @@ public class FacebookOAuthService {
         );
     }
 
+    /** Legacy per-user personal connection (used when no organization is active). */
     @Transactional(readOnly = true)
     public FacebookConnectionDetails buildConnectionDetails(User user) {
-        if (user.getFbPageId() == null || user.getFbPageId().isBlank()
-                || user.getFbAccessToken() == null || user.getFbAccessToken().isBlank()) {
+        return resolveConnectionDetails(user.getFbPageId(), user.getFbAccessToken());
+    }
+
+    @Transactional(readOnly = true)
+    public FacebookConnectionDetails buildConnectionDetailsForOrg(User user, UUID orgId) {
+        organizationPermissionService.requireApprovedMember(user.getId(), orgId);
+        Organization org = organizationRepository.findById(orgId)
+                .orElseThrow(() -> new IllegalArgumentException("Organization not found"));
+        return resolveConnectionDetails(org.getFbPageId(), org.getFbAccessToken());
+    }
+
+    private FacebookConnectionDetails resolveConnectionDetails(String pageId, String accessToken) {
+        if (pageId == null || pageId.isBlank() || accessToken == null || accessToken.isBlank()) {
             return new FacebookConnectionDetails(false, null, null, null);
         }
-
         try {
-            FacebookPageDetails page = fetchPageDetails(user.getFbPageId(), user.getFbAccessToken());
+            FacebookPageDetails page = fetchPageDetails(pageId, accessToken);
             return new FacebookConnectionDetails(true, page.pageId(), page.pageName(), page.pagePictureUrl());
         } catch (RuntimeException ex) {
-            return new FacebookConnectionDetails(true, user.getFbPageId(), null, null);
+            return new FacebookConnectionDetails(true, pageId, null, null);
         }
     }
 
+    /** Disconnects the org's Page connection (officer/admin only) when orgId is present, else the caller's personal one. */
     @Transactional
-    public void disconnect(User user) {
-        user.setFbPageId(null);
-        user.setFbAccessToken(null);
-        userRepository.save(user);
+    public void disconnect(User user, UUID orgId) {
+        if (orgId != null) {
+            organizationPermissionService.requireOfficerOrAdmin(user.getId(), orgId);
+            Organization org = organizationRepository.findById(orgId)
+                    .orElseThrow(() -> new IllegalArgumentException("Organization not found"));
+            org.setFbPageId(null);
+            org.setFbAccessToken(null);
+            organizationRepository.save(org);
+        } else {
+            user.setFbPageId(null);
+            user.setFbAccessToken(null);
+            userRepository.save(user);
+        }
     }
 
     private String exchangeCodeForUserToken(String code) {

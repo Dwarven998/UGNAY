@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { ApiError } from '../../../api/axiosClient';
-import { useAuth } from '../../../context/AuthContext';
+import { useOrganization } from '../../../context/OrganizationContext';
 import type { Post, PostConflict } from '../../../types';
 import { postApi, type PostUpsertPayload } from '../api/postApi';
 import FacebookPageConnectButton from '../components/FacebookPageConnectButton';
+import { useFacebookConnection } from '../hooks/useFacebookConnection';
 import PostEditorModal, { type PostEditorDraft } from '../components/PostEditorModal';
 import PostSchedulerCalendar from '../components/PostSchedulerCalendar';
 
@@ -58,24 +59,45 @@ function getDefaultDraft(date?: Date | null, initial?: Partial<PostEditorDraft> 
 }
 
 export default function PostManager() {
-  const { user, refreshUserProfile } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { activeOrgId, activeOrg } = useOrganization();
+  const { connected: facebookConnected, refresh: refreshFacebookConnection } = useFacebookConnection();
   const [posts, setPosts] = useState<Post[]>([]);
+  const [pendingPosts, setPendingPosts] = useState<Post[]>([]);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [conflict, setConflict] = useState<PostConflict | null>(null);
   const [loading, setLoading] = useState(false);
   const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
+  const [moderatingPostId, setModeratingPostId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
+
+  const canModerate = activeOrg?.role === 'ADMIN' || activeOrg?.role === 'OFFICER';
+  // Personal workspace: the user manages their own connection. Inside an org: officer/admin only.
+  const canManageFacebook = !activeOrgId || canModerate;
 
   const loadPosts = async () => {
-    const data = await postApi.getAll();
+    const data = await postApi.getAll(activeOrgId);
     setPosts(data);
+  };
+
+  const loadPendingPosts = async () => {
+    if (!activeOrgId || !canModerate) {
+      setPendingPosts([]);
+      return;
+    }
+    const data = await postApi.getModerationQueue(activeOrgId);
+    setPendingPosts(data);
   };
 
   useEffect(() => {
     loadPosts();
+    loadPendingPosts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrgId, canModerate]);
 
+  useEffect(() => {
     const initialDraft = parseCaptionDraftFromSession();
     if (initialDraft) {
       setEditor({ mode: 'create', draft: initialDraft });
@@ -89,7 +111,7 @@ export default function PostManager() {
     }
 
     const message = searchParams.get('message');
-    void refreshUserProfile();
+    void refreshFacebookConnection();
     if (facebookState === 'failed') {
       setError(message || 'Facebook connection failed.');
     } else {
@@ -97,10 +119,10 @@ export default function PostManager() {
     }
 
     navigate('/posts', { replace: true });
-  }, [navigate, refreshUserProfile, searchParams]);
+  }, [navigate, refreshFacebookConnection, searchParams]);
 
   const openCreate = (date?: Date) => {
-    if (!user?.facebookConnected) {
+    if (!facebookConnected) {
       setError('Connect your Facebook Page to enable post scheduling.');
       return;
     }
@@ -141,10 +163,12 @@ export default function PostManager() {
     try {
       setLoading(true);
       setError('');
-      if (editor?.mode === 'edit' && editor.post) {
-        await postApi.update(editor.post.id, payload);
-      } else {
-        await postApi.create(payload);
+      setInfo('');
+      const saved = editor?.mode === 'edit' && editor.post
+        ? await postApi.update(editor.post.id, payload, activeOrgId)
+        : await postApi.create(payload, activeOrgId);
+      if (saved.status === 'PENDING_REVIEW') {
+        setInfo('Submitted for officer/admin approval before it can be scheduled.');
       }
       await loadPosts();
       closeEditor();
@@ -168,6 +192,30 @@ export default function PostManager() {
     setPosts(current => current.filter(post => post.id !== id));
   };
 
+  const handleApprove = async (id: string) => {
+    try {
+      setModeratingPostId(id);
+      await postApi.approve(id);
+      await Promise.all([loadPosts(), loadPendingPosts()]);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to approve post');
+    } finally {
+      setModeratingPostId(null);
+    }
+  };
+
+  const handleReject = async (id: string) => {
+    try {
+      setModeratingPostId(id);
+      await postApi.reject(id);
+      await Promise.all([loadPosts(), loadPendingPosts()]);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to reject post');
+    } finally {
+      setModeratingPostId(null);
+    }
+  };
+
   const handlePublish = async (post: Post) => {
     try {
       setPublishingPostId(post.id);
@@ -189,6 +237,8 @@ export default function PostManager() {
     SCHEDULED: { bg: 'rgba(59,130,246,0.10)', color: '#2563eb', label: 'Scheduled' },
     PUBLISHED: { bg: 'rgba(16,185,129,0.10)', color: '#059669', label: 'Published' },
     FAILED: { bg: 'rgba(239,68,68,0.10)', color: '#dc2626', label: 'Failed' },
+    PENDING_REVIEW: { bg: 'rgba(245,158,11,0.10)', color: '#b45309', label: 'Pending Review' },
+    REJECTED: { bg: 'rgba(239,68,68,0.10)', color: '#dc2626', label: 'Rejected' },
   };
 
   return (
@@ -206,23 +256,25 @@ export default function PostManager() {
           <p className="upe-subtitle">
             Schedule posts, resolve time conflicts before saving, and let the backend publish them exactly at the chosen time.
           </p>
-          {!user?.facebookConnected && (
+          {!facebookConnected && (
             <div className="upe-connection-notice">
               <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
-              Connect your Facebook Page to enable post scheduling.
+              {canManageFacebook
+                ? 'Connect your Facebook Page to enable post scheduling.'
+                : `Waiting for an officer or admin to connect ${activeOrg?.orgName ?? 'the organization'}'s Facebook Page before posts can be scheduled.`}
             </div>
           )}
         </div>
 
         <div className="upe-header-actions">
-          <FacebookPageConnectButton />
+          {canManageFacebook && <FacebookPageConnectButton />}
           <button
             type="button"
             className="upe-btn-primary"
             onClick={() => openCreate()}
-            disabled={!user?.facebookConnected}
+            disabled={!facebookConnected}
           >
             <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
@@ -242,9 +294,77 @@ export default function PostManager() {
         </div>
       )}
 
+      {/* ── Info banner ── */}
+      {info && (
+        <div className="upe-info-banner" style={{ animation: 'fadeUp 0.3s cubic-bezier(0.16,1,0.3,1)' }}>
+          <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span>{info}</span>
+        </div>
+      )}
+
       {/* ── Main layout ── */}
       <div className="upe-layout">
         <PostSchedulerCalendar posts={posts} onDateClick={openCreate} onEventClick={openEdit} />
+
+        <div className="upe-sidebar-stack">
+
+        {/* ── Pending Approval (officer/admin of the active org only) ── */}
+        {canModerate && (
+          <div className="upe-sidebar-card" style={{ animation: 'fadeUp 0.5s cubic-bezier(0.16,1,0.3,1) 0.05s backwards' }}>
+            <div className="upe-sidebar-header">
+              <div className="upe-sidebar-header-left">
+                <div className="upe-sidebar-icon" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <h3 className="upe-sidebar-title">Pending Approval</h3>
+              </div>
+              <span className="upe-sidebar-count">{pendingPosts.length}</span>
+            </div>
+
+            <div className="upe-queue-list">
+              {pendingPosts.length === 0 && (
+                <div className="upe-queue-empty">
+                  <p className="upe-queue-empty-title">Nothing to review</p>
+                  <p className="upe-queue-empty-text">Posts from members awaiting approval will show up here</p>
+                </div>
+              )}
+              {pendingPosts.map((post, i) => (
+                <article key={post.id} className="upe-queue-item" style={{ animationDelay: `${i * 0.05}s` }}>
+                  <p className="upe-queue-caption">{post.caption}</p>
+                  {post.scheduledAt && (
+                    <time className="upe-queue-time">
+                      {new Date(post.scheduledAt).toLocaleString(undefined, {
+                        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                      })}
+                    </time>
+                  )}
+                  <div className="upe-queue-actions">
+                    <button
+                      type="button"
+                      className="upe-queue-btn upe-queue-btn-publish"
+                      onClick={() => handleApprove(post.id)}
+                      disabled={moderatingPostId === post.id}
+                    >
+                      {moderatingPostId === post.id ? 'Working…' : 'Approve'}
+                    </button>
+                    <button
+                      type="button"
+                      className="upe-queue-btn upe-queue-btn-delete"
+                      onClick={() => handleReject(post.id)}
+                      disabled={moderatingPostId === post.id}
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ── Upcoming Posts sidebar ── */}
         <div className="upe-sidebar-card" style={{ animation: 'fadeUp 0.5s cubic-bezier(0.16,1,0.3,1) 0.1s backwards' }}>
@@ -307,7 +427,7 @@ export default function PostManager() {
                     type="button"
                     className="upe-queue-btn upe-queue-btn-publish"
                     onClick={() => handlePublish(post)}
-                    disabled={publishingPostId === post.id || post.status === 'PUBLISHED'}
+                    disabled={publishingPostId === post.id || post.status === 'PUBLISHED' || post.status === 'PENDING_REVIEW' || post.status === 'REJECTED'}
                   >
                     {publishingPostId === post.id ? 'Publishing…' : 'Publish'}
                   </button>
@@ -330,6 +450,8 @@ export default function PostManager() {
             ))}
           </div>
         </div>
+
+        </div>
       </div>
 
       <PostEditorModal
@@ -337,6 +459,8 @@ export default function PostManager() {
         initialPost={editor?.post ?? null}
         initialDraft={editor?.draft ?? null}
         conflict={conflict}
+        loading={loading}
+        error={error}
         onClose={closeEditor}
         onSubmit={saveDraft}
         onClearConflict={() => setConflict(null)}
@@ -502,6 +626,29 @@ export default function PostManager() {
           gap: 24px;
           align-items: start;
         }
+
+        .upe-sidebar-stack {
+          display: flex;
+          flex-direction: column;
+          gap: 24px;
+          min-width: 0;
+        }
+
+        .upe-info-banner {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: 20px;
+          padding: 14px 18px;
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          border-left: 4px solid #3b82f6;
+          border-radius: 12px;
+          font-size: 13px;
+          font-weight: 500;
+          color: #1d4ed8;
+        }
+        .upe-info-banner svg { color: #3b82f6; flex-shrink: 0; }
 
         /* ── Calendar Card (base styles for the calendar wrapper) ── */
         .upe-calendar-card {
@@ -740,6 +887,8 @@ export default function PostManager() {
         .upe-status-dot.is-draft { background: #94a3b8; }
         .upe-status-dot.is-published { background: #10b981; }
         .upe-status-dot.is-failed { background: #ef4444; }
+        .upe-status-dot.is-pending_review { background: #f59e0b; }
+        .upe-status-dot.is-rejected { background: #ef4444; }
 
         /* ── Queue Time ── */
         .upe-queue-time {

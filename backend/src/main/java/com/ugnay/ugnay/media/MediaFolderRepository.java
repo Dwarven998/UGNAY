@@ -9,5 +9,6 @@ import com.ugnay.ugnay.core.User;
 
 public interface MediaFolderRepository extends JpaRepository<MediaFolder, UUID> {
     List<MediaFolder> findByUser(User user);
+    List<MediaFolder> findByOrganization_Id(UUID organizationId);
 }
 

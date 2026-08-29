@@ -2,6 +2,7 @@ package com.ugnay.ugnay.media;
 
 
 import com.ugnay.ugnay.core.User;
+import com.ugnay.ugnay.org.Organization;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.Instant;
@@ -17,6 +18,11 @@ public class MediaFolder {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     private User user;
+
+    /** When set, this folder belongs to an organization's Media Repository and is visible to its approved members, not just `user`. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "organization_id")
+    private Organization organization;
 
     @Column(nullable = false)
     private String name;

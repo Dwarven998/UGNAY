@@ -68,6 +68,9 @@ public class GeminiClient {
 
             } catch (Exception e) {
                 System.out.println("❌ Gemini attempt " + attempt + " failed: " + e.getMessage());
+                if (isQuotaExceeded(e)) {
+                    throw quotaExceededException(e);
+                }
                 if (attempt == MAX_RETRIES) {
                     throw new RuntimeException("Caption generation failed after " + MAX_RETRIES + " attempts.", e);
                 }
@@ -131,6 +134,9 @@ public class GeminiClient {
 
             } catch (Exception e) {
                 System.out.println("❌ Rewrite attempt " + attempt + " failed: " + e.getMessage());
+                if (isQuotaExceeded(e)) {
+                    throw quotaExceededException(e);
+                }
                 if (attempt == MAX_RETRIES) throw new RuntimeException("Rewrite failed after retries.", e);
                 sleepSilently();
             }
@@ -211,6 +217,9 @@ public class GeminiClient {
 
             } catch (Exception e) {
                 System.out.println("❌ Hashtag attempt " + attempt + " failed: " + e.getMessage());
+                if (isQuotaExceeded(e)) {
+                    throw quotaExceededException(e);
+                }
                 if (attempt == MAX_RETRIES) break;
                 sleepSilently();
             }
@@ -228,6 +237,119 @@ public class GeminiClient {
         }
         return fallback.isEmpty() ? List.of("#" + orgName.replaceAll("[^a-zA-Z0-9]", "")) : fallback;
     }
+
+    /**
+     * Scores a folder's candidate images against a free-text description and returns
+     * them ranked best-match-first. Used by the Media Repository's AI image picker
+     * (CLAUDE.md Caption Studio flow step: description -> ranked images).
+     */
+    public List<ImageRanking> rankImages(List<AssetForRanking> assets, String description) {
+        if (assets.isEmpty()) {
+            return List.of();
+        }
+
+        List<Map<String, Object>> parts = new ArrayList<>();
+        parts.add(Map.of("text", buildRankingPrompt(description, assets.size())));
+        for (AssetForRanking asset : assets) {
+            parts.add(Map.of("text", "Image ID: " + asset.id()));
+            try {
+                byte[] bytes = downloadImageBytes(asset.fileUrl());
+                parts.add(Map.of("inline_data", Map.of(
+                    "mime_type", getMimeType(asset.fileUrl()),
+                    "data", Base64.getEncoder().encodeToString(bytes)
+                )));
+            } catch (Exception e) {
+                System.out.println("⚠️ Skipping image in ranking (download failed): " + asset.fileUrl() + " - " + e.getMessage());
+            }
+        }
+
+        Map<String, Object> requestBody = Map.of(
+            "contents", List.of(Map.of("parts", parts)),
+            "generationConfig", Map.of("temperature", 0.2, "maxOutputTokens", 2048)
+        );
+
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                Map<String, Object> response = webClient.post()
+                    .uri(apiUrl + "?key=" + apiKey)
+                    .bodyValue(requestBody)
+                    .retrieve()
+                    .onStatus(
+                        status -> status.isError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class)
+                            .map(body -> new RuntimeException("Gemini API Error: " + body))
+                    )
+                    .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                    .block();
+
+                List<ImageRanking> rankings = parseRankings(response);
+                if (rankings != null && !rankings.isEmpty()) return rankings;
+
+            } catch (Exception e) {
+                System.out.println("❌ Image ranking attempt " + attempt + " failed: " + e.getMessage());
+                if (isQuotaExceeded(e)) {
+                    throw quotaExceededException(e);
+                }
+                if (attempt == MAX_RETRIES) throw new RuntimeException("Image ranking failed after retries.", e);
+                sleepSilently();
+            }
+        }
+
+        return List.of();
+    }
+
+    private String buildRankingPrompt(String description, int count) {
+        return String.format(
+            """
+            You are an image search assistant helping a social media manager pick the best photo for a post.
+            Target description: "%s"
+
+            You will see %d candidate images, each preceded by a line "Image ID: <id>".
+            Score EACH image from 0 (no match) to 100 (perfect match) against the description, and give a short one-sentence reason.
+
+            Return ONLY a valid JSON array covering ALL %d images, sorted by score descending, no markdown, no backticks:
+            [{"id":"<image id exactly as given>","score":87,"reason":"..."}]
+            """,
+            description, count, count
+        );
+    }
+
+    private List<ImageRanking> parseRankings(Map<String, Object> response) {
+        try {
+            String raw = extractText(response);
+            if (raw == null || raw.isBlank()) return null;
+
+            raw = raw.trim().replaceAll("```json|```", "").trim();
+            int start = raw.indexOf('[');
+            int end = raw.lastIndexOf(']');
+            if (start == -1 || end == -1 || end <= start) return null;
+            raw = raw.substring(start, end + 1);
+
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            List<Map<String, Object>> rawList = mapper.readValue(raw,
+                new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+
+            List<ImageRanking> result = new ArrayList<>();
+            for (Map<String, Object> item : rawList) {
+                try {
+                    UUID id = UUID.fromString(String.valueOf(item.get("id")));
+                    int score = ((Number) item.get("score")).intValue();
+                    String reason = String.valueOf(item.getOrDefault("reason", ""));
+                    result.add(new ImageRanking(id, score, reason));
+                } catch (Exception ignore) {
+                    // Skip malformed entries (e.g. a hallucinated id) rather than failing the whole ranking.
+                }
+            }
+            result.sort((a, b) -> Integer.compare(b.score(), a.score()));
+            return result;
+
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    public record AssetForRanking(UUID id, String fileUrl) {}
+    public record ImageRanking(UUID id, int score, String reason) {}
 
     // --- Private helpers ---
 
@@ -258,6 +380,7 @@ public class GeminiClient {
         try {
             byte[] bytes = webClient.get()
                 .uri(imageUrl)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
                 .retrieve()
                 .bodyToMono(byte[].class)
                 .block();
@@ -372,6 +495,20 @@ public class GeminiClient {
                 + " | response: " + response);
             return "";
         }
+    }
+
+    /** Detects Gemini's daily-quota-exceeded error (HTTP 429 / RESOURCE_EXHAUSTED), for which retrying is pointless. */
+    private boolean isQuotaExceeded(Throwable e) {
+        String msg = e.getMessage();
+        return msg != null && (msg.contains("RESOURCE_EXHAUSTED") || msg.contains("\"code\": 429") || msg.contains("\"code\":429"));
+    }
+
+    private RuntimeException quotaExceededException(Throwable cause) {
+        return new RuntimeException(
+            "Gemini API daily quota exceeded for this key/model. The free tier only allows a limited number "
+                + "of requests per day — wait for it to reset (daily), or switch to an API key/model with a higher quota.",
+            cause
+        );
     }
 
     private void sleepSilently() {

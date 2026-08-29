@@ -1,13 +1,18 @@
 import axiosClient from '../../../api/axiosClient';
-import type { MediaFolder, MediaAsset } from '../../../types';
+import type { MediaFolder, MediaAsset, MediaRecommendation } from '../../../types';
 import type { ApiResponse } from '../../../api/axiosClient';
 import { uploadToSupabase } from '../../../api/supabaseClient';
 
 export const mediaApi = {
-  getFolders: () => axiosClient.get<MediaFolder[]>('/api/media/folders').then((r: ApiResponse<MediaFolder[]>) => r.data),
+  getFolders: (orgId?: string | null) =>
+    axiosClient
+      .get<MediaFolder[]>(orgId ? `/api/media/folders?orgId=${orgId}` : '/api/media/folders')
+      .then((r: ApiResponse<MediaFolder[]>) => r.data),
 
-  createFolder: (name: string) =>
-    axiosClient.post<MediaFolder>('/api/media/folders', { name }).then((r: ApiResponse<MediaFolder>) => r.data),
+  createFolder: (name: string, orgId?: string | null) =>
+    axiosClient
+      .post<MediaFolder>('/api/media/folders', { name, orgId: orgId ?? undefined })
+      .then((r: ApiResponse<MediaFolder>) => r.data),
 
   deleteFolder: (id: string) => axiosClient.delete(`/api/media/folders/${id}`),
 
@@ -24,4 +29,9 @@ export const mediaApi = {
   },
 
   deleteAsset: (id: string) => axiosClient.delete(`/api/media/assets/${id}`),
+
+  recommend: (folderId: string, description: string) =>
+    axiosClient
+      .post<MediaRecommendation[]>(`/api/media/folders/${folderId}/recommend`, { description })
+      .then((r: ApiResponse<MediaRecommendation[]>) => r.data),
 };
