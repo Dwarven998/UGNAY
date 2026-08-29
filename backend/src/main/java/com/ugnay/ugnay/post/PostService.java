@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.ugnay.ugnay.core.User;
+import com.ugnay.ugnay.org.OrganizationPermissionService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,11 +20,15 @@ public class PostService {
 
     private final PostRepository postRepository;
     private final PostSchedulerService postSchedulerService;
+    private final OrganizationPermissionService organizationPermissionService;
 
     public List<PostController.PostDto> getPostsByUser(User user, UUID orgId) {
+        if (orgId != null) {
+            organizationPermissionService.requireApprovedMember(user.getId(), orgId);
+        }
         List<Post> posts = orgId != null
-            ? postRepository.findByUserAndOrganization_IdOrderByCreatedAtDesc(user, orgId)
-            : postRepository.findByUserOrderByCreatedAtDesc(user);
+            ? postRepository.findByOrganization_IdOrderByCreatedAtDesc(orgId)
+            : postRepository.findByUserAndOrganizationIsNullOrderByCreatedAtDesc(user);
         return posts.stream()
             .map(this::toDto)
             .collect(Collectors.toList());

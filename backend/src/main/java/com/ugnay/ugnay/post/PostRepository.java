@@ -14,7 +14,9 @@ public interface PostRepository extends JpaRepository<Post, UUID> {
 
     List<Post> findByUserOrderByCreatedAtDesc(User user);
 
-    List<Post> findByUserAndOrganization_IdOrderByCreatedAtDesc(User user, UUID organizationId);
+    List<Post> findByUserAndOrganizationIsNullOrderByCreatedAtDesc(User user);
+
+    List<Post> findByOrganization_IdOrderByCreatedAtDesc(UUID organizationId);
 
     List<Post> findByOrganization_IdAndStatusOrderByCreatedAtDesc(UUID organizationId, Post.PostStatus status);
 
