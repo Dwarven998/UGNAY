@@ -34,4 +34,10 @@ export const mediaApi = {
     axiosClient
       .post<MediaRecommendation[]>(`/api/media/folders/${folderId}/recommend`, { description })
       .then((r: ApiResponse<MediaRecommendation[]>) => r.data),
+
+  // Caption Studio: multi-image selection made in Media Repository
+  generateCaptionFromAssets: (assetIds: string[], tone: string) =>
+    axiosClient
+      .post<string[]>('/api/media/assets/generate-caption', { assetIds, tone })
+      .then((r: ApiResponse<string[]>) => r.data),
 };

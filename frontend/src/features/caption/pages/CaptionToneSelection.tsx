@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { captionApi } from '../api/captionApi.ts';
+import { mediaApi } from '../../media/api/mediaApi.ts';
 import TonePreferenceSelector from '../components/TonePreferenceSelector.tsx';
 import type { Tone } from '../../../types';
 
@@ -9,8 +10,8 @@ const DEFAULT_TONE: Tone = 'FORMAL';
 export default function CaptionToneSelection() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [imageUrl, setImageUrl] = useState('');
-  const [assetId, setAssetId] = useState('');
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
+  const [assetIds, setAssetIds] = useState<string[]>([]);
   const [selectedTone, setSelectedTone] = useState<Tone>(DEFAULT_TONE);
   const [captions, setCaptions] = useState<string[]>([]);
   const [selectedCaption, setSelectedCaption] = useState('');
@@ -19,7 +20,21 @@ export default function CaptionToneSelection() {
   const [isRewriting, setIsRewriting] = useState(false);
   const [isGeneratingHashtags, setIsGeneratingHashtags] = useState(false);
 
+  const isMulti = imageUrls.length > 1;
+
   useEffect(() => {
+    // Multi-select flow: user picked several images in Media Repository.
+    const multiUrls = sessionStorage.getItem('caption_image_urls');
+    if (multiUrls) {
+      const urls: string[] = JSON.parse(multiUrls);
+      const multiIds = sessionStorage.getItem('caption_asset_ids');
+      const ids: string[] = multiIds ? JSON.parse(multiIds) : [];
+      setImageUrls(urls);
+      setAssetIds(ids);
+      return;
+    }
+
+    // Single-image flow (unchanged): from Caption Studio step 1, or a single card's "Caption Studio" button.
     const urlFromQuery = searchParams.get('imageUrl');
     const urlFromSession = sessionStorage.getItem('caption_image_url');
     const resolvedImageUrl = urlFromQuery ?? urlFromSession ?? '';
@@ -28,26 +43,34 @@ export default function CaptionToneSelection() {
     const assetIdFromSession = sessionStorage.getItem('caption_asset_id');
     const resolvedAssetId = assetIdFromQuery ?? assetIdFromSession ?? '';
 
-    setImageUrl(resolvedImageUrl);
-    setAssetId(resolvedAssetId);
     if (resolvedImageUrl) {
+      setImageUrls([resolvedImageUrl]);
       sessionStorage.setItem('caption_image_url', resolvedImageUrl);
     }
     if (resolvedAssetId) {
+      setAssetIds([resolvedAssetId]);
       sessionStorage.setItem('caption_asset_id', resolvedAssetId);
     }
   }, [searchParams]);
 
   const handleBack = () => {
-    const query = imageUrl ? `?imageUrl=${encodeURIComponent(imageUrl)}` : '';
+    sessionStorage.removeItem('caption_image_urls');
+    sessionStorage.removeItem('caption_asset_ids');
+    if (isMulti) {
+      navigate('/media'); // multi-select originates from Media Repository, not Caption Studio step 1
+      return;
+    }
+    const query = imageUrls[0] ? `?imageUrl=${encodeURIComponent(imageUrls[0])}` : '';
     navigate(`/caption${query}`);
   };
 
   const handleGenerate = async () => {
-    if (!imageUrl) return;
+    if (imageUrls.length === 0) return;
     setIsGenerating(true);
     try {
-      const result = await captionApi.generate(imageUrl, selectedTone);
+      const result = isMulti
+        ? await mediaApi.generateCaptionFromAssets(assetIds, selectedTone)
+        : await captionApi.generate(imageUrls[0], selectedTone);
       setCaptions(result);
       setSelectedCaption('');
       setHashtags([]);
@@ -86,17 +109,22 @@ export default function CaptionToneSelection() {
   };
 
   const handleSendToScheduler = () => {
+    // NOTE: Post Scheduler currently posts a single image. For a multi-image caption,
+    // we carry the full set through but default the schedulable image to the first one —
+    // revisit this once/if the scheduler supports carousel posts.
     sessionStorage.setItem('caption_draft', JSON.stringify({
       caption: selectedCaption,
       hashtags,
-      imageUrl,
-      assetId,
+      imageUrl: imageUrls[0],
+      imageUrls,
+      assetId: assetIds[0],
+      assetIds,
       tone: selectedTone,
     }));
     navigate('/posts');
   };
 
-  if (!imageUrl) {
+  if (imageUrls.length === 0) {
     return (
       <>
         <div className="cts-container">
@@ -108,7 +136,7 @@ export default function CaptionToneSelection() {
             </div>
             <h1 className="cts-missing-title">Missing Media</h1>
             <p className="cts-missing-text">
-              No image was provided. Please go back to the first step and provide a valid public media URL to continue.
+              No image was provided. Please go back to the first step and provide a valid public media URL, or select images from Media Repository, to continue.
             </p>
             <button type="button" onClick={handleBack} className="cts-btn-back-empty">
               <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -141,7 +169,7 @@ export default function CaptionToneSelection() {
             <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
-            Change Image
+            {isMulti ? 'Change Images' : 'Change Image'}
           </button>
         </div>
 
@@ -150,7 +178,16 @@ export default function CaptionToneSelection() {
           <div className="cts-card-grid">
             {/* Image preview */}
             <div className="cts-image-wrap">
-              <img src={imageUrl} alt="Selected media preview" className="cts-image" />
+              {isMulti ? (
+                <div className="cts-image-strip">
+                  {imageUrls.map((url, i) => (
+                    <img key={i} src={url} alt={`Selected media ${i + 1}`} className="cts-image-thumb" />
+                  ))}
+                  <span className="cts-image-count">{imageUrls.length} images, one caption</span>
+                </div>
+              ) : (
+                <img src={imageUrls[0]} alt="Selected media preview" className="cts-image" />
+              )}
             </div>
 
             {/* Controls */}
@@ -159,7 +196,11 @@ export default function CaptionToneSelection() {
                 <div className="cts-step-badge">2</div>
                 <div>
                   <h2 className="cts-step-title">Select Brand Tone</h2>
-                  <p className="cts-step-desc">Choose the voice that best fits this specific post.</p>
+                  <p className="cts-step-desc">
+                    {isMulti
+                      ? 'Choose the voice that best fits this post — the caption will cover all selected images as one set.'
+                      : 'Choose the voice that best fits this specific post.'}
+                  </p>
                 </div>
               </div>
 
@@ -397,6 +438,27 @@ const ctsStyles = `
     object-fit: cover;
     border-radius: 14px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+  }
+  .cts-image-strip {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    width: 100%;
+  }
+  .cts-image-thumb {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .cts-image-count {
+    grid-column: 1 / -1;
+    font-size: 11px;
+    font-weight: 600;
+    color: #64748b;
+    text-align: center;
+    margin-top: 2px;
   }
   .cts-controls {
     padding: 28px;

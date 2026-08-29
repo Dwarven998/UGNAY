@@ -77,6 +77,13 @@ public class MediaController {
         return ResponseEntity.ok(mediaService.recommendImages(user, folderId, req.description()));
     }
 
+    // --- AI MULTI-IMAGE CAPTION (Caption Studio: select images in Media Repository first) ---
+    @PostMapping("/assets/generate-caption")
+    public ResponseEntity<List<String>> generateCaptionFromAssets(@AuthenticationPrincipal User user,
+                                                                   @RequestBody GenerateCaptionRequest req) {
+        return ResponseEntity.ok(mediaService.generateCaptionsFromAssets(user, req.assetIds(), req.tone()));
+    }
+
     // DTOs
     public record FolderDto(UUID id, String name, int assetCount) {}
     public record AssetDto(UUID id, String fileName, String fileUrl, String fileType) {}
@@ -84,4 +91,5 @@ public class MediaController {
     public record CreateFolderRequest(String name, UUID orgId) {}
     public record RecommendRequest(String description) {}
     public record RecommendationDto(UUID id, String fileName, String fileUrl, String fileType, int score, String reason) {}
+    public record GenerateCaptionRequest(List<UUID> assetIds, String tone) {}
 }

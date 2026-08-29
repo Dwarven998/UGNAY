@@ -131,6 +131,43 @@ public class MediaService {
             .toList();
     }
 
+    /**
+     * Caption Studio entry point: user selects multiple images in Media Repository,
+     * this resolves them (with access checks) and generates 3 caption options
+     * treating them as one cohesive post.
+     */
+    public List<String> generateCaptionsFromAssets(User user, List<UUID> assetIds, String tone) {
+        if (assetIds == null || assetIds.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No images selected");
+        }
+        if (assetIds.size() > GeminiClient.MAX_CAPTION_IMAGES) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Too many images selected (max " + GeminiClient.MAX_CAPTION_IMAGES + ")");
+        }
+
+        List<MediaAsset> assets = assetRepository.findAllById(assetIds);
+        if (assets.size() != assetIds.size()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "One or more assets not found");
+        }
+
+        // Same access model as recommendImages: check every distinct folder touched.
+        assets.stream()
+            .map(a -> a.getFolder().getId())
+            .distinct()
+            .forEach(folderId -> requireViewAccess(user, folderId));
+
+        List<String> imageUrls = assets.stream()
+            .filter(a -> a.getFileType() != null && a.getFileType().startsWith("image"))
+            .map(MediaAsset::getFileUrl)
+            .toList();
+
+        if (imageUrls.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No image assets in selection");
+        }
+
+        return geminiClient.generateCaptionsMultiImage(imageUrls, tone, user.getOrgName());
+    }
+
     /** Org folders: must be an approved member of the owning org. Personal folders: must be the owner. */
     private MediaFolder requireViewAccess(User user, UUID folderId) {
         MediaFolder folder = folderRepository.findById(folderId)

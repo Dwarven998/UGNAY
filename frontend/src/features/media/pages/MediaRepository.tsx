@@ -6,6 +6,8 @@ import { mediaApi } from '../api/mediaApi.ts';
 import { useOrganization } from '../../../context/OrganizationContext';
 import type { MediaFolder, MediaAsset, MediaRecommendation } from '../../../types';
 
+const MAX_CAPTION_IMAGES = 6; // mirror GeminiClient.MAX_CAPTION_IMAGES
+
 export default function MediaRepository() {
   const navigate = useNavigate();
   const { activeOrgId, activeOrg } = useOrganization();
@@ -21,6 +23,10 @@ export default function MediaRepository() {
   const [aiError, setAiError] = useState('');
   const [aiResults, setAiResults] = useState<MediaRecommendation[] | null>(null);
 
+  // Multi-select for Caption Studio (select images here, then generate one caption for the set)
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
   // Only officers/admins may create directories inside an org's shared Media Repository.
   const canCreateFolder = !activeOrgId || activeOrg?.role === 'ADMIN' || activeOrg?.role === 'OFFICER';
 
@@ -32,6 +38,8 @@ export default function MediaRepository() {
   useEffect(() => {
     setSelectedFolder(null);
     setAssets([]);
+    setSelectMode(false);
+    setSelectedIds(new Set());
     loadFolders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrgId]);
@@ -41,6 +49,8 @@ export default function MediaRepository() {
     setAiResults(null);
     setAiDescription('');
     setAiError('');
+    setSelectMode(false);
+    setSelectedIds(new Set());
     const data = await mediaApi.getAssets(folder.id);
     setAssets(data);
   };
@@ -81,6 +91,12 @@ export default function MediaRepository() {
     await mediaApi.deleteAsset(assetId);
     setAssets(prev => prev.filter(a => a.id !== assetId));
     setAiResults(prev => prev ? prev.filter(r => r.id !== assetId) : prev);
+    setSelectedIds(prev => {
+      if (!prev.has(assetId)) return prev;
+      const next = new Set(prev);
+      next.delete(assetId);
+      return next;
+    });
     loadFolders(); // refresh asset count
   };
 
@@ -96,6 +112,35 @@ export default function MediaRepository() {
     } finally {
       setIsUploading(false);
     }
+  };
+
+  const toggleSelectMode = () => {
+    setSelectMode(prev => !prev);
+    setSelectedIds(new Set());
+  };
+
+  const toggleAssetSelected = (asset: MediaAsset) => {
+    if (!asset.fileType.startsWith('image')) return; // captioning is images-only
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(asset.id)) {
+        next.delete(asset.id);
+      } else if (next.size < MAX_CAPTION_IMAGES) {
+        next.add(asset.id);
+      }
+      return next;
+    });
+  };
+
+  const proceedToCaptionStudio = () => {
+    const selected = assets.filter(a => selectedIds.has(a.id));
+    if (selected.length === 0) return;
+    sessionStorage.setItem('caption_image_urls', JSON.stringify(selected.map(a => a.fileUrl)));
+    sessionStorage.setItem('caption_asset_ids', JSON.stringify(selected.map(a => a.id)));
+    // Clear any stale single-image flow so CaptionToneSelection picks up the multi-select.
+    sessionStorage.removeItem('caption_image_url');
+    sessionStorage.removeItem('caption_asset_id');
+    navigate('/caption/select-tone');
   };
 
   return (
@@ -173,28 +218,38 @@ export default function MediaRepository() {
                   <h2 className="mr-content-title">{selectedFolder.name}</h2>
                   <p className="mr-content-subtitle">{assets.length} asset{assets.length !== 1 ? 's' : ''} in this folder</p>
                 </div>
-                <button
-                  onClick={() => fileRef.current?.click()}
-                  disabled={isUploading}
-                  className="mr-btn-upload"
-                >
-                  {isUploading ? (
-                    <>
-                      <svg className="mr-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none">
-                        <circle className="mr-spinner-track" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"></circle>
-                        <path className="mr-spinner-fill" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                      </svg>
-                      Uploading...
-                    </>
-                  ) : (
-                    <>
-                      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                      </svg>
-                      Upload Media
-                    </>
+                <div className="mr-content-header-actions">
+                  {!aiResults && (
+                    <button
+                      onClick={toggleSelectMode}
+                      className={`mr-btn-select ${selectMode ? 'mr-btn-select-active' : ''}`}
+                    >
+                      {selectMode ? 'Cancel Selection' : 'Select for Caption'}
+                    </button>
                   )}
-                </button>
+                  <button
+                    onClick={() => fileRef.current?.click()}
+                    disabled={isUploading}
+                    className="mr-btn-upload"
+                  >
+                    {isUploading ? (
+                      <>
+                        <svg className="mr-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <circle className="mr-spinner-track" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"></circle>
+                          <path className="mr-spinner-fill" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                        </svg>
+                        Uploading...
+                      </>
+                    ) : (
+                      <>
+                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        Upload Media
+                      </>
+                    )}
+                  </button>
+                </div>
                 <input
                   ref={fileRef}
                   type="file"
@@ -205,28 +260,36 @@ export default function MediaRepository() {
                 />
               </div>
 
-              <div className="mr-ai-panel">
-                <div className="mr-ai-panel-row">
-                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="mr-ai-icon">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-                  </svg>
-                  <input
-                    type="text"
-                    placeholder={'Describe the image you need, e.g. "students smiling at the registration booth"...'}
-                    value={aiDescription}
-                    onChange={e => setAiDescription(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && runRecommendation()}
-                    className="mr-ai-input"
-                  />
-                  <button onClick={runRecommendation} disabled={aiLoading || !aiDescription.trim()} className="mr-ai-btn">
-                    {aiLoading ? 'Thinking…' : 'Find best match'}
-                  </button>
-                  {aiResults && (
-                    <button onClick={clearRecommendation} className="mr-ai-clear-btn">Clear</button>
-                  )}
+              {!selectMode && (
+                <div className="mr-ai-panel">
+                  <div className="mr-ai-panel-row">
+                    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="mr-ai-icon">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                    </svg>
+                    <input
+                      type="text"
+                      placeholder={'Describe the image you need, e.g. "students smiling at the registration booth"...'}
+                      value={aiDescription}
+                      onChange={e => setAiDescription(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && runRecommendation()}
+                      className="mr-ai-input"
+                    />
+                    <button onClick={runRecommendation} disabled={aiLoading || !aiDescription.trim()} className="mr-ai-btn">
+                      {aiLoading ? 'Thinking…' : 'Find best match'}
+                    </button>
+                    {aiResults && (
+                      <button onClick={clearRecommendation} className="mr-ai-clear-btn">Clear</button>
+                    )}
+                  </div>
+                  {aiError && <p className="mr-ai-error">{aiError}</p>}
                 </div>
-                {aiError && <p className="mr-ai-error">{aiError}</p>}
-              </div>
+              )}
+
+              {selectMode && (
+                <div className="mr-select-hint">
+                  Tap images to select them (images only, max {MAX_CAPTION_IMAGES}). They'll be captioned together as one post.
+                </div>
+              )}
 
               {aiResults ? (
                 <div className="mr-assets-grid">
@@ -265,53 +328,74 @@ export default function MediaRepository() {
                 </div>
               ) : (
               <div className="mr-assets-grid">
-                {assets.map((asset, i) => (
-                  <div key={asset.id} className="mr-asset-card" style={{ animationDelay: `${i * 0.04}s` }}>
-                    <div className="mr-asset-preview">
-                      {asset.fileType.startsWith('image') ? (
-                        <img src={asset.fileUrl} alt={asset.fileName} />
-                      ) : (
-                        <video src={asset.fileUrl} aria-label={asset.fileName}>
-                          <track kind="captions" label="Preview captions" srcLang="en" src="" />
-                        </video>
-                      )}
-                      {/* Hover overlay */}
-                      <div className="mr-asset-overlay">
-                        <button
-                          onClick={() => navigator.clipboard.writeText(asset.fileUrl)}
-                          className="mr-overlay-btn"
-                        >
-                          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-                          </svg>
-                          Copy URL
-                        </button>
-                        <button
-                          onClick={() => navigate(`/caption/select-tone?imageUrl=${encodeURIComponent(asset.fileUrl)}&assetId=${asset.id}`)}
-                          className="mr-overlay-btn mr-overlay-btn-primary"
-                        >
-                          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-                          </svg>
-                          Caption Studio
-                        </button>
-                        <button
-                          onClick={() => handleDeleteAsset(asset.id)}
-                          className="mr-overlay-btn mr-overlay-btn-danger"
-                        >
-                          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                          Delete
-                        </button>
+                {assets.map((asset, i) => {
+                  const isImage = asset.fileType.startsWith('image');
+                  const isSelected = selectedIds.has(asset.id);
+                  return (
+                    <div
+                      key={asset.id}
+                      className={`mr-asset-card ${selectMode ? 'mr-asset-card-selectable' : ''} ${selectMode && isSelected ? 'mr-asset-card-selected' : ''} ${selectMode && !isImage ? 'mr-asset-card-disabled' : ''}`}
+                      style={{ animationDelay: `${i * 0.04}s` }}
+                      onClick={() => selectMode && toggleAssetSelected(asset)}
+                    >
+                      <div className="mr-asset-preview">
+                        {isImage ? (
+                          <img src={asset.fileUrl} alt={asset.fileName} />
+                        ) : (
+                          <video src={asset.fileUrl} aria-label={asset.fileName}>
+                            <track kind="captions" label="Preview captions" srcLang="en" src="" />
+                          </video>
+                        )}
+
+                        {selectMode ? (
+                          isImage && (
+                            <div className={`mr-select-checkbox ${isSelected ? 'mr-select-checkbox-checked' : ''}`}>
+                              {isSelected && (
+                                <svg width="12" height="12" fill="none" viewBox="0 0 20 20" stroke="currentColor" strokeWidth={3}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l3 3 7-7" />
+                                </svg>
+                              )}
+                            </div>
+                          )
+                        ) : (
+                          <div className="mr-asset-overlay">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(asset.fileUrl); }}
+                              className="mr-overlay-btn"
+                            >
+                              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                              </svg>
+                              Copy URL
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); navigate(`/caption/select-tone?imageUrl=${encodeURIComponent(asset.fileUrl)}&assetId=${asset.id}`); }}
+                              className="mr-overlay-btn mr-overlay-btn-primary"
+                            >
+                              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                              </svg>
+                              Caption Studio
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset.id); }}
+                              className="mr-overlay-btn mr-overlay-btn-danger"
+                            >
+                              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="mr-asset-info">
+                        <p className="mr-asset-name">{asset.fileName}</p>
+                        <span className="mr-asset-type">{asset.fileType.split('/')[1]?.toUpperCase()}</span>
                       </div>
                     </div>
-                    <div className="mr-asset-info">
-                      <p className="mr-asset-name">{asset.fileName}</p>
-                      <span className="mr-asset-type">{asset.fileType.split('/')[1]?.toUpperCase()}</span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
                 {assets.length === 0 && (
                   <div className="mr-assets-empty">
                     <div className="mr-assets-empty-icon">
@@ -324,6 +408,18 @@ export default function MediaRepository() {
                   </div>
                 )}
               </div>
+              )}
+
+              {selectMode && selectedIds.size > 0 && (
+                <div className="mr-selection-bar">
+                  <span>
+                    {selectedIds.size} image{selectedIds.size !== 1 ? 's' : ''} selected
+                    {selectedIds.size >= MAX_CAPTION_IMAGES ? ` (max ${MAX_CAPTION_IMAGES})` : ''}
+                  </span>
+                  <button onClick={proceedToCaptionStudio} className="mr-btn-continue-caption">
+                    Continue to Caption Studio →
+                  </button>
+                </div>
               )}
             </>
           ) : (
@@ -496,6 +592,14 @@ export default function MediaRepository() {
           align-items: flex-start;
           justify-content: space-between;
           margin-bottom: 28px;
+          flex-wrap: wrap;
+          gap: 16px;
+        }
+        .mr-content-header-actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-shrink: 0;
         }
         .mr-content-breadcrumb {
           display: inline-flex;
@@ -520,6 +624,89 @@ export default function MediaRepository() {
           color: #64748b;
           margin: 0;
         }
+
+        /* Select mode */
+        .mr-btn-select {
+          height: 40px;
+          padding: 0 18px;
+          background: #ffffff;
+          color: #0C447C;
+          font-size: 13px;
+          font-weight: 600;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          cursor: pointer;
+          transition: all 0.15s;
+          font-family: inherit;
+        }
+        .mr-btn-select:hover { border-color: #cbd5e1; background: #f8fafc; }
+        .mr-btn-select-active {
+          background: #0C447C;
+          color: #fff;
+          border-color: #0C447C;
+        }
+        .mr-btn-select-active:hover { background: #0a3867; }
+        .mr-select-hint {
+          background: rgba(12,68,124,0.04);
+          border: 1px solid rgba(12,68,124,0.1);
+          color: #0C447C;
+          font-size: 12px;
+          font-weight: 500;
+          padding: 10px 14px;
+          border-radius: 10px;
+          margin-bottom: 20px;
+        }
+        .mr-asset-card-selectable { cursor: pointer; }
+        .mr-asset-card-selected {
+          border-color: #0C447C !important;
+          box-shadow: 0 0 0 3px rgba(12,68,124,0.15);
+        }
+        .mr-asset-card-disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+        .mr-select-checkbox {
+          position: absolute;
+          top: 10px; right: 10px;
+          width: 22px; height: 22px;
+          border-radius: 6px;
+          border: 2px solid #ffffff;
+          background: rgba(15,23,42,0.35);
+          display: flex; align-items: center; justify-content: center;
+          color: #fff;
+          z-index: 1;
+        }
+        .mr-select-checkbox-checked {
+          background: #0C447C;
+          border-color: #0C447C;
+        }
+        .mr-selection-bar {
+          position: sticky;
+          bottom: 16px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: #0f172a;
+          color: #fff;
+          padding: 14px 20px;
+          border-radius: 14px;
+          margin-top: 16px;
+          font-size: 13px;
+          font-weight: 500;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+        }
+        .mr-btn-continue-caption {
+          background: #ffffff;
+          color: #0C447C;
+          border: none;
+          padding: 10px 18px;
+          border-radius: 10px;
+          font-weight: 700;
+          font-size: 13px;
+          cursor: pointer;
+          font-family: inherit;
+        }
+        .mr-btn-continue-caption:hover { background: #f1f5f9; }
 
         /* ── AI recommendation panel ── */
         .mr-ai-panel {

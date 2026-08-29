@@ -297,6 +297,110 @@ public class GeminiClient {
 
         return List.of();
     }
+    public static final int MAX_CAPTION_IMAGES = 6; // reasoning over many images at once gets slow/unreliable
+
+    /**
+     * Generates 3 caption options treating multiple images as one cohesive album/carousel post,
+     * rather than captioning each image separately.
+     */
+    public List<String> generateCaptionsMultiImage(List<String> imageUrls, String tone, String orgName) {
+        if (imageUrls == null || imageUrls.isEmpty()) {
+            return List.of("Caption generation failed. Please try again.");
+        }
+
+        List<Map<String, Object>> parts = new ArrayList<>();
+        parts.add(Map.of("text", buildMultiImageCaptionPrompt(tone, orgName, imageUrls.size())));
+
+        int attached = 0;
+        for (String url : imageUrls) {
+            try {
+                byte[] bytes = downloadImageBytes(url);
+                parts.add(Map.of("inline_data", Map.of(
+                    "mime_type", getMimeType(url),
+                    "data", Base64.getEncoder().encodeToString(bytes)
+                )));
+                attached++;
+            } catch (Exception e) {
+                System.out.println("⚠️ Skipping image in multi-caption (download failed): " + url + " - " + e.getMessage());
+            }
+        }
+
+        if (attached == 0) {
+            return List.of("Caption generation failed. Please try again.");
+        }
+
+        Map<String, Object> requestBody = Map.of(
+            "contents", List.of(Map.of("parts", parts)),
+            "generationConfig", Map.of("temperature", 0.8, "maxOutputTokens", 2048)
+        );
+
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            final int currentAttempt = attempt; 
+            try {
+                Map<String, Object> response = webClient.post()
+                    .uri(apiUrl + "?key=" + apiKey)
+                    .bodyValue(requestBody)
+                    .retrieve()
+                    .onStatus(
+                        status -> status.isError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class)
+                            .map(body -> {
+                                System.out.println("🔥 GEMINI ERROR (multi-caption attempt " + currentAttempt + "): "
+                                    + clientResponse.statusCode() + " - " + body);
+                                return new RuntimeException("Gemini API Error: " + body);
+                            })
+                    )
+                    .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                    .block();
+
+                List<String> captions = parseCaptions(response);
+                if (captions != null && !captions.isEmpty() && !captions.get(0).contains("failed")) {
+                    return captions;
+                }
+
+                System.out.println("⚠️ Multi-caption parse returned fallback on attempt " + attempt
+                    + ", raw response: " + extractText(response));
+
+            } catch (Exception e) {
+                System.out.println("❌ Multi-image caption attempt " + attempt + " failed: " + e.getMessage());
+                if (isQuotaExceeded(e)) {
+                    throw quotaExceededException(e);
+                }
+                if (attempt == MAX_RETRIES) {
+                    throw new RuntimeException("Caption generation failed after " + MAX_RETRIES + " attempts.", e);
+                }
+            }
+            
+            sleepSilently();
+        }
+
+        return List.of("Caption generation failed. Please try again.");
+    }
+
+    private String buildMultiImageCaptionPrompt(String tone, String orgName, int imageCount) {
+        return String.format(
+            """
+            You are a social media assistant for "%s", a Philippine college organization.
+            You will see %d images that will be posted together in a single Facebook post (like an album/carousel).
+            Analyze ALL %d images together as one cohesive set — do not caption them individually —
+            and generate exactly 3 Facebook caption options that work for the set as a whole.
+
+            Tone: %s
+            - FORMAL: professional and institutional
+            - ENERGETIC: exciting and dynamic
+            - CELEBRATORY: festive and warm
+            - URGENT: time-sensitive with clear CTA
+
+            Rules:
+            - Each caption must include relevant emojis
+            - Each caption should be 2–4 sentences
+            - Use Filipino college student context
+            - Return ONLY a valid JSON array of exactly 3 strings (no markdown, no backticks):
+            ["caption 1", "caption 2", "caption 3"]
+            """,
+            orgName, imageCount, imageCount, tone
+        );
+    }
 
     private String buildRankingPrompt(String description, int count) {
         return String.format(
@@ -347,7 +451,6 @@ public class GeminiClient {
             return null;
         }
     }
-
     public record AssetForRanking(UUID id, String fileUrl) {}
     public record ImageRanking(UUID id, int score, String reason) {}
 
