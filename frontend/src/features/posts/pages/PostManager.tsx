@@ -29,16 +29,27 @@ function parseCaptionDraftFromSession(): Partial<PostEditorDraft> | null {
       hashtags?: string[];
       tone?: string;
       imageUrl?: string;
+      imageUrls?: string[];
       assetId?: string;
+      assetIds?: string[];
     };
+    const resolvedAssetIds = data.assetIds && data.assetIds.length > 0
+      ? data.assetIds
+      : (data.assetId ? [data.assetId] : []);
+    const resolvedUrls = data.imageUrls && data.imageUrls.length > 0
+      ? data.imageUrls
+      : (data.imageUrl ? [data.imageUrl] : []);
+
     return {
       caption: data.caption ?? '',
       /* Keep hashtags as-is (with # prefix) — the backend's FacebookPublishingJob
          uses String.join(" ", hashtags) and expects # to already be present. */
       hashtags: data.hashtags ?? [],
       tone: data.tone ?? 'FORMAL',
-      mediaAssetId: data.assetId || undefined,
-      mediaPreviewUrl: data.imageUrl || undefined,
+      mediaAssetId: resolvedAssetIds[0] || undefined,
+      mediaAssetIds: resolvedAssetIds,
+      mediaPreviewUrl: resolvedUrls[0] || undefined,
+      mediaPreviewUrls: resolvedUrls,
       fromCaptionStudio: true,
     };
   } catch {
@@ -52,8 +63,10 @@ function getDefaultDraft(date?: Date | null, initial?: Partial<PostEditorDraft> 
     hashtags: initial?.hashtags ?? [],
     tone: initial?.tone ?? 'FORMAL',
     mediaAssetId: initial?.mediaAssetId ?? '',
+    mediaAssetIds: initial?.mediaAssetIds ?? [],
     scheduledAt: date ? date.toISOString() : initial?.scheduledAt,
     mediaPreviewUrl: initial?.mediaPreviewUrl,
+    mediaPreviewUrls: initial?.mediaPreviewUrls,
     fromCaptionStudio: initial?.fromCaptionStudio,
   };
 }
@@ -134,6 +147,13 @@ export default function PostManager() {
   const openEdit = (post: Post) => {
     setConflict(null);
     setError('');
+    const resolvedUrls = post.mediaUrls && post.mediaUrls.length > 0
+      ? post.mediaUrls
+      : (post.mediaUrl ? [post.mediaUrl] : []);
+    const resolvedIds = post.mediaAssetIds && post.mediaAssetIds.length > 0
+      ? post.mediaAssetIds
+      : [];
+
     setEditor({
       mode: 'edit',
       post,
@@ -141,6 +161,10 @@ export default function PostManager() {
         caption: post.caption,
         hashtags: post.hashtags,
         tone: post.tone,
+        mediaAssetId: resolvedIds[0] || '',
+        mediaAssetIds: resolvedIds,
+        mediaPreviewUrl: resolvedUrls[0] || undefined,
+        mediaPreviewUrls: resolvedUrls,
       }),
     });
   };
@@ -156,7 +180,8 @@ export default function PostManager() {
       caption: draft.caption,
       hashtags: draft.hashtags,
       tone: draft.tone,
-      mediaAssetId: draft.mediaAssetId || undefined,
+      mediaAssetId: draft.mediaAssetIds?.[0] || draft.mediaAssetId || undefined,
+      mediaAssetIds: draft.mediaAssetIds && draft.mediaAssetIds.length > 0 ? draft.mediaAssetIds : (draft.mediaAssetId ? [draft.mediaAssetId] : undefined),
       scheduledAt: draft.scheduledAt || undefined,
     };
 
@@ -335,13 +360,20 @@ export default function PostManager() {
               {pendingPosts.map((post, i) => (
                 <article key={post.id} className="upe-queue-item" style={{ animationDelay: `${i * 0.05}s` }}>
                   <p className="upe-queue-caption">{post.caption}</p>
-                  {post.scheduledAt && (
-                    <time className="upe-queue-time">
-                      {new Date(post.scheduledAt).toLocaleString(undefined, {
-                        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-                      })}
-                    </time>
-                  )}
+                  <div className="upe-queue-item-meta">
+                    {post.scheduledAt && (
+                      <time className="upe-queue-time">
+                        {new Date(post.scheduledAt).toLocaleString(undefined, {
+                          month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                        })}
+                      </time>
+                    )}
+                    {post.mediaUrls && post.mediaUrls.length > 1 && (
+                      <span className="upe-media-count-badge">
+                        📷 {post.mediaUrls.length} photos
+                      </span>
+                    )}
+                  </div>
                   <div className="upe-queue-actions">
                     <button
                       type="button"
@@ -410,16 +442,23 @@ export default function PostManager() {
                     <span className={`upe-status-dot is-${post.status.toLowerCase()}`} />
                     {STATUS_BADGE[post.status]?.label ?? post.status}
                   </span>
-                  {post.scheduledAt && (
-                    <time className="upe-queue-time">
-                      {new Date(post.scheduledAt).toLocaleString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })}
-                    </time>
-                  )}
+                  <div className="upe-queue-item-meta">
+                    {post.scheduledAt && (
+                      <time className="upe-queue-time">
+                        {new Date(post.scheduledAt).toLocaleString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })}
+                      </time>
+                    )}
+                    {post.mediaUrls && post.mediaUrls.length > 1 && (
+                      <span className="upe-media-count-badge">
+                        📷 {post.mediaUrls.length}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <p className="upe-queue-caption">{post.caption}</p>
                 <div className="upe-queue-actions">
@@ -890,11 +929,29 @@ export default function PostManager() {
         .upe-status-dot.is-pending_review { background: #f59e0b; }
         .upe-status-dot.is-rejected { background: #ef4444; }
 
-        /* ── Queue Time ── */
+        /* ── Queue Time & Meta ── */
+        .upe-queue-item-meta {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
         .upe-queue-time {
           font-size: 11px;
           color: #94a3b8;
           font-weight: 500;
+          white-space: nowrap;
+        }
+        .upe-media-count-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 3px;
+          font-size: 10px;
+          font-weight: 700;
+          color: #0C447C;
+          background: rgba(12, 68, 124, 0.08);
+          padding: 2px 6px;
+          border-radius: 6px;
           white-space: nowrap;
         }
 

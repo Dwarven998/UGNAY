@@ -13,6 +13,8 @@ const STATUS_STYLES: Record<Post['status'], { color: string; border: string; lab
   SCHEDULED: { color: '#2563eb', border: '#60a5fa', label: 'Scheduled' },
   PUBLISHED: { color: '#059669', border: '#34d399', label: 'Published' },
   FAILED: { color: '#dc2626', border: '#f87171', label: 'Failed' },
+  PENDING_REVIEW: { color: '#f59e0b', border: '#fbbf24', label: 'Pending Review' },
+  REJECTED: { color: '#dc2626', border: '#f87171', label: 'Rejected' },
 };
 
 export interface PostSchedulerCalendarProps {

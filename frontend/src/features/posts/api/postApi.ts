@@ -7,6 +7,7 @@ export interface PostUpsertPayload {
   hashtags: string[];
   tone: string;
   mediaAssetId?: string;
+  mediaAssetIds?: string[];
   scheduledAt?: string;
 }
 

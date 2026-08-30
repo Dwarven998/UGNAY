@@ -1,6 +1,7 @@
 package com.ugnay.ugnay.post;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -75,6 +76,7 @@ public class PostSchedulerService {
             });
     }
 
+    @Transactional(readOnly = true)
     public List<PostController.PostDto> listPendingForModeration(User requester, UUID orgId) {
         organizationPermissionService.requireOfficerOrAdmin(requester.getId(), orgId);
         return postRepository.findByOrganization_IdAndStatusOrderByCreatedAtDesc(orgId, Post.PostStatus.PENDING_REVIEW).stream()
@@ -151,13 +153,25 @@ public class PostSchedulerService {
                 .ifPresent(conflict -> { throw new SchedulingConflictException(conflict); });
         }
 
-        MediaAsset asset = req.mediaAssetId() != null
-            ? assetRepository.findById(req.mediaAssetId()).orElse(null)
+        List<MediaAsset> assets;
+        if (req.mediaAssetIds() != null && !req.mediaAssetIds().isEmpty()) {
+            assets = assetRepository.findAllById(req.mediaAssetIds());
+        } else if (req.mediaAssetId() != null) {
+            assets = assetRepository.findById(req.mediaAssetId())
+                .map(List::of)
+                .orElse(List.of());
+        } else {
+            assets = post.getMediaAssets() != null ? post.getMediaAssets() : List.of();
+        }
+
+        MediaAsset primaryAsset = !assets.isEmpty()
+            ? assets.get(0)
             : post.getMediaAsset();
 
         post.setUser(user);
         post.setOrganization(organization);
-        post.setMediaAsset(asset);
+        post.setMediaAssets(new ArrayList<>(assets));
+        post.setMediaAsset(primaryAsset);
         post.setCaption(req.caption());
         post.setHashtags(req.hashtags());
         post.setTone(req.tone());
@@ -230,6 +244,24 @@ public class PostSchedulerService {
     }
 
     private PostController.PostDto toDto(Post post) {
+        List<String> mediaUrls = new ArrayList<>();
+        List<UUID> mediaAssetIds = new ArrayList<>();
+        if (post.getMediaAssets() != null && !post.getMediaAssets().isEmpty()) {
+            for (MediaAsset a : post.getMediaAssets()) {
+                if (a != null) {
+                    mediaUrls.add(a.getFileUrl());
+                    mediaAssetIds.add(a.getId());
+                }
+            }
+        } else if (post.getMediaAsset() != null) {
+            mediaUrls.add(post.getMediaAsset().getFileUrl());
+            mediaAssetIds.add(post.getMediaAsset().getId());
+        }
+
+        String primaryMediaUrl = post.getMediaAsset() != null
+            ? post.getMediaAsset().getFileUrl()
+            : (!mediaUrls.isEmpty() ? mediaUrls.get(0) : null);
+
         return new PostController.PostDto(
             post.getId(),
             post.getCaption(),
@@ -237,7 +269,9 @@ public class PostSchedulerService {
             post.getTone(),
             post.getStatus().name(),
             post.getScheduledAt() != null ? post.getScheduledAt().toString() : null,
-            post.getMediaAsset() != null ? post.getMediaAsset().getFileUrl() : null,
+            primaryMediaUrl,
+            mediaUrls,
+            mediaAssetIds,
             post.getFbPostId(),
             post.getOrganization() != null ? post.getOrganization().getId() : null
         );

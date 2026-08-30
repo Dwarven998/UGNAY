@@ -9,10 +9,12 @@ export interface PostEditorDraft {
   caption: string;
   hashtags: string[];
   tone: string;
-  mediaAssetId: string;
+  mediaAssetId?: string;
+  mediaAssetIds?: string[];
   scheduledAt: string;
   /** Preview URL carried from Caption Studio (not an asset ID). */
   mediaPreviewUrl?: string;
+  mediaPreviewUrls?: string[];
   /** True when the draft originated from Caption Studio (tone was pre-selected). */
   fromCaptionStudio?: boolean;
 }
@@ -51,8 +53,8 @@ export default function PostEditorModal({
   const [caption, setCaption] = useState('');
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [tone, setTone] = useState('FORMAL');
-  const [mediaAssetId, setMediaAssetId] = useState('');
-  const [mediaPreviewUrl, setMediaPreviewUrl] = useState<string | null>(null);
+  const [mediaAssetIds, setMediaAssetIds] = useState<string[]>([]);
+  const [mediaPreviewUrls, setMediaPreviewUrls] = useState<string[]>([]);
   const [scheduledAt, setScheduledAt] = useState<Date | null>(suggestedTime);
   const [hashtagInput, setHashtagInput] = useState('');
 
@@ -69,8 +71,24 @@ export default function PostEditorModal({
     setCaption(initialPost?.caption ?? initialDraft?.caption ?? '');
     setHashtags(mergedHashtags);
     setTone(initialPost?.tone ?? initialDraft?.tone ?? 'FORMAL');
-    setMediaAssetId(initialDraft?.mediaAssetId ?? '');
-    setMediaPreviewUrl(initialPost?.mediaUrl ?? initialDraft?.mediaPreviewUrl ?? null);
+
+    const resolvedIds = initialDraft?.mediaAssetIds && initialDraft.mediaAssetIds.length > 0
+      ? initialDraft.mediaAssetIds
+      : initialDraft?.mediaAssetId
+        ? [initialDraft.mediaAssetId]
+        : (initialPost?.mediaAssetIds && initialPost.mediaAssetIds.length > 0 ? initialPost.mediaAssetIds : []);
+
+    const resolvedUrls = initialDraft?.mediaPreviewUrls && initialDraft.mediaPreviewUrls.length > 0
+      ? initialDraft.mediaPreviewUrls
+      : initialDraft?.mediaPreviewUrl
+        ? [initialDraft.mediaPreviewUrl]
+        : (initialPost?.mediaUrls && initialPost.mediaUrls.length > 0
+          ? initialPost.mediaUrls
+          : (initialPost?.mediaUrl ? [initialPost.mediaUrl] : []));
+
+    setMediaAssetIds(resolvedIds);
+    setMediaPreviewUrls(resolvedUrls);
+
     setScheduledAt(
       initialDraft?.scheduledAt
         ? new Date(initialDraft.scheduledAt)
@@ -100,10 +118,30 @@ export default function PostEditorModal({
     }
   };
 
-  const selectAsset = (asset: MediaAsset) => {
-    setMediaAssetId(asset.id);         // ✅ send UUID to backend
-    setMediaPreviewUrl(asset.fileUrl); // show preview
-    setPickerOpen(false);
+  const removeAssetAt = (index: number) => {
+    setMediaPreviewUrls(prev => prev.filter((_, i) => i !== index));
+    setMediaAssetIds(prev => prev.filter((_, i) => i !== index));
+    onClearConflict?.();
+  };
+
+  const clearAllMedia = () => {
+    setMediaPreviewUrls([]);
+    setMediaAssetIds([]);
+    onClearConflict?.();
+  };
+
+  const toggleAssetInPicker = (asset: MediaAsset) => {
+    const existingIndex = mediaAssetIds.indexOf(asset.id);
+    if (existingIndex >= 0) {
+      removeAssetAt(existingIndex);
+    } else {
+      if (mediaAssetIds.length >= 6) {
+        alert('You can attach a maximum of 6 images per post.');
+        return;
+      }
+      setMediaAssetIds(prev => [...prev, asset.id]);
+      setMediaPreviewUrls(prev => [...prev, asset.fileUrl]);
+    }
     onClearConflict?.();
   };
 
@@ -122,7 +160,10 @@ export default function PostEditorModal({
       caption,
       hashtags,
       tone,
-      mediaAssetId,
+      mediaAssetId: mediaAssetIds[0] || '',
+      mediaAssetIds,
+      mediaPreviewUrl: mediaPreviewUrls[0] || '',
+      mediaPreviewUrls,
       scheduledAt: scheduledAt ? scheduledAt.toISOString() : '',
     });
   };
@@ -161,17 +202,30 @@ export default function PostEditorModal({
 
           {/* ── Media picker ── */}
           <div className="upe-field">
-            <span>Media</span>
-            <div className="upe-media-picker-row">
-              {mediaPreviewUrl ? (
-                <div className="upe-media-thumb">
-                  <img src={mediaPreviewUrl} alt="Selected media" />
-                  <button
-                    type="button"
-                    className="upe-media-thumb-remove"
-                    onClick={() => { setMediaAssetId(''); setMediaPreviewUrl(null); }}
-                    title="Remove"
-                  >×</button>
+            <div className="upe-media-field-header">
+              <span>Media {mediaPreviewUrls.length > 0 && `(${mediaPreviewUrls.length} attached)`}</span>
+              {mediaPreviewUrls.length > 1 && (
+                <button type="button" onClick={clearAllMedia} className="upe-media-clear-btn">
+                  Remove all
+                </button>
+              )}
+            </div>
+
+            <div className="upe-media-thumbs-container">
+              {mediaPreviewUrls.length > 0 ? (
+                <div className="upe-media-thumbs-list">
+                  {mediaPreviewUrls.map((url, idx) => (
+                    <div key={idx} className="upe-media-thumb">
+                      <img src={url} alt={`Media ${idx + 1}`} />
+                      <span className="upe-media-thumb-index">{idx + 1}</span>
+                      <button
+                        type="button"
+                        className="upe-media-thumb-remove"
+                        onClick={() => removeAssetAt(idx)}
+                        title="Remove image"
+                      >×</button>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div className="upe-media-empty-thumb">
@@ -180,12 +234,17 @@ export default function PostEditorModal({
                   </svg>
                 </div>
               )}
+
               <button
                 type="button"
-                className="upe-secondary-btn"
+                className="upe-secondary-btn upe-media-choose-btn"
                 onClick={() => setPickerOpen(p => !p)}
               >
-                {pickerOpen ? 'Close picker' : mediaPreviewUrl ? 'Change image' : 'Choose from library'}
+                {pickerOpen
+                  ? 'Close picker'
+                  : mediaPreviewUrls.length > 0
+                    ? `Manage images (${mediaPreviewUrls.length})`
+                    : 'Choose from library'}
               </button>
             </div>
 
@@ -215,20 +274,23 @@ export default function PostEditorModal({
                   {!loadingAssets && !selectedFolder && (
                     <p className="upe-picker-empty">Select a folder to browse assets</p>
                   )}
-                  {assets.map(asset => (
-                    <button
-                      key={asset.id}
-                      type="button"
-                      className={`upe-picker-asset${mediaAssetId === asset.id ? ' upe-picker-asset-selected' : ''}`}
-                      onClick={() => selectAsset(asset)}
-                      title={asset.fileName}
-                    >
-                      <img src={asset.fileUrl} alt={asset.fileName} />
-                      {mediaAssetId === asset.id && (
-                        <div className="upe-picker-asset-check">✓</div>
-                      )}
-                    </button>
-                  ))}
+                  {assets.map(asset => {
+                    const isSelected = mediaAssetIds.includes(asset.id) || mediaPreviewUrls.includes(asset.fileUrl);
+                    return (
+                      <button
+                        key={asset.id}
+                        type="button"
+                        className={`upe-picker-asset${isSelected ? ' upe-picker-asset-selected' : ''}`}
+                        onClick={() => toggleAssetInPicker(asset)}
+                        title={asset.fileName}
+                      >
+                        <img src={asset.fileUrl} alt={asset.fileName} />
+                        {isSelected && (
+                          <div className="upe-picker-asset-check">✓</div>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -316,11 +378,36 @@ export default function PostEditorModal({
         }
         .upe-modal-error-banner svg { color: #ef4444; flex-shrink: 0; }
 
-        .upe-media-picker-row {
+        .upe-media-field-header {
           display: flex;
           align-items: center;
-          gap: 12px;
-          margin-top: 6px;
+          justify-content: space-between;
+          margin-bottom: 6px;
+        }
+        .upe-media-clear-btn {
+          background: transparent;
+          border: none;
+          color: #dc2626;
+          font-size: 11px;
+          font-weight: 600;
+          cursor: pointer;
+          padding: 2px 6px;
+          border-radius: 4px;
+        }
+        .upe-media-clear-btn:hover {
+          background: #fef2f2;
+        }
+        .upe-media-thumbs-container {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 10px;
+        }
+        .upe-media-thumbs-list {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 8px;
         }
         .upe-media-thumb {
           position: relative;
@@ -335,6 +422,18 @@ export default function PostEditorModal({
           width: 100%;
           height: 100%;
           object-fit: cover;
+        }
+        .upe-media-thumb-index {
+          position: absolute;
+          bottom: 2px;
+          left: 2px;
+          background: rgba(15, 23, 42, 0.7);
+          color: #fff;
+          font-size: 10px;
+          font-weight: 700;
+          padding: 1px 5px;
+          border-radius: 4px;
+          line-height: 1.2;
         }
         .upe-media-thumb-remove {
           position: absolute;

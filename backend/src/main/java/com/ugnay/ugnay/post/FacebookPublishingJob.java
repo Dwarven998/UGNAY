@@ -2,7 +2,9 @@ package com.ugnay.ugnay.post;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -15,11 +17,14 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.core.UserRepository;
+import com.ugnay.ugnay.media.MediaAsset;
 import com.ugnay.ugnay.org.Organization;
 import com.ugnay.ugnay.org.OrganizationRepository;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 @Component
@@ -70,26 +75,75 @@ public class FacebookPublishingJob {
             return;
         }
 
-        boolean hasImage = post.getMediaAsset() != null
+        List<String> imageUrls = new ArrayList<>();
+        if (post.getMediaAssets() != null && !post.getMediaAssets().isEmpty()) {
+            for (MediaAsset asset : post.getMediaAssets()) {
+                if (asset != null && asset.getFileUrl() != null && !asset.getFileUrl().isBlank()) {
+                    imageUrls.add(asset.getFileUrl());
+                }
+            }
+        }
+        if (imageUrls.isEmpty() && post.getMediaAsset() != null
             && post.getMediaAsset().getFileUrl() != null
-            && !post.getMediaAsset().getFileUrl().isBlank();
+            && !post.getMediaAsset().getFileUrl().isBlank()) {
+            imageUrls.add(post.getMediaAsset().getFileUrl());
+        }
 
-        // Route to the correct endpoint:
-        // - /photos  → publishes an actual image + caption (visible as a photo post)
-        // - /feed    → publishes text only
-        String endpoint = hasImage
-            ? facebookApiUrl + "/" + credentials.pageId() + "/photos"
-            : facebookApiUrl + "/" + credentials.pageId() + "/feed";
+        String message = buildMessage(post);
+        Mono<Map<String, Object>> publishMono;
 
-        Map<String, Object> payload = buildPayload(credentials, post, hasImage);
+        if (imageUrls.size() > 1) {
+            // Multi-photo publishing:
+            // 1. Upload each photo to /{page-id}/photos with published=false to obtain media_fbid
+            // 2. Publish /{page-id}/feed with attached_media containing all photo IDs
+            log.info("Publishing multi-photo post {} ({} images) to Facebook Page {}", postId, imageUrls.size(), credentials.pageId());
+            publishMono = Flux.fromIterable(imageUrls)
+                .concatMap(url -> uploadUnpublishedPhoto(credentials, url))
+                .collectList()
+                .flatMap(photoIds -> {
+                    List<Map<String, String>> attachedMedia = photoIds.stream()
+                        .map(id -> Map.of("media_fbid", id))
+                        .toList();
 
-        log.info("Publishing post {} to Facebook endpoint: {} (hasImage={})", postId, endpoint, hasImage);
+                    Map<String, Object> payload = new HashMap<>();
+                    payload.put("access_token", credentials.accessToken());
+                    payload.put("message", message);
+                    payload.put("attached_media", attachedMedia);
 
-        webClient.post()
-            .uri(endpoint)
-            .bodyValue(payload)
-            .retrieve()
-            .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                    return webClient.post()
+                        .uri(facebookApiUrl + "/" + credentials.pageId() + "/feed")
+                        .bodyValue(payload)
+                        .retrieve()
+                        .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {});
+                });
+        } else if (imageUrls.size() == 1) {
+            // Single-photo publishing: direct to /{page-id}/photos with url and caption
+            log.info("Publishing single-photo post {} to Facebook Page {}", postId, credentials.pageId());
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("access_token", credentials.accessToken());
+            payload.put("url", imageUrls.get(0));
+            payload.put("caption", message);
+
+            publishMono = webClient.post()
+                .uri(facebookApiUrl + "/" + credentials.pageId() + "/photos")
+                .bodyValue(payload)
+                .retrieve()
+                .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {});
+        } else {
+            // Text-only publishing: direct to /{page-id}/feed with message
+            log.info("Publishing text-only post {} to Facebook Page {}", postId, credentials.pageId());
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("access_token", credentials.accessToken());
+            payload.put("message", message);
+
+            publishMono = webClient.post()
+                .uri(facebookApiUrl + "/" + credentials.pageId() + "/feed")
+                .bodyValue(payload)
+                .retrieve()
+                .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {});
+        }
+
+        publishMono
             .retryWhen(
                 Retry.backoff(MAX_RETRIES, Duration.ofSeconds(5))
                     .filter(this::isRetryable)
@@ -108,22 +162,18 @@ public class FacebookPublishingJob {
         }
     }
 
-    private Map<String, Object> buildPayload(PublishCredentials credentials, Post post, boolean hasImage) {
+    private Mono<String> uploadUnpublishedPhoto(PublishCredentials credentials, String imageUrl) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("access_token", credentials.accessToken());
+        payload.put("url", imageUrl);
+        payload.put("published", false);
 
-        String message = buildMessage(post);
-
-        if (hasImage) {
-            // /photos endpoint uses "url" for the image and "caption" for the text
-            payload.put("url",     post.getMediaAsset().getFileUrl());
-            payload.put("caption", message);
-        } else {
-            // /feed endpoint uses "message" for text-only posts
-            payload.put("message", message);
-        }
-
-        return payload;
+        return webClient.post()
+            .uri(facebookApiUrl + "/" + credentials.pageId() + "/photos")
+            .bodyValue(payload)
+            .retrieve()
+            .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+            .map(res -> String.valueOf(res.get("id")));
     }
 
     private String buildMessage(Post post) {

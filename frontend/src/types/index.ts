@@ -6,6 +6,8 @@ export interface Post {
   status: 'DRAFT' | 'SCHEDULED' | 'PUBLISHED' | 'FAILED' | 'PENDING_REVIEW' | 'REJECTED';
   scheduledAt?: string;
   mediaUrl?: string;
+  mediaUrls?: string[];
+  mediaAssetIds?: string[];
   fbPostId?: string;
   orgId?: string | null;
 }

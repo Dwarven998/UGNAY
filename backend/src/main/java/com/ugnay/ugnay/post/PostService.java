@@ -1,5 +1,6 @@
 package com.ugnay.ugnay.post;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -22,6 +23,7 @@ public class PostService {
     private final PostSchedulerService postSchedulerService;
     private final OrganizationPermissionService organizationPermissionService;
 
+    @Transactional(readOnly = true)
     public List<PostController.PostDto> getPostsByUser(User user, UUID orgId) {
         if (orgId != null) {
             organizationPermissionService.requireApprovedMember(user.getId(), orgId);
@@ -76,11 +78,31 @@ public class PostService {
     }
 
     private PostController.PostDto toDto(Post p) {
+        List<String> mediaUrls = new ArrayList<>();
+        List<UUID> mediaAssetIds = new ArrayList<>();
+        if (p.getMediaAssets() != null && !p.getMediaAssets().isEmpty()) {
+            for (com.ugnay.ugnay.media.MediaAsset a : p.getMediaAssets()) {
+                if (a != null) {
+                    mediaUrls.add(a.getFileUrl());
+                    mediaAssetIds.add(a.getId());
+                }
+            }
+        } else if (p.getMediaAsset() != null) {
+            mediaUrls.add(p.getMediaAsset().getFileUrl());
+            mediaAssetIds.add(p.getMediaAsset().getId());
+        }
+
+        String primaryMediaUrl = p.getMediaAsset() != null
+            ? p.getMediaAsset().getFileUrl()
+            : (!mediaUrls.isEmpty() ? mediaUrls.get(0) : null);
+
         return new PostController.PostDto(
             p.getId(), p.getCaption(), p.getHashtags(), p.getTone(),
             p.getStatus().name(),
             p.getScheduledAt() != null ? p.getScheduledAt().toString() : null,
-            p.getMediaAsset() != null ? p.getMediaAsset().getFileUrl() : null,
+            primaryMediaUrl,
+            mediaUrls,
+            mediaAssetIds,
             p.getFbPostId(),
             p.getOrganization() != null ? p.getOrganization().getId() : null
         );

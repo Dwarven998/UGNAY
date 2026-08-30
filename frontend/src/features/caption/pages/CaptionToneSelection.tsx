@@ -109,9 +109,6 @@ export default function CaptionToneSelection() {
   };
 
   const handleSendToScheduler = () => {
-    // NOTE: Post Scheduler currently posts a single image. For a multi-image caption,
-    // we carry the full set through but default the schedulable image to the first one —
-    // revisit this once/if the scheduler supports carousel posts.
     sessionStorage.setItem('caption_draft', JSON.stringify({
       caption: selectedCaption,
       hashtags,
