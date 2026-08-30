@@ -31,6 +31,7 @@ public class MediaService {
     private final OrganizationRepository organizationRepository;
     private final OrganizationPermissionService organizationPermissionService;
     private final GeminiClient geminiClient;
+    private final SupabaseStorageService supabaseStorageService;
 
     /** Personal folders (orgId == null) list the caller's own; org folders list that org's, visible to approved members only. */
     public List<MediaController.FolderDto> getFolders(User user, UUID orgId) {
@@ -96,7 +97,21 @@ public class MediaService {
         if (!isUploader) {
             requireManageAccess(user, asset.getFolder());
         }
+        supabaseStorageService.deletePublicObject(asset.getFileUrl());
         assetRepository.delete(asset);
+    }
+
+    /**
+     * System cleanup (no user/permission context): releases a media asset once its post has been
+     * published, so the file no longer sits in the Media Repository consuming storage.
+     */
+    @Transactional
+    public void releasePublishedAsset(UUID assetId) {
+        if (assetId == null) return;
+        assetRepository.findById(assetId).ifPresent(asset -> {
+            supabaseStorageService.deletePublicObject(asset.getFileUrl());
+            assetRepository.delete(asset);
+        });
     }
 
     /**

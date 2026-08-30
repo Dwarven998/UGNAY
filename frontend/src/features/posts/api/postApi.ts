@@ -32,4 +32,12 @@ export const postApi = {
   approve: (id: string) => axiosClient.post<Post>(`/api/posts/${id}/approve`).then((r: ApiResponse<Post>) => r.data),
 
   reject: (id: string) => axiosClient.post<Post>(`/api/posts/${id}/reject`).then((r: ApiResponse<Post>) => r.data),
+
+  // Appeals: a member requests edit/cancel on a SCHEDULED org post; officer/admin resolves it.
+  requestAppeal: (id: string, type: 'EDIT' | 'CANCEL') =>
+    axiosClient.post<Post>(`/api/posts/${id}/appeal`, { type }).then((r: ApiResponse<Post>) => r.data),
+
+  approveAppeal: (id: string) => axiosClient.post<void>(`/api/posts/${id}/appeal/approve`),
+
+  rejectAppeal: (id: string) => axiosClient.post<void>(`/api/posts/${id}/appeal/reject`),
 };

@@ -75,6 +75,16 @@ public class PostService {
             .orElseThrow();
     }
 
+    @Transactional
+    public PostController.PostDto requestAppeal(User user, UUID postId, String type) {
+        return postSchedulerService.requestAppeal(user, postId, Post.PostAppealType.valueOf(type));
+    }
+
+    @Transactional
+    public void resolveAppeal(User user, UUID postId, boolean approve) {
+        postSchedulerService.resolveAppeal(user, postId, approve);
+    }
+
     private PostController.PostDto toDto(Post p) {
         return new PostController.PostDto(
             p.getId(), p.getCaption(), p.getHashtags(), p.getTone(),
@@ -82,7 +92,10 @@ public class PostService {
             p.getScheduledAt() != null ? p.getScheduledAt().toString() : null,
             p.getMediaAsset() != null ? p.getMediaAsset().getFileUrl() : null,
             p.getFbPostId(),
-            p.getOrganization() != null ? p.getOrganization().getId() : null
+            p.getOrganization() != null ? p.getOrganization().getId() : null,
+            p.getUser() != null ? p.getUser().getId() : null,
+            p.getAppealType() != null ? p.getAppealType().name() : null,
+            p.isEditUnlocked()
         );
     }
 }

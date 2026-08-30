@@ -57,9 +57,17 @@ public class PostSchedulerService {
             .filter(existing -> existing.getUser().getId().equals(user.getId()))
             .orElseThrow(() -> new NoSuchElementException("Post not found"));
 
+        if (isEditLockedForOwner(user, post)) {
+            throw new IllegalStateException(
+                "This post is already scheduled — request an edit appeal for officer/admin approval before changing it.");
+        }
+
         cancelScheduledTask(post.getId());
 
         applyRequest(post, user, req, post.getId());
+        // An unlocked edit is one-time: consume it (and any resolved appeal marker) on save.
+        post.setEditUnlocked(false);
+        post.setAppealType(null);
         postRepository.save(post);
         schedulePost(post);
         return toDto(post);
@@ -70,9 +78,78 @@ public class PostSchedulerService {
         postRepository.findDetailedById(postId)
             .filter(existing -> canManage(user, existing))
             .ifPresent(post -> {
+                boolean isModerator = post.getOrganization() != null
+                    && organizationPermissionService.isOfficerOrAdmin(user.getId(), post.getOrganization().getId());
+                if (!isModerator && isOrgScopedAndScheduled(post)) {
+                    throw new IllegalStateException(
+                        "This post is already scheduled — request a cancel appeal for officer/admin approval before deleting it.");
+                }
                 cancelScheduledTask(post.getId());
                 postRepository.delete(post);
             });
+    }
+
+    /**
+     * A member (not officer/admin) requests officer/admin review to edit or cancel their own
+     * already-SCHEDULED org post — they can no longer change it directly once scheduled.
+     */
+    @Transactional
+    public PostController.PostDto requestAppeal(User user, UUID postId, Post.PostAppealType type) {
+        Post post = postRepository.findDetailedById(postId)
+            .filter(existing -> existing.getUser().getId().equals(user.getId()))
+            .orElseThrow(() -> new NoSuchElementException("Post not found"));
+
+        if (!isOrgScopedAndScheduled(post)) {
+            throw new IllegalStateException("Only a scheduled post can be appealed.");
+        }
+        if (post.getAppealType() != null) {
+            throw new IllegalStateException("An appeal is already pending for this post.");
+        }
+
+        post.setAppealType(type);
+        postRepository.save(post);
+        return toDto(post);
+    }
+
+    /**
+     * Officer/admin resolves a pending appeal. Approving EDIT unlocks a one-time edit for the
+     * owner; approving CANCEL deletes the post outright, removing it from the calendar.
+     */
+    @Transactional
+    public void resolveAppeal(User approver, UUID postId, boolean approve) {
+        Post post = postRepository.findDetailedById(postId)
+            .orElseThrow(() -> new NoSuchElementException("Post not found"));
+        if (post.getOrganization() == null) {
+            throw new IllegalStateException("This post is not scoped to an organization");
+        }
+        organizationPermissionService.requireOfficerOrAdmin(approver.getId(), post.getOrganization().getId());
+
+        Post.PostAppealType type = post.getAppealType();
+        if (type == null) {
+            throw new IllegalStateException("This post has no pending appeal");
+        }
+
+        if (approve && type == Post.PostAppealType.CANCEL) {
+            cancelScheduledTask(post.getId());
+            postRepository.delete(post);
+            return;
+        }
+
+        if (approve && type == Post.PostAppealType.EDIT) {
+            post.setEditUnlocked(true);
+        }
+        post.setAppealType(null);
+        postRepository.save(post);
+    }
+
+    private boolean isEditLockedForOwner(User user, Post post) {
+        return isOrgScopedAndScheduled(post)
+            && !post.isEditUnlocked()
+            && !organizationPermissionService.isOfficerOrAdmin(user.getId(), post.getOrganization().getId());
+    }
+
+    private boolean isOrgScopedAndScheduled(Post post) {
+        return post.getOrganization() != null && post.getStatus() == Post.PostStatus.SCHEDULED;
     }
 
     public List<PostController.PostDto> listPendingForModeration(User requester, UUID orgId) {
@@ -239,7 +316,10 @@ public class PostSchedulerService {
             post.getScheduledAt() != null ? post.getScheduledAt().toString() : null,
             post.getMediaAsset() != null ? post.getMediaAsset().getFileUrl() : null,
             post.getFbPostId(),
-            post.getOrganization() != null ? post.getOrganization().getId() : null
+            post.getOrganization() != null ? post.getOrganization().getId() : null,
+            post.getUser() != null ? post.getUser().getId() : null,
+            post.getAppealType() != null ? post.getAppealType().name() : null,
+            post.isEditUnlocked()
         );
     }
 }

@@ -79,6 +79,29 @@ public class PostController {
         return ResponseEntity.ok(postService.rejectPost(user, postId));
     }
 
+    // --- Appeals: a member requests edit/cancel on a SCHEDULED org post; officer/admin resolves it ---
+
+    @PostMapping("/{postId}/appeal")
+    public ResponseEntity<PostDto> requestAppeal(@AuthenticationPrincipal User user,
+                                                 @PathVariable UUID postId,
+                                                 @RequestBody AppealRequest req) {
+        return ResponseEntity.ok(postService.requestAppeal(user, postId, req.type()));
+    }
+
+    @PostMapping("/{postId}/appeal/approve")
+    public ResponseEntity<Void> approveAppeal(@AuthenticationPrincipal User user,
+                                              @PathVariable UUID postId) {
+        postService.resolveAppeal(user, postId, true);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{postId}/appeal/reject")
+    public ResponseEntity<Void> rejectAppeal(@AuthenticationPrincipal User user,
+                                             @PathVariable UUID postId) {
+        postService.resolveAppeal(user, postId, false);
+        return ResponseEntity.noContent().build();
+    }
+
     // DTOs
     public record CreatePostRequest(
         String caption, String[] hashtags, String tone,
@@ -86,8 +109,11 @@ public class PostController {
         UUID orgId
     ) {}
 
+    public record AppealRequest(String type) {} // "EDIT" | "CANCEL"
+
     public record PostDto(
         UUID id, String caption, String[] hashtags, String tone,
-        String status, String scheduledAt, String mediaUrl, String fbPostId, UUID orgId
+        String status, String scheduledAt, String mediaUrl, String fbPostId, UUID orgId,
+        UUID ownerId, String appealType, boolean editUnlocked
     ) {}
 }

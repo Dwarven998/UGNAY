@@ -8,6 +8,11 @@ export interface Post {
   mediaUrl?: string;
   fbPostId?: string;
   orgId?: string | null;
+  ownerId?: string;
+  /** Non-null while a member's request to edit/cancel this SCHEDULED post awaits officer/admin review. */
+  appealType?: 'EDIT' | 'CANCEL' | null;
+  /** True once an officer/admin approved an EDIT appeal — the owner gets one edit before this resets. */
+  editUnlocked?: boolean;
 }
 
 export interface PostConflict {

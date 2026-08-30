@@ -13,6 +13,8 @@ const STATUS_STYLES: Record<Post['status'], { color: string; border: string; lab
   SCHEDULED: { color: '#2563eb', border: '#60a5fa', label: 'Scheduled' },
   PUBLISHED: { color: '#059669', border: '#34d399', label: 'Published' },
   FAILED: { color: '#dc2626', border: '#f87171', label: 'Failed' },
+  PENDING_REVIEW: { color: '#b45309', border: '#f59e0b', label: 'Pending Review' },
+  REJECTED: { color: '#dc2626', border: '#f87171', label: 'Rejected' },
 };
 
 export interface PostSchedulerCalendarProps {
@@ -63,6 +65,9 @@ export default function PostSchedulerCalendar({ posts, onDateClick, onEventClick
         height="auto"
         editable={false}
         selectable
+        // Month view defaults timed events to a small text "list item" instead of a filled
+        // block, which is why day cells showed plain text instead of the legend's status color.
+        eventDisplay="block"
         headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek' }}
         events={events}
         dateClick={(arg: any) => onDateClick(arg.date)}
@@ -71,12 +76,37 @@ export default function PostSchedulerCalendar({ posts, onDateClick, onEventClick
           const post = arg.event.extendedProps.post as Post;
           return (
             <div className="upe-calendar-event">
+              {post.appealType && (
+                <span
+                  className="upe-calendar-event-appeal-dot"
+                  title={`Appeal pending: request to ${post.appealType === 'EDIT' ? 'edit' : 'cancel'}`}
+                />
+              )}
               <div className="upe-calendar-event-status">{STATUS_STYLES[post.status].label}</div>
               <div className="upe-calendar-event-title">{post.caption}</div>
             </div>
           );
         }}
       />
+
+      <style>{`
+        .upe-calendar-event { position: relative; }
+        .upe-calendar-event-appeal-dot {
+          position: absolute;
+          top: -2px;
+          right: -2px;
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          background: #f59e0b;
+          box-shadow: 0 0 0 2px #ffffff;
+          animation: upe-appeal-pulse 1.6s ease-in-out infinite;
+        }
+        @keyframes upe-appeal-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.55; transform: scale(1.3); }
+        }
+      `}</style>
     </div>
   );
 }

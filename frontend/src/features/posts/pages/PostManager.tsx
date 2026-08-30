@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { ApiError } from '../../../api/axiosClient';
+import { useAuth } from '../../../context/AuthContext';
 import { useOrganization } from '../../../context/OrganizationContext';
 import type { Post, PostConflict } from '../../../types';
 import { postApi, type PostUpsertPayload } from '../api/postApi';
 import FacebookPageConnectButton from '../components/FacebookPageConnectButton';
 import { useFacebookConnection } from '../hooks/useFacebookConnection';
 import PostEditorModal, { type PostEditorDraft } from '../components/PostEditorModal';
+import PostPreviewModal from '../components/PostPreviewModal';
 import PostSchedulerCalendar from '../components/PostSchedulerCalendar';
 
 type EditorState = {
@@ -61,6 +63,7 @@ function getDefaultDraft(date?: Date | null, initial?: Partial<PostEditorDraft> 
 export default function PostManager() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { user } = useAuth();
   const { activeOrgId, activeOrg } = useOrganization();
   const { connected: facebookConnected, refresh: refreshFacebookConnection } = useFacebookConnection();
   const [posts, setPosts] = useState<Post[]>([]);
@@ -72,10 +75,16 @@ export default function PostManager() {
   const [moderatingPostId, setModeratingPostId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
+  const [previewPost, setPreviewPost] = useState<Post | null>(null);
+  const [appealBusy, setAppealBusy] = useState(false);
+  const [appealError, setAppealError] = useState('');
 
   const canModerate = activeOrg?.role === 'ADMIN' || activeOrg?.role === 'OFFICER';
   // Personal workspace: the user manages their own connection. Inside an org: officer/admin only.
   const canManageFacebook = !activeOrgId || canModerate;
+  // Personal workspace: the user manages their own posts directly. Inside an org: officer/admin
+  // only — members' posts go through the approval queue above instead of direct publish/edit/delete.
+  const canManagePosts = !activeOrgId || canModerate;
 
   const loadPosts = async () => {
     const data = await postApi.getAll(activeOrgId);
@@ -149,6 +158,60 @@ export default function PostManager() {
     setEditor(null);
     setConflict(null);
     setError('');
+  };
+
+  /* A SCHEDULED org post is locked from direct editing — clicking it opens a read-only preview
+     with appeal (member) or appeal-review (officer/admin) actions instead of the editor. Any other
+     post (drafts, personal-workspace posts, etc.) keeps the previous direct-edit behavior. */
+  const handleEventClick = (post: Post) => {
+    if (post.orgId && post.status === 'SCHEDULED') {
+      setAppealError('');
+      setPreviewPost(post);
+      return;
+    }
+    openEdit(post);
+  };
+
+  const closePreview = () => {
+    setPreviewPost(null);
+    setAppealError('');
+  };
+
+  const submitAppeal = async (type: 'EDIT' | 'CANCEL') => {
+    if (!previewPost) return;
+    try {
+      setAppealBusy(true);
+      setAppealError('');
+      const updated = await postApi.requestAppeal(previewPost.id, type);
+      setPreviewPost(updated);
+      await loadPosts();
+    } catch (caughtError) {
+      setAppealError(caughtError instanceof Error ? caughtError.message : 'Unable to submit appeal');
+    } finally {
+      setAppealBusy(false);
+    }
+  };
+
+  const resolveAppeal = async (approve: boolean) => {
+    if (!previewPost) return;
+    try {
+      setAppealBusy(true);
+      setAppealError('');
+      await (approve ? postApi.approveAppeal(previewPost.id) : postApi.rejectAppeal(previewPost.id));
+      closePreview();
+      await Promise.all([loadPosts(), loadPendingPosts()]);
+    } catch (caughtError) {
+      setAppealError(caughtError instanceof Error ? caughtError.message : 'Unable to resolve appeal');
+    } finally {
+      setAppealBusy(false);
+    }
+  };
+
+  const editNowFromPreview = () => {
+    if (!previewPost) return;
+    const post = previewPost;
+    setPreviewPost(null);
+    openEdit(post);
   };
 
   const saveDraft = async (draft: PostEditorDraft) => {
@@ -306,7 +369,7 @@ export default function PostManager() {
 
       {/* ── Main layout ── */}
       <div className="upe-layout">
-        <PostSchedulerCalendar posts={posts} onDateClick={openCreate} onEventClick={openEdit} />
+        <PostSchedulerCalendar posts={posts} onDateClick={openCreate} onEventClick={handleEventClick} />
 
         <div className="upe-sidebar-stack">
 
@@ -422,30 +485,32 @@ export default function PostManager() {
                   )}
                 </div>
                 <p className="upe-queue-caption">{post.caption}</p>
-                <div className="upe-queue-actions">
-                  <button
-                    type="button"
-                    className="upe-queue-btn upe-queue-btn-publish"
-                    onClick={() => handlePublish(post)}
-                    disabled={publishingPostId === post.id || post.status === 'PUBLISHED' || post.status === 'PENDING_REVIEW' || post.status === 'REJECTED'}
-                  >
-                    {publishingPostId === post.id ? 'Publishing…' : 'Publish'}
-                  </button>
-                  <button
-                    type="button"
-                    className="upe-queue-btn upe-queue-btn-edit"
-                    onClick={() => openEdit(post)}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="upe-queue-btn upe-queue-btn-delete"
-                    onClick={() => handleDelete(post.id)}
-                  >
-                    Delete
-                  </button>
-                </div>
+                {canManagePosts && (
+                  <div className="upe-queue-actions">
+                    <button
+                      type="button"
+                      className="upe-queue-btn upe-queue-btn-publish"
+                      onClick={() => handlePublish(post)}
+                      disabled={publishingPostId === post.id || post.status === 'PUBLISHED' || post.status === 'PENDING_REVIEW' || post.status === 'REJECTED'}
+                    >
+                      {publishingPostId === post.id ? 'Publishing…' : 'Publish'}
+                    </button>
+                    <button
+                      type="button"
+                      className="upe-queue-btn upe-queue-btn-edit"
+                      onClick={() => openEdit(post)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="upe-queue-btn upe-queue-btn-delete"
+                      onClick={() => handleDelete(post.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
               </article>
             ))}
           </div>
@@ -464,6 +529,20 @@ export default function PostManager() {
         onClose={closeEditor}
         onSubmit={saveDraft}
         onClearConflict={() => setConflict(null)}
+      />
+
+      <PostPreviewModal
+        open={Boolean(previewPost)}
+        post={previewPost}
+        currentUserId={user?.userId}
+        canModerate={canModerate}
+        loading={appealBusy}
+        error={appealError}
+        onClose={closePreview}
+        onRequestAppeal={submitAppeal}
+        onApproveAppeal={() => resolveAppeal(true)}
+        onRejectAppeal={() => resolveAppeal(false)}
+        onEditNow={editNowFromPreview}
       />
 
       {loading && (

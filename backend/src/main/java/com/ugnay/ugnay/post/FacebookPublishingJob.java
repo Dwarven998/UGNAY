@@ -15,6 +15,8 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.core.UserRepository;
+import com.ugnay.ugnay.media.MediaAsset;
+import com.ugnay.ugnay.media.MediaService;
 import com.ugnay.ugnay.org.Organization;
 import com.ugnay.ugnay.org.OrganizationRepository;
 
@@ -35,6 +37,7 @@ public class FacebookPublishingJob {
     private final PostRepository postRepository;
     private final UserRepository userRepository;
     private final OrganizationRepository organizationRepository;
+    private final MediaService mediaService;
     private final WebClient webClient = WebClient.builder().build();
 
     /** Resolves which (pageId, accessToken) to publish with: the post's org if it has one, else the author's legacy personal connection. */
@@ -151,7 +154,16 @@ public class FacebookPublishingJob {
             if (fbPostId != null) {
                 post.setFbPostId(String.valueOf(fbPostId));
             }
+
+            // Release the media asset now that it's been posted to Facebook — it no longer
+            // needs to live in the Media Repository / Supabase Storage.
+            MediaAsset publishedAsset = post.getMediaAsset();
+            post.setMediaAsset(null);
             postRepository.save(post);
+            if (publishedAsset != null) {
+                mediaService.releasePublishedAsset(publishedAsset.getId());
+            }
+
             log.info("Published post {} to Facebook, fb_post_id={}", postId, fbPostId);
         });
     }

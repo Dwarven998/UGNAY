@@ -54,6 +54,16 @@ public class Post {
     @Builder.Default
     private Instant createdAt = Instant.now();
 
+    /** Non-null while a member's request to edit/cancel a SCHEDULED org post awaits officer/admin review. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "appeal_type")
+    private PostAppealType appealType;
+
+    /** True once an officer/admin has approved an EDIT appeal, granting the owner a one-time edit. Consumed on save. */
+    @Column(name = "edit_unlocked")
+    @Builder.Default
+    private boolean editUnlocked = false;
+
     public enum PostStatus {
         DRAFT, SCHEDULED, PUBLISHED, FAILED,
         /** Created by a non-officer/admin org member; awaiting officer/admin approval before it can be scheduled. */
@@ -61,4 +71,6 @@ public class Post {
         /** An officer/admin declined a PENDING_REVIEW post. */
         REJECTED
     }
+
+    public enum PostAppealType { EDIT, CANCEL }
 }
