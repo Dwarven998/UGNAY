@@ -82,12 +82,12 @@ public class PostController {
     // DTOs
     public record CreatePostRequest(
         String caption, String[] hashtags, String tone,
-        UUID mediaAssetId, String scheduledAt,   // ISO-8601
+        UUID[] mediaAssetIds, String scheduledAt,   // ISO-8601, now accepts 1-3 image IDs
         UUID orgId
     ) {}
 
     public record PostDto(
         UUID id, String caption, String[] hashtags, String tone,
-        String status, String scheduledAt, String mediaUrl, String fbPostId, UUID orgId
+        String status, String scheduledAt, String[] mediaUrls, String fbPostId, UUID orgId
     ) {}
 }

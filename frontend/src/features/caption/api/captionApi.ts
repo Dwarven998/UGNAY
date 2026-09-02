@@ -8,6 +8,9 @@ export const captionApi = {
   generate: (imageUrl: string, tone: string) =>
     axiosClient.post<string[]>('/api/caption/generate', { imageUrl, tone }).then((r: ApiResponse<string[]>) => r.data),
 
+  generateForMultiple: (imageUrls: string[], tone: string) =>
+    axiosClient.post<string[]>('/api/caption/generate', { imageUrls, tone }).then((r: ApiResponse<string[]>) => r.data),
+
   rewrite: (caption: string, tone: string) =>
     axiosClient
       .post<RewriteResponse>('/api/caption/rewrite', { caption, tone })

@@ -28,7 +28,9 @@ public class ConflictDetectionService {
                 post.getCaption(),
                 post.getScheduledAt() != null ? post.getScheduledAt().toString() : null,
                 post.getStatus() != null ? post.getStatus().name() : null,
-                post.getMediaAsset() != null ? post.getMediaAsset().getFileUrl() : null
+                post.getPostMediaAssets() != null && !post.getPostMediaAssets().isEmpty()
+                    ? post.getPostMediaAssets().get(0).getMediaAsset().getFileUrl()
+                    : null
             ));
     }
 }

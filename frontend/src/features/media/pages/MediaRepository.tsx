@@ -20,6 +20,7 @@ export default function MediaRepository() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
   const [aiResults, setAiResults] = useState<MediaRecommendation[] | null>(null);
+  const [selectedAssets, setSelectedAssets] = useState<string[]>([]);
 
   // Only officers/admins may create directories inside an org's shared Media Repository.
   const canCreateFolder = !activeOrgId || activeOrg?.role === 'ADMIN' || activeOrg?.role === 'OFFICER';
@@ -68,6 +69,31 @@ export default function MediaRepository() {
     setAiResults(null);
     setAiDescription('');
     setAiError('');
+    setSelectedAssets([]);
+  };
+
+  const toggleAssetSelection = (assetId: string) => {
+    setSelectedAssets(current => {
+      if (current.includes(assetId)) {
+        return current.filter(id => id !== assetId);
+      }
+      if (current.length >= 3) {
+        alert('Maximum 3 images per post');
+        return current;
+      }
+      return [...current, assetId];
+    });
+  };
+
+  const launchCaptionStudioMultiple = () => {
+    if (selectedAssets.length === 0) return;
+    
+    const selectedAssetObjects = (aiResults || assets).filter(a => selectedAssets.includes(a.id));
+    const urls = selectedAssetObjects.map(a => a.fileUrl);
+    const urlsParam = encodeURIComponent(JSON.stringify(urls));
+    const idsParam = encodeURIComponent(JSON.stringify(selectedAssets));
+    
+    navigate(`/caption/studio?imageUrls=${urlsParam}&assetIds=${idsParam}`);
   };
 
   const createFolder = async () => {
@@ -203,6 +229,18 @@ export default function MediaRepository() {
                   onChange={handleUpload}
                   style={{ display: 'none' }}
                 />
+                {selectedAssets.length > 0 && (
+                  <button
+                    onClick={launchCaptionStudioMultiple}
+                    className="mr-btn-upload mr-btn-primary"
+                    style={{ backgroundColor: '#2563eb', color: 'white' }}
+                  >
+                    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                    </svg>
+                    Caption Studio ({selectedAssets.length})
+                  </button>
+                )}
               </div>
 
               <div className="mr-ai-panel">
@@ -231,10 +269,17 @@ export default function MediaRepository() {
               {aiResults ? (
                 <div className="mr-assets-grid">
                   {aiResults.map((result, i) => (
-                    <div key={result.id} className="mr-asset-card mr-asset-card-ranked" style={{ animationDelay: `${i * 0.04}s` }}>
+                    <div 
+                      key={result.id} 
+                      className={`mr-asset-card mr-asset-card-ranked ${selectedAssets.includes(result.id) ? 'mr-asset-card-selected' : ''}`}
+                      style={{ animationDelay: `${i * 0.04}s` }}
+                    >
                       <div className="mr-asset-preview">
                         <img src={result.fileUrl} alt={result.fileName} />
                         <span className="mr-ai-score-badge">{result.score}% match</span>
+                        {selectedAssets.includes(result.id) && (
+                          <div className="mr-asset-check">✓</div>
+                        )}
                         <div className="mr-asset-overlay">
                           <button
                             onClick={() => navigator.clipboard.writeText(result.fileUrl)}
@@ -246,13 +291,13 @@ export default function MediaRepository() {
                             Copy URL
                           </button>
                           <button
-                            onClick={() => navigate(`/caption/select-tone?imageUrl=${encodeURIComponent(result.fileUrl)}&assetId=${result.id}`)}
-                            className="mr-overlay-btn mr-overlay-btn-primary"
+                            onClick={() => toggleAssetSelection(result.id)}
+                            className={`mr-overlay-btn ${selectedAssets.includes(result.id) ? 'mr-overlay-btn-primary' : ''}`}
                           >
                             <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
-                            Caption Studio
+                            {selectedAssets.includes(result.id) ? 'Selected' : 'Select'}
                           </button>
                         </div>
                       </div>
@@ -266,7 +311,11 @@ export default function MediaRepository() {
               ) : (
               <div className="mr-assets-grid">
                 {assets.map((asset, i) => (
-                  <div key={asset.id} className="mr-asset-card" style={{ animationDelay: `${i * 0.04}s` }}>
+                  <div 
+                    key={asset.id} 
+                    className={`mr-asset-card ${selectedAssets.includes(asset.id) ? 'mr-asset-card-selected' : ''}`}
+                    style={{ animationDelay: `${i * 0.04}s` }}
+                  >
                     <div className="mr-asset-preview">
                       {asset.fileType.startsWith('image') ? (
                         <img src={asset.fileUrl} alt={asset.fileName} />
@@ -274,6 +323,9 @@ export default function MediaRepository() {
                         <video src={asset.fileUrl} aria-label={asset.fileName}>
                           <track kind="captions" label="Preview captions" srcLang="en" src="" />
                         </video>
+                      )}
+                      {selectedAssets.includes(asset.id) && (
+                        <div className="mr-asset-check">✓</div>
                       )}
                       {/* Hover overlay */}
                       <div className="mr-asset-overlay">
@@ -287,13 +339,13 @@ export default function MediaRepository() {
                           Copy URL
                         </button>
                         <button
-                          onClick={() => navigate(`/caption/select-tone?imageUrl=${encodeURIComponent(asset.fileUrl)}&assetId=${asset.id}`)}
-                          className="mr-overlay-btn mr-overlay-btn-primary"
+                          onClick={() => toggleAssetSelection(asset.id)}
+                          className={`mr-overlay-btn ${selectedAssets.includes(asset.id) ? 'mr-overlay-btn-primary' : ''}`}
                         >
                           <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
-                          Caption Studio
+                          {selectedAssets.includes(asset.id) ? 'Selected' : 'Select'}
                         </button>
                         <button
                           onClick={() => handleDeleteAsset(asset.id)}

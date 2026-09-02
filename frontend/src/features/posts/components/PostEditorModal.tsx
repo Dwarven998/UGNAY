@@ -9,10 +9,10 @@ export interface PostEditorDraft {
   caption: string;
   hashtags: string[];
   tone: string;
-  mediaAssetId: string;
+  mediaAssetIds: string[];
   scheduledAt: string;
-  /** Preview URL carried from Caption Studio (not an asset ID). */
-  mediaPreviewUrl?: string;
+  /** Preview URLs carried from Caption Studio (not asset IDs). */
+  mediaPreviewUrls?: string[];
   /** True when the draft originated from Caption Studio (tone was pre-selected). */
   fromCaptionStudio?: boolean;
 }
@@ -51,8 +51,8 @@ export default function PostEditorModal({
   const [caption, setCaption] = useState('');
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [tone, setTone] = useState('FORMAL');
-  const [mediaAssetId, setMediaAssetId] = useState('');
-  const [mediaPreviewUrl, setMediaPreviewUrl] = useState<string | null>(null);
+  const [mediaAssetIds, setMediaAssetIds] = useState<string[]>([]);
+  const [mediaPreviewUrls, setMediaPreviewUrls] = useState<string[]>([]);
   const [scheduledAt, setScheduledAt] = useState<Date | null>(suggestedTime);
   const [hashtagInput, setHashtagInput] = useState('');
 
@@ -69,8 +69,18 @@ export default function PostEditorModal({
     setCaption(initialPost?.caption ?? initialDraft?.caption ?? '');
     setHashtags(mergedHashtags);
     setTone(initialPost?.tone ?? initialDraft?.tone ?? 'FORMAL');
-    setMediaAssetId(initialDraft?.mediaAssetId ?? '');
-    setMediaPreviewUrl(initialPost?.mediaUrl ?? initialDraft?.mediaPreviewUrl ?? null);
+    setMediaAssetIds(initialDraft?.mediaAssetIds ?? []);
+    
+    // Handle both single mediaUrl (legacy) and multiple mediaUrls
+    const urls = initialDraft?.mediaPreviewUrls ?? [];
+    if (initialPost?.mediaUrls && initialPost.mediaUrls.length > 0) {
+      setMediaPreviewUrls(initialPost.mediaUrls);
+    } else if (initialPost?.mediaUrl) {
+      setMediaPreviewUrls([initialPost.mediaUrl]);
+    } else {
+      setMediaPreviewUrls(urls);
+    }
+    
     setScheduledAt(
       initialDraft?.scheduledAt
         ? new Date(initialDraft.scheduledAt)
@@ -101,9 +111,25 @@ export default function PostEditorModal({
   };
 
   const selectAsset = (asset: MediaAsset) => {
-    setMediaAssetId(asset.id);         // ✅ send UUID to backend
-    setMediaPreviewUrl(asset.fileUrl); // show preview
-    setPickerOpen(false);
+    // Check if already selected
+    const isSelected = mediaAssetIds.includes(asset.id);
+    
+    if (isSelected) {
+      // Deselect: remove both ID and URL at the same index
+      const index = mediaAssetIds.indexOf(asset.id);
+      setMediaAssetIds(current => current.filter((_, i) => i !== index));
+      setMediaPreviewUrls(current => current.filter((_, i) => i !== index));
+    } else {
+      // Select: check if we're at the max (3 images)
+      if (mediaAssetIds.length >= 3) {
+        alert('Maximum 3 images per post');
+        return;
+      }
+      // Add both ID and URL
+      setMediaAssetIds(current => [...current, asset.id]);
+      setMediaPreviewUrls(current => [...current, asset.fileUrl]);
+    }
+    
     onClearConflict?.();
   };
 
@@ -122,7 +148,7 @@ export default function PostEditorModal({
       caption,
       hashtags,
       tone,
-      mediaAssetId,
+      mediaAssetIds,
       scheduledAt: scheduledAt ? scheduledAt.toISOString() : '',
     });
   };
@@ -161,17 +187,24 @@ export default function PostEditorModal({
 
           {/* ── Media picker ── */}
           <div className="upe-field">
-            <span>Media</span>
+            <span>Media (1-3 images)</span>
             <div className="upe-media-picker-row">
-              {mediaPreviewUrl ? (
-                <div className="upe-media-thumb">
-                  <img src={mediaPreviewUrl} alt="Selected media" />
-                  <button
-                    type="button"
-                    className="upe-media-thumb-remove"
-                    onClick={() => { setMediaAssetId(''); setMediaPreviewUrl(null); }}
-                    title="Remove"
-                  >×</button>
+              {mediaPreviewUrls.length > 0 ? (
+                <div className="upe-media-thumbs">
+                  {mediaPreviewUrls.map((url, idx) => (
+                    <div key={idx} className="upe-media-thumb">
+                      <img src={url} alt={`Selected media ${idx + 1}`} />
+                      <button
+                        type="button"
+                        className="upe-media-thumb-remove"
+                        onClick={() => {
+                          setMediaAssetIds(current => current.filter((_, i) => i !== idx));
+                          setMediaPreviewUrls(current => current.filter((_, i) => i !== idx));
+                        }}
+                        title="Remove"
+                      >×</button>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div className="upe-media-empty-thumb">
@@ -185,7 +218,7 @@ export default function PostEditorModal({
                 className="upe-secondary-btn"
                 onClick={() => setPickerOpen(p => !p)}
               >
-                {pickerOpen ? 'Close picker' : mediaPreviewUrl ? 'Change image' : 'Choose from library'}
+                {pickerOpen ? 'Close picker' : mediaPreviewUrls.length > 0 ? 'Add/change images' : 'Choose from library'}
               </button>
             </div>
 
@@ -219,12 +252,12 @@ export default function PostEditorModal({
                     <button
                       key={asset.id}
                       type="button"
-                      className={`upe-picker-asset${mediaAssetId === asset.id ? ' upe-picker-asset-selected' : ''}`}
+                      className={`upe-picker-asset${mediaAssetIds.includes(asset.id) ? ' upe-picker-asset-selected' : ''}`}
                       onClick={() => selectAsset(asset)}
                       title={asset.fileName}
                     >
                       <img src={asset.fileUrl} alt={asset.fileName} />
-                      {mediaAssetId === asset.id && (
+                      {mediaAssetIds.includes(asset.id) && (
                         <div className="upe-picker-asset-check">✓</div>
                       )}
                     </button>

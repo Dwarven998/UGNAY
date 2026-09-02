@@ -151,13 +151,28 @@ public class PostSchedulerService {
                 .ifPresent(conflict -> { throw new SchedulingConflictException(conflict); });
         }
 
-        MediaAsset asset = req.mediaAssetId() != null
-            ? assetRepository.findById(req.mediaAssetId()).orElse(null)
-            : post.getMediaAsset();
+        // Handle multiple media assets (1-3 images)
+        post.getPostMediaAssets().clear();
+        if (req.mediaAssetIds() != null && req.mediaAssetIds().length > 0) {
+            // Validate that we have 1-3 images
+            if (req.mediaAssetIds().length > 3) {
+                throw new IllegalArgumentException("A post cannot have more than 3 images");
+            }
+            for (int i = 0; i < req.mediaAssetIds().length; i++) {
+                UUID assetId = req.mediaAssetIds()[i];
+                MediaAsset asset = assetRepository.findById(assetId)
+                    .orElseThrow(() -> new NoSuchElementException("Media asset not found: " + assetId));
+                PostMediaAsset postMediaAsset = PostMediaAsset.builder()
+                    .post(post)
+                    .mediaAsset(asset)
+                    .displayOrder(i)
+                    .build();
+                post.getPostMediaAssets().add(postMediaAsset);
+            }
+        }
 
         post.setUser(user);
         post.setOrganization(organization);
-        post.setMediaAsset(asset);
         post.setCaption(req.caption());
         post.setHashtags(req.hashtags());
         post.setTone(req.tone());
@@ -230,6 +245,12 @@ public class PostSchedulerService {
     }
 
     private PostController.PostDto toDto(Post post) {
+        String[] mediaUrls = post.getPostMediaAssets() != null
+            ? post.getPostMediaAssets().stream()
+                .map(pma -> pma.getMediaAsset().getFileUrl())
+                .toArray(String[]::new)
+            : new String[0];
+
         return new PostController.PostDto(
             post.getId(),
             post.getCaption(),
@@ -237,7 +258,7 @@ public class PostSchedulerService {
             post.getTone(),
             post.getStatus().name(),
             post.getScheduledAt() != null ? post.getScheduledAt().toString() : null,
-            post.getMediaAsset() != null ? post.getMediaAsset().getFileUrl() : null,
+            mediaUrls,
             post.getFbPostId(),
             post.getOrganization() != null ? post.getOrganization().getId() : null
         );

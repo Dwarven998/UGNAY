@@ -29,16 +29,20 @@ function parseCaptionDraftFromSession(): Partial<PostEditorDraft> | null {
       hashtags?: string[];
       tone?: string;
       imageUrl?: string;
+      imageUrls?: string[];
       assetId?: string;
+      assetIds?: string[];
     };
+    const mediaAssetIds = data.assetIds || (data.assetId ? [data.assetId] : []);
+    const mediaPreviewUrls = data.imageUrls || (data.imageUrl ? [data.imageUrl] : []);
     return {
       caption: data.caption ?? '',
       /* Keep hashtags as-is (with # prefix) — the backend's FacebookPublishingJob
          uses String.join(" ", hashtags) and expects # to already be present. */
       hashtags: data.hashtags ?? [],
       tone: data.tone ?? 'FORMAL',
-      mediaAssetId: data.assetId || undefined,
-      mediaPreviewUrl: data.imageUrl || undefined,
+      mediaAssetIds: mediaAssetIds,
+      mediaPreviewUrls: mediaPreviewUrls,
       fromCaptionStudio: true,
     };
   } catch {
@@ -51,9 +55,9 @@ function getDefaultDraft(date?: Date | null, initial?: Partial<PostEditorDraft> 
     caption: initial?.caption ?? '',
     hashtags: initial?.hashtags ?? [],
     tone: initial?.tone ?? 'FORMAL',
-    mediaAssetId: initial?.mediaAssetId ?? '',
+    mediaAssetIds: initial?.mediaAssetIds ?? [],
     scheduledAt: date ? date.toISOString() : initial?.scheduledAt,
-    mediaPreviewUrl: initial?.mediaPreviewUrl,
+    mediaPreviewUrls: initial?.mediaPreviewUrls,
     fromCaptionStudio: initial?.fromCaptionStudio,
   };
 }
@@ -156,7 +160,7 @@ export default function PostManager() {
       caption: draft.caption,
       hashtags: draft.hashtags,
       tone: draft.tone,
-      mediaAssetId: draft.mediaAssetId || undefined,
+      mediaAssetIds: draft.mediaAssetIds && draft.mediaAssetIds.length > 0 ? draft.mediaAssetIds : undefined,
       scheduledAt: draft.scheduledAt || undefined,
     };
 

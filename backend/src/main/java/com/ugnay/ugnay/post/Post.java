@@ -20,9 +20,10 @@ public class Post {
     @JoinColumn(name = "user_id")
     private User user;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "media_asset_id")
-    private MediaAsset mediaAsset;
+    /** Supports 1-3 images per post. Images are ordered by display_order. */
+    @OneToMany(mappedBy = "post", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("displayOrder ASC")
+    private List<PostMediaAsset> postMediaAssets = new ArrayList<>();
 
     /** Which organization this post belongs to, if the author had one active when it was created. Nullable for backward compatibility with posts made before organizations existed. */
     @ManyToOne(fetch = FetchType.LAZY)

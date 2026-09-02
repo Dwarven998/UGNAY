@@ -70,20 +70,19 @@ public class FacebookPublishingJob {
             return;
         }
 
-        boolean hasImage = post.getMediaAsset() != null
-            && post.getMediaAsset().getFileUrl() != null
-            && !post.getMediaAsset().getFileUrl().isBlank();
+        boolean hasImages = post.getPostMediaAssets() != null && !post.getPostMediaAssets().isEmpty();
 
-        // Route to the correct endpoint:
-        // - /photos  → publishes an actual image + caption (visible as a photo post)
-        // - /feed    → publishes text only
-        String endpoint = hasImage
+        // Route to the correct endpoint based on image count:
+        // - /photos        → publishes a single image + caption (visible as a photo post)
+        // - /feed          → publishes text only or with multiple images
+        String endpoint = hasImages
             ? facebookApiUrl + "/" + credentials.pageId() + "/photos"
             : facebookApiUrl + "/" + credentials.pageId() + "/feed";
 
-        Map<String, Object> payload = buildPayload(credentials, post, hasImage);
+        Map<String, Object> payload = buildPayload(credentials, post, hasImages);
 
-        log.info("Publishing post {} to Facebook endpoint: {} (hasImage={})", postId, endpoint, hasImage);
+        log.info("Publishing post {} to Facebook endpoint: {} (imageCount={})", 
+            postId, endpoint, (hasImages ? post.getPostMediaAssets().size() : 0));
 
         webClient.post()
             .uri(endpoint)
@@ -108,15 +107,23 @@ public class FacebookPublishingJob {
         }
     }
 
-    private Map<String, Object> buildPayload(PublishCredentials credentials, Post post, boolean hasImage) {
+    private Map<String, Object> buildPayload(PublishCredentials credentials, Post post, boolean hasImages) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("access_token", credentials.accessToken());
 
         String message = buildMessage(post);
 
-        if (hasImage) {
-            // /photos endpoint uses "url" for the image and "caption" for the text
-            payload.put("url",     post.getMediaAsset().getFileUrl());
+        if (hasImages && !post.getPostMediaAssets().isEmpty()) {
+            // For now, post to /photos with the first image (simple approach)
+            // Facebook's carousel/multi-image support is more complex and would require additional setup
+            // Future enhancement: implement full carousel support for 2-3 images
+            String firstImageUrl = post.getPostMediaAssets().get(0).getMediaAsset().getFileUrl();
+            payload.put("url", firstImageUrl);
+            
+            // If there are multiple images, add a note to the caption
+            if (post.getPostMediaAssets().size() > 1) {
+                message = message + "\n\n📸 (" + post.getPostMediaAssets().size() + " images)";
+            }
             payload.put("caption", message);
         } else {
             // /feed endpoint uses "message" for text-only posts

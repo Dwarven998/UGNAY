@@ -88,6 +88,70 @@ public class GeminiClient {
     }
 
     /**
+     * Generates 3 generalized caption options for multiple images (1-3).
+     * Creates captions that apply to all images collectively.
+     * Uses Gemini 1.5 Flash with multimodal (text + multiple image URLs) input.
+     */
+    public List<String> generateCaptionsForMultiple(String[] imageUrls, String tone, String orgName) {
+        if (imageUrls.length == 0 || imageUrls.length > 3) {
+            throw new IllegalArgumentException("Must provide 1-3 image URLs");
+        }
+
+        String prompt = buildMultiImageCaptionPrompt(tone, orgName, imageUrls.length);
+        Map<String, Object> requestBody = buildGeminiRequestForMultiple(imageUrls, prompt);
+
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            final int currentAttempt = attempt;
+            try {
+                Map<String, Object> response = webClient.post()
+                    .uri(apiUrl + "?key=" + apiKey)
+                    .bodyValue(requestBody)
+                    .retrieve()
+                    .onStatus(
+                        status -> status.isError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class)
+                            .map(body -> {
+                                System.out.println("🔥 GEMINI ERROR (attempt " + currentAttempt + "): "
+                                    + clientResponse.statusCode() + " - " + body);
+                                return new RuntimeException("Gemini API Error: " + body);
+                            })
+                    )
+                    .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                    .block();
+
+                List<String> captions = parseCaptions(response);
+
+                // Validate we got real captions, not the fallback
+                if (captions != null && !captions.isEmpty()
+                        && !captions.get(0).contains("failed")) {
+                    return captions;
+                }
+
+                System.out.println("⚠️ Caption parse returned fallback on attempt " + attempt
+                    + ", raw response: " + extractText(response));
+
+            } catch (Exception e) {
+                System.out.println("❌ Gemini attempt " + attempt + " failed: " + e.getMessage());
+                if (isQuotaExceeded(e)) {
+                    throw quotaExceededException(e);
+                }
+                if (attempt == MAX_RETRIES) {
+                    throw new RuntimeException("Caption generation failed after " + MAX_RETRIES + " attempts.", e);
+                }
+            }
+
+            // Wait before retrying
+            try {
+                Thread.sleep(RETRY_DELAY_MS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        return List.of("Caption generation failed. Please try again.");
+    }
+
+    /**
      * Rewrites a caption in the specified tone.
      */
     public String rewriteWithTone(String caption, String tone, String orgName) {
@@ -376,6 +440,32 @@ public class GeminiClient {
         );
     }
 
+    private String buildMultiImageCaptionPrompt(String tone, String orgName, int imageCount) {
+        return String.format(
+            """
+            You are a social media assistant for "%s", a Philippine college organization.
+            Analyze these %d images together and generate exactly 3 generalized Facebook caption options 
+            that collectively describe and apply to ALL images in the set.
+            
+            Tone: %s
+            - FORMAL: professional and institutional
+            - ENERGETIC: exciting and dynamic  
+            - CELEBRATORY: festive and warm
+            - URGENT: time-sensitive with clear CTA
+            
+            Rules:
+            - Create captions that work for ALL %d images as a cohesive collection
+            - Each caption must include relevant emojis
+            - Each caption should be 2–4 sentences
+            - Generalize the content to cover the common themes/subjects across the images
+            - Use Filipino college student context
+            - Return ONLY a valid JSON array of exactly 3 strings (no markdown, no backticks):
+              ["caption 1", "caption 2", "caption 3"]
+            """,
+            orgName, imageCount, tone, imageCount
+        );
+    }
+
     private byte[] downloadImageBytes(String imageUrl) {
         try {
             byte[] bytes = webClient.get()
@@ -433,6 +523,47 @@ public class GeminiClient {
             )));
         }
 
+        parts.add(Map.of("text", prompt));
+
+        return Map.of(
+            "contents", List.of(Map.of("parts", parts)),
+            // ✅ Increased from 1024 — prevents JSON truncation for longer captions
+            "generationConfig", Map.of("temperature", 0.8, "maxOutputTokens", 2048)
+        );
+    }
+
+    private Map<String, Object> buildGeminiRequestForMultiple(String[] imageUrls, String prompt) {
+        List<Map<String, Object>> parts = new ArrayList<>();
+
+        // Add all images to the request
+        for (String imageUrl : imageUrls) {
+            if (imageUrl.startsWith("data:image")) {
+                // Base64 data URL
+                String[] splits = imageUrl.split(",", 2);
+                String mimeType = splits[0].replace("data:", "").replace(";base64", "");
+                parts.add(Map.of("inline_data", Map.of(
+                    "mime_type", mimeType,
+                    "data", splits[1]
+                )));
+            } else if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) {
+                // Download and convert to base64
+                byte[] imageBytes = downloadImageBytes(imageUrl);
+                String base64Image = Base64.getEncoder().encodeToString(imageBytes);
+                String mimeType = getMimeType(imageUrl);
+                parts.add(Map.of("inline_data", Map.of(
+                    "mime_type", mimeType,
+                    "data", base64Image
+                )));
+            } else {
+                // Gemini file URI
+                parts.add(Map.of("file_data", Map.of(
+                    "file_uri", imageUrl,
+                    "mime_type", "image/jpeg"
+                )));
+            }
+        }
+
+        // Add the prompt after all images
         parts.add(Map.of("text", prompt));
 
         return Map.of(

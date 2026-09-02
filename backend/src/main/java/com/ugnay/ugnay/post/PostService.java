@@ -76,11 +76,17 @@ public class PostService {
     }
 
     private PostController.PostDto toDto(Post p) {
+        String[] mediaUrls = p.getPostMediaAssets() != null
+            ? p.getPostMediaAssets().stream()
+                .map(pma -> pma.getMediaAsset().getFileUrl())
+                .toArray(String[]::new)
+            : new String[0];
+
         return new PostController.PostDto(
             p.getId(), p.getCaption(), p.getHashtags(), p.getTone(),
             p.getStatus().name(),
             p.getScheduledAt() != null ? p.getScheduledAt().toString() : null,
-            p.getMediaAsset() != null ? p.getMediaAsset().getFileUrl() : null,
+            mediaUrls,
             p.getFbPostId(),
             p.getOrganization() != null ? p.getOrganization().getId() : null
         );

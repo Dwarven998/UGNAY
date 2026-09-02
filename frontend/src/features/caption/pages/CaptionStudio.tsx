@@ -6,19 +6,57 @@ export default function CaptionStudio() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [imageUrl, setImageUrl] = useState('');
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
 
   useEffect(() => {
     const urlFromQuery = searchParams.get('imageUrl');
-    const urlFromSession = sessionStorage.getItem('caption_image_url');
-    setImageUrl(urlFromQuery ?? urlFromSession ?? '');
+    const urlsFromSession = sessionStorage.getItem('caption_image_urls');
+    
+    if (urlFromQuery) {
+      setImageUrl(urlFromQuery);
+    } else if (urlsFromSession) {
+      setImageUrls(JSON.parse(urlsFromSession));
+    } else {
+      const legacyUrl = sessionStorage.getItem('caption_image_url');
+      if (legacyUrl) {
+        setImageUrl(legacyUrl);
+      }
+    }
   }, [searchParams]);
 
-  const handleContinue = () => {
+  const addImage = () => {
     const nextImageUrl = imageUrl.trim();
-    if (!nextImageUrl) return;
+    if (!nextImageUrl || nextImageUrl === '') return;
+    if (imageUrls.includes(nextImageUrl)) {
+      alert('This image is already added');
+      return;
+    }
+    if (imageUrls.length >= 3) {
+      alert('Maximum 3 images per post');
+      return;
+    }
+    
+    setImageUrls([...imageUrls, nextImageUrl]);
+    setImageUrl('');
+  };
 
-    sessionStorage.setItem('caption_image_url', nextImageUrl);
-    navigate(`/caption/select-tone?imageUrl=${encodeURIComponent(nextImageUrl)}`);
+  const removeImage = (idx: number) => {
+    setImageUrls(imageUrls.filter((_, i) => i !== idx));
+  };
+
+  const handleContinue = () => {
+    const urlsToUse = imageUrls.length > 0 ? imageUrls : [imageUrl];
+    if (urlsToUse.length === 0 || urlsToUse.some(url => !url.trim())) {
+      alert('Please add at least one image');
+      return;
+    }
+
+    sessionStorage.setItem('caption_image_urls', JSON.stringify(urlsToUse));
+    // Also keep legacy single URL for backward compatibility
+    if (urlsToUse.length === 1) {
+      sessionStorage.setItem('caption_image_url', urlsToUse[0]);
+    }
+    navigate(`/caption/select-tone?imageUrls=${encodeURIComponent(JSON.stringify(urlsToUse))}`);
   };
 
   return (
@@ -40,9 +78,9 @@ export default function CaptionStudio() {
             <div className="cs-step-row">
               <div className="cs-step-badge">1</div>
               <div>
-                <h2 className="cs-card-title">Provide Media</h2>
+                <h2 className="cs-card-title">Provide Media (1-3 images)</h2>
                 <p className="cs-card-desc">
-                  Paste the public URL of an uploaded media asset, or select one from your repository.
+                  Paste the public URL(s) of uploaded media assets, or select from your repository.
                 </p>
               </div>
             </div>
@@ -63,13 +101,65 @@ export default function CaptionStudio() {
                   placeholder="https://your-supabase-url/storage/v1/..."
                   value={imageUrl}
                   onChange={e => setImageUrl(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addImage()}
                   className="cs-input"
                 />
               </div>
             </div>
 
-            {/* Preview */}
-            {imageUrl ? (
+            {/* Add button */}
+            {imageUrl.trim() && (
+              <div style={{ marginBottom: '20px' }}>
+                <button
+                  type="button"
+                  onClick={addImage}
+                  disabled={imageUrls.length >= 3}
+                  className="cs-btn-secondary"
+                  style={{ width: '100%' }}
+                >
+                  Add Image ({imageUrls.length}/3)
+                </button>
+              </div>
+            )}
+
+            {/* Preview - Selected Images */}
+            {imageUrls.length > 0 && (
+              <div className="cs-selected-images">
+                <div style={{ fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Selected Images ({imageUrls.length}/3)
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+                  {imageUrls.map((url, idx) => (
+                    <div key={idx} style={{ position: 'relative', borderRadius: '12px', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
+                      <img src={url} alt={`preview-${idx}`} style={{ width: '100%', height: '100px', objectFit: 'cover', display: 'block' }} />
+                      <button
+                        type="button"
+                        onClick={() => removeImage(idx)}
+                        style={{
+                          position: 'absolute',
+                          top: '4px',
+                          right: '4px',
+                          width: '24px',
+                          height: '24px',
+                          background: 'rgba(0,0,0,0.6)',
+                          border: 'none',
+                          borderRadius: '6px',
+                          color: 'white',
+                          fontSize: '16px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                      >×</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Preview - Single Current Image */}
+            {imageUrls.length === 0 && imageUrl ? (
               <div className="cs-preview">
                 <img
                   src={imageUrl}
@@ -77,14 +167,14 @@ export default function CaptionStudio() {
                   className="cs-preview-img"
                 />
               </div>
-            ) : (
+            ) : imageUrls.length === 0 && !imageUrl ? (
               <div className="cs-preview-placeholder">
                 <svg width="32" height="32" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
                 <span>Image preview will appear here</span>
               </div>
-            )}
+            ) : null}
 
             {/* Actions */}
             <div className="cs-actions">
@@ -101,7 +191,7 @@ export default function CaptionStudio() {
               <button
                 type="button"
                 onClick={handleContinue}
-                disabled={!imageUrl.trim()}
+                disabled={imageUrls.length === 0 && !imageUrl.trim()}
                 className="cs-btn-primary"
               >
                 Continue to Step 2

@@ -9,8 +9,8 @@ const DEFAULT_TONE: Tone = 'FORMAL';
 export default function CaptionToneSelection() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [imageUrl, setImageUrl] = useState('');
-  const [assetId, setAssetId] = useState('');
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
+  const [assetIds, setAssetIds] = useState<string[]>([]);
   const [selectedTone, setSelectedTone] = useState<Tone>(DEFAULT_TONE);
   const [captions, setCaptions] = useState<string[]>([]);
   const [selectedCaption, setSelectedCaption] = useState('');
@@ -20,34 +20,85 @@ export default function CaptionToneSelection() {
   const [isGeneratingHashtags, setIsGeneratingHashtags] = useState(false);
 
   useEffect(() => {
-    const urlFromQuery = searchParams.get('imageUrl');
-    const urlFromSession = sessionStorage.getItem('caption_image_url');
-    const resolvedImageUrl = urlFromQuery ?? urlFromSession ?? '';
-
-    const assetIdFromQuery = searchParams.get('assetId');
-    const assetIdFromSession = sessionStorage.getItem('caption_asset_id');
-    const resolvedAssetId = assetIdFromQuery ?? assetIdFromSession ?? '';
-
-    setImageUrl(resolvedImageUrl);
-    setAssetId(resolvedAssetId);
-    if (resolvedImageUrl) {
-      sessionStorage.setItem('caption_image_url', resolvedImageUrl);
+    // Try to load multiple image URLs first
+    const urlsFromQuery = searchParams.get('imageUrls');
+    const urlsFromSession = sessionStorage.getItem('caption_image_urls');
+    
+    let resolvedImageUrls: string[] = [];
+    
+    if (urlsFromQuery) {
+      try {
+        resolvedImageUrls = JSON.parse(urlsFromQuery);
+      } catch {
+        resolvedImageUrls = [urlsFromQuery];
+      }
+    } else if (urlsFromSession) {
+      try {
+        resolvedImageUrls = JSON.parse(urlsFromSession);
+      } catch {
+        resolvedImageUrls = [urlsFromSession];
+      }
+    } else {
+      // Fallback to single image (legacy)
+      const urlFromQuery = searchParams.get('imageUrl');
+      const urlFromSession = sessionStorage.getItem('caption_image_url');
+      const resolvedImageUrl = urlFromQuery ?? urlFromSession ?? '';
+      if (resolvedImageUrl) {
+        resolvedImageUrls = [resolvedImageUrl];
+      }
     }
-    if (resolvedAssetId) {
-      sessionStorage.setItem('caption_asset_id', resolvedAssetId);
+
+    const assetIdsFromQuery = searchParams.get('assetIds');
+    const assetIdsFromSession = sessionStorage.getItem('caption_asset_ids');
+    
+    let resolvedAssetIds: string[] = [];
+    
+    if (assetIdsFromQuery) {
+      try {
+        resolvedAssetIds = JSON.parse(assetIdsFromQuery);
+      } catch {
+        resolvedAssetIds = [assetIdsFromQuery];
+      }
+    } else if (assetIdsFromSession) {
+      try {
+        resolvedAssetIds = JSON.parse(assetIdsFromSession);
+      } catch {
+        resolvedAssetIds = [assetIdsFromSession];
+      }
+    } else {
+      // Fallback to single asset ID (legacy)
+      const assetIdFromQuery = searchParams.get('assetId');
+      const assetIdFromSession = sessionStorage.getItem('caption_asset_id');
+      const resolvedAssetId = assetIdFromQuery ?? assetIdFromSession ?? '';
+      if (resolvedAssetId) {
+        resolvedAssetIds = [resolvedAssetId];
+      }
+    }
+
+    setImageUrls(resolvedImageUrls);
+    setAssetIds(resolvedAssetIds);
+    
+    if (resolvedImageUrls.length > 0) {
+      sessionStorage.setItem('caption_image_urls', JSON.stringify(resolvedImageUrls));
+    }
+    if (resolvedAssetIds.length > 0) {
+      sessionStorage.setItem('caption_asset_ids', JSON.stringify(resolvedAssetIds));
     }
   }, [searchParams]);
 
   const handleBack = () => {
-    const query = imageUrl ? `?imageUrl=${encodeURIComponent(imageUrl)}` : '';
+    const query = imageUrls.length > 0 ? `?imageUrls=${encodeURIComponent(JSON.stringify(imageUrls))}` : '';
     navigate(`/caption${query}`);
   };
 
   const handleGenerate = async () => {
-    if (!imageUrl) return;
+    if (imageUrls.length === 0) return;
     setIsGenerating(true);
     try {
-      const result = await captionApi.generate(imageUrl, selectedTone);
+      // Call appropriate API based on number of images
+      const result = imageUrls.length === 1
+        ? await captionApi.generate(imageUrls[0], selectedTone)
+        : await captionApi.generateForMultiple(imageUrls, selectedTone);
       setCaptions(result);
       setSelectedCaption('');
       setHashtags([]);
@@ -89,14 +140,14 @@ export default function CaptionToneSelection() {
     sessionStorage.setItem('caption_draft', JSON.stringify({
       caption: selectedCaption,
       hashtags,
-      imageUrl,
-      assetId,
+      imageUrls: imageUrls.length > 1 ? imageUrls : imageUrls[0],
+      assetIds: assetIds.length > 1 ? assetIds : (assetIds[0] || undefined),
       tone: selectedTone,
     }));
     navigate('/posts');
   };
 
-  if (!imageUrl) {
+  if (imageUrls.length === 0) {
     return (
       <>
         <div className="cts-container">
@@ -150,7 +201,12 @@ export default function CaptionToneSelection() {
           <div className="cts-card-grid">
             {/* Image preview */}
             <div className="cts-image-wrap">
-              <img src={imageUrl} alt="Selected media preview" className="cts-image" />
+              <img src={imageUrls[0]} alt="Selected media preview" className="cts-image" />
+              {imageUrls.length > 1 && (
+                <div style={{ fontSize: '12px', color: '#64748b', marginTop: '8px', textAlign: 'center' }}>
+                  {imageUrls.length} images selected
+                </div>
+              )}
             </div>
 
             {/* Controls */}

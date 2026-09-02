@@ -24,8 +24,16 @@ public class CaptionController {
     @PostMapping("/generate")
     public ResponseEntity<List<String>> generate(@AuthenticationPrincipal User user,
                                                   @RequestBody GenerateRequest req) {
-        List<String> captions = geminiClient.generateCaptions(req.imageUrl(), req.tone(), user.getOrgName());
-        return ResponseEntity.ok(captions);
+        // Support single image (for backward compatibility) or multiple images
+        if (req.imageUrl() != null && !req.imageUrl().isBlank()) {
+            List<String> captions = geminiClient.generateCaptions(req.imageUrl(), req.tone(), user.getOrgName());
+            return ResponseEntity.ok(captions);
+        } else if (req.imageUrls() != null && req.imageUrls().length > 0) {
+            List<String> captions = geminiClient.generateCaptionsForMultiple(req.imageUrls(), req.tone(), user.getOrgName());
+            return ResponseEntity.ok(captions);
+        } else {
+            throw new IllegalArgumentException("Either imageUrl or imageUrls must be provided");
+        }
     }
 
     @PostMapping("/rewrite")
@@ -43,7 +51,7 @@ public class CaptionController {
     }
 
     // Request DTOs
-    public record GenerateRequest(String imageUrl, String tone) {}
+    public record GenerateRequest(String imageUrl, String[] imageUrls, String tone) {}
     public record RewriteRequest(String caption, String tone) {}
     public record HashtagRequest(String caption) {}
 }

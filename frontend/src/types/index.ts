@@ -6,6 +6,7 @@ export interface Post {
   status: 'DRAFT' | 'SCHEDULED' | 'PUBLISHED' | 'FAILED' | 'PENDING_REVIEW' | 'REJECTED';
   scheduledAt?: string;
   mediaUrl?: string;
+  mediaUrls?: string[];
   fbPostId?: string;
   orgId?: string | null;
 }
@@ -16,6 +17,7 @@ export interface PostConflict {
   scheduledAt: string;
   status: string;
   mediaUrl?: string | null;
+  mediaUrls?: string[] | null;
 }
 
 export interface MediaFolder {

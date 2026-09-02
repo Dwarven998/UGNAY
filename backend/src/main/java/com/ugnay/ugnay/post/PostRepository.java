@@ -30,7 +30,7 @@ public interface PostRepository extends JpaRepository<Post, UUID> {
         select p
         from Post p
         join fetch p.user u
-        left join fetch p.mediaAsset
+        left join fetch p.postMediaAssets
         where p.id = :postId
     """)
     Optional<Post> findDetailedById(@Param("postId") UUID postId);
@@ -38,7 +38,7 @@ public interface PostRepository extends JpaRepository<Post, UUID> {
     @Query("""
         select p
         from Post p
-                left join fetch p.mediaAsset
+                left join fetch p.postMediaAssets
         where p.user.orgName = :orgName
           and p.status = com.ugnay.ugnay.post.Post.PostStatus.SCHEDULED
           and p.scheduledAt between :windowStart and :windowEnd
