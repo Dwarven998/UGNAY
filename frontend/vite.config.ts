@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     host: true,
 
-    allowedHosts: ['growl-pumice-phoney.ngrok-free.dev'],
+    allowedHosts: ['growl-pumice-phoney.ngrok-free.dev', 'bondless-impart-lustiness.ngrok-free.dev'],
 
     proxy: {
       '/api': {

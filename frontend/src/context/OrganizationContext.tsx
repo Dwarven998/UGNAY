@@ -62,6 +62,7 @@ export function OrganizationProvider({ children }: Readonly<{ children: ReactNod
   };
 
   const activeOrg = memberships.find(m => m.orgId === activeOrgId && m.status === 'APPROVED') ?? null;
+  const isInitializing = loading || (memberships.length > 0 && !activeOrg);
 
   return (
     <OrganizationContext.Provider
@@ -71,7 +72,7 @@ export function OrganizationProvider({ children }: Readonly<{ children: ReactNod
         activeOrg,
         setActiveOrgId,
         refreshMemberships,
-        loading,
+        loading: isInitializing,
       }}
     >
       {children}
