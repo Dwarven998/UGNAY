@@ -1,6 +1,10 @@
 type ApiResponse<T> = { data: T };
 
-const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+const baseUrl = (
+  import.meta.env.VITE_API_BASE_URL || 
+  import.meta.env.VITE_API_URL || 
+  'http://localhost:8080'
+).replace(/\/$/, '');
 
 class ApiError extends Error {
   status: number;
@@ -17,13 +21,19 @@ class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
   const token = localStorage.getItem('ugnay_token');
+  const customHeaders = (init?.headers as Record<string, string>) || {};
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (!(init?.body instanceof FormData) && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (token) headers['Authorization'] = `Bearer ${token}`;
-
-  const res = await fetch(baseUrl + path, { headers, ...init });
+  const formattedPath = path.startsWith('/') ? path : `/${path}`;
+  const res = await fetch(`${baseUrl}${formattedPath}`, { ...init, headers });
   if (res.status === 401) {
     localStorage.removeItem('ugnay_token');
-    window.location.href = '/login';
+    if (window.location.pathname !== '/login') {
+      window.location.href = '/login';
+    }
     throw new Error('Unauthorized');
   }
 
