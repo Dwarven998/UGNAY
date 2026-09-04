@@ -21,8 +21,7 @@ class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
   const token = localStorage.getItem('ugnay_token');
-  const customHeaders = (init?.headers as Record<string, string>) || {};
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = { ...((init?.headers as Record<string, string>) || {}) };
   if (!(init?.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
