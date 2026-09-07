@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { useAuth } from '../../../../context/AuthContext';
-import { useOrganization } from '../../../../context/OrganizationContext';
+import { useAuth } from '../../../../context/useAuth';
+import { useOrganization } from '../../../../context/useOrganization';
 
 export default function OrgSwitcher() {
   const { user } = useAuth();

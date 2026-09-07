@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '../../../context/AuthContext';
+import { useAuth } from '../../../context/useAuth';
 
 function LoginFormContent() {
   const [email, setEmail] = useState('');
@@ -21,7 +21,18 @@ function LoginFormContent() {
       await login(email, password);
       navigate('/posts');
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Login failed. Please try again.');
+      const status = err.status || err.response?.status;
+      const message = err.message || err.data?.message;
+
+      if (status === 429) {
+        setError('Too many login attempts from your IP. Please wait 1 minute before trying again.');
+      } else if (status === 423) {
+        setError('Account locked due to 5 consecutive failed attempts. Please try again in 15 minutes.');
+      } else if (status === 401) {
+        setError(message || 'Invalid email or password.');
+      } else {
+        setError(message || 'Login failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -214,7 +225,6 @@ function LoginFormContent() {
           </div>
         </div>
       </div>
-
       <style>{`...styles (kept identical to original for visual parity)...`}</style>
     </>
   );

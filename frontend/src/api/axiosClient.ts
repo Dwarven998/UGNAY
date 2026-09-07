@@ -8,7 +8,6 @@ const baseUrl = (
 
 class ApiError extends Error {
   status: number;
-
   data: unknown;
 
   constructor(status: number, message: string, data: unknown) {
@@ -28,12 +27,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const formattedPath = path.startsWith('/') ? path : `/${path}`;
   const res = await fetch(`${baseUrl}${formattedPath}`, { ...init, headers });
-  if (res.status === 401) {
+  if (res.status === 401 && !formattedPath.endsWith('/api/auth/login')) {
     localStorage.removeItem('ugnay_token');
     if (window.location.pathname !== '/login') {
       window.location.href = '/login';
     }
-    throw new Error('Unauthorized');
   }
 
   if (!res.ok) {

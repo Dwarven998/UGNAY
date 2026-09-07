@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { mediaApi } from '../api/mediaApi.ts';
-import { useOrganization } from '../../../context/OrganizationContext';
+import { useOrganization } from '../../../context/useOrganization';
 import type { MediaFolder, MediaAsset, MediaRecommendation } from '../../../types';
 
 const MAX_CAPTION_IMAGES = 6; // mirror GeminiClient.MAX_CAPTION_IMAGES

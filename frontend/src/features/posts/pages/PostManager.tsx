@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { ApiError } from '../../../api/axiosClient';
-import { useAuth } from '../../../context/AuthContext';
-import { useOrganization } from '../../../context/OrganizationContext';
+import { useAuth } from   '../../../context/useAuth';
+import { useOrganization } from '../../../context/useOrganization';
 import type { Post, PostConflict } from '../../../types';
 import { postApi, type PostUpsertPayload } from '../api/postApi';
 import FacebookPageConnectButton from '../components/FacebookPageConnectButton';

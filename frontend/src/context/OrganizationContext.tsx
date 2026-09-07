@@ -1,7 +1,7 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useState, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
 
-import { useAuth } from './AuthContext';
+import { useAuth } from '../context/useAuth';
 import { organizationApi } from '../features/organizations/api/organizationApi';
 import type { MyMembership } from '../types';
 
@@ -16,7 +16,7 @@ interface OrganizationContextType {
   loading: boolean;
 }
 
-const OrganizationContext = createContext<OrganizationContextType | null>(null);
+export const OrganizationContext = createContext<OrganizationContextType | null>(null);
 const STORAGE_KEY = 'ugnay_active_org_id';
 
 export function OrganizationProvider({ children }: Readonly<{ children: ReactNode }>) {
@@ -79,9 +79,3 @@ export function OrganizationProvider({ children }: Readonly<{ children: ReactNod
     </OrganizationContext.Provider>
   );
 }
-
-export const useOrganization = () => {
-  const ctx = useContext(OrganizationContext);
-  if (!ctx) throw new Error('useOrganization must be used inside OrganizationProvider');
-  return ctx;
-};

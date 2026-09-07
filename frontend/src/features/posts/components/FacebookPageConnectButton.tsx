@@ -1,4 +1,4 @@
-import { useOrganization } from '../../../context/OrganizationContext';
+import { useOrganization } from '../../../context/useOrganization';
 import { useFacebookConnection } from '../hooks/useFacebookConnection';
 
 /** Mask a page ID by showing only the last 4 characters. */

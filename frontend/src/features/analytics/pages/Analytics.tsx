@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { analyticsApi } from '../api/analyticsApi.ts';
-import { useOrganization } from '../../../context/OrganizationContext';
+import { useOrganization } from '../../../context/useOrganization';
 
 // Keeps the panel in sync with live Facebook engagement without a manual refresh.
 const REFRESH_INTERVAL_MS = 30_000;

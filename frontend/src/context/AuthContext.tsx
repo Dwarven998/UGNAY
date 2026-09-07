@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 
 import axiosClient from '../api/axiosClient.ts';
@@ -31,7 +31,7 @@ interface AuthContextType {
   refreshUserProfile: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | null>(null);
+export const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -73,19 +73,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string) => {
-    const { data } = await axiosClient.post<AuthUser>('/api/auth/login', { email, password });
-    localStorage.setItem('ugnay_token', data.token);
-    localStorage.setItem('ugnay_userId', data.userId);
-    localStorage.setItem('ugnay_orgName', data.orgName);
-    await refreshUserProfile();
+    try {
+      const { data } = await axiosClient.post<AuthUser>('/api/auth/login', { email, password });
+      localStorage.setItem('ugnay_token', data.token);
+      localStorage.setItem('ugnay_userId', data.userId);
+      localStorage.setItem('ugnay_orgName', data.orgName);
+      await refreshUserProfile();
+    } catch (error) {
+      throw error;
+    }
   };
 
   const register = async (email: string, password: string, orgName: string) => {
-    const { data } = await axiosClient.post<AuthUser>('/api/auth/register', { email, password, orgName });
-    localStorage.setItem('ugnay_token', data.token);
-    localStorage.setItem('ugnay_userId', data.userId);
-    localStorage.setItem('ugnay_orgName', data.orgName);
-    await refreshUserProfile();
+    try {
+      const { data } = await axiosClient.post<AuthUser>('/api/auth/register', { email, password, orgName });
+      localStorage.setItem('ugnay_token', data.token);
+      localStorage.setItem('ugnay_userId', data.userId);
+      localStorage.setItem('ugnay_orgName', data.orgName);
+      await refreshUserProfile();
+    } catch (error) {
+      throw error;
+    }
   };
 
   const logout = () => {
@@ -99,9 +107,3 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     </AuthContext.Provider>
   );
 }
-
-export const useAuth = () => {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used inside AuthProvider');
-  return ctx;
-};

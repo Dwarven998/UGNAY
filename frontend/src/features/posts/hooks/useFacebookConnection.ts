@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 
 import axiosClient from '../../../api/axiosClient';
-import { useAuth } from '../../../context/AuthContext';
-import { useOrganization } from '../../../context/OrganizationContext';
+import { useAuth } from '../../../context/useAuth';
+import { useOrganization } from '../../../context/useOrganization';
 
 export interface FacebookConnectionState {
   connected: boolean;
