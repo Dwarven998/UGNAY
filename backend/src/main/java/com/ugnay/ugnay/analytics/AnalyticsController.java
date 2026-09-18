@@ -25,7 +25,7 @@ public class AnalyticsController {
     public ResponseEntity<AnalyticsService.AnalyticsSummary> getSummary(
             @AuthenticationPrincipal User user,
             @RequestParam(required = false) UUID orgId) {
-        return ResponseEntity.ok(analyticsService.syncNow(user, orgId));
+        return ResponseEntity.ok(analyticsService.getSummary(user, orgId));
     }
 
     @GetMapping("/top-posts")

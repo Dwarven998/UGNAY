@@ -2,13 +2,15 @@
 import { Outlet, NavLink } from 'react-router-dom';
 import { useAuth } from '../../context/useAuth';
 import OrgSwitcher from '../organizations/user/components/OrgSwitcher';
+import '@flaticon/flaticon-uicons/css/regular/rounded.css';
 
+// Icons are Flaticon UIcons (regular / rounded) — the class name is the icon.
 const NAV_ITEMS = [
-  { to: '/posts',     icon: '📅', label: 'Post Manager'       },
-  { to: '/caption',  icon: '✨', label: 'Caption Studio'      },
-  { to: '/media',    icon: '🗂️', label: 'Media Repository'   },
-  { to: '/analytics',icon: '📊', label: 'Analytics'          },
-  { to: '/organizations', icon: '🏛️', label: 'Organizations' },
+  { to: '/posts',         icon: 'fi-rr-calendar',        label: 'Post Manager'     },
+  { to: '/caption',       icon: 'fi-rr-sparkles',        label: 'Caption Studio'   },
+  { to: '/media',         icon: 'fi-rr-folder',          label: 'Media Repository' },
+  { to: '/analytics',     icon: 'fi-rr-chart-histogram', label: 'Analytics'        },
+  { to: '/organizations', icon: 'fi-rr-building',        label: 'Organizations'    },
 ];
 
 export default function Dashboard() {
@@ -50,7 +52,7 @@ export default function Dashboard() {
                   `sidebar-nav-item ${isActive ? 'sidebar-nav-active' : ''}`
                 }
               >
-                <span className="sidebar-nav-icon">{item.icon}</span>
+                <span className="sidebar-nav-icon"><i className={`fi ${item.icon}`} aria-hidden="true"></i></span>
                 <span className="sidebar-nav-text">{item.label}</span>
                 {/* Active indicator bar */}
               </NavLink>
@@ -262,11 +264,14 @@ export default function Dashboard() {
           border-radius: 0 3px 3px 0;
         }
         .sidebar-nav-icon {
-          font-size: 16px;
+          font-size: 17px;
           width: 24px;
-          text-align: center;
+          display: flex;
+          align-items: center;
+          justify-content: center;
           flex-shrink: 0;
         }
+        .sidebar-nav-icon i { display: flex; line-height: 1; }
         .sidebar-nav-text {
           white-space: nowrap;
         }

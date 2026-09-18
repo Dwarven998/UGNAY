@@ -3,18 +3,9 @@ import type { ApiResponse } from '../../../api/axiosClient';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const analyticsApi = {
-  getSummary: (orgId?: string | null, forceSync = false) => {
-    const params = new URLSearchParams();
-    if (orgId) params.append('orgId', orgId);
-    if (forceSync) params.append('forceSync', 'true');
-    const query = params.toString();
-    return axiosClient
-      .get<any>(query ? `/api/analytics/summary?${query}` : '/api/analytics/summary')
-      .then((r: ApiResponse<any>) => r.data);
-  },
-  sync: (orgId?: string | null) =>
+  getSummary: (orgId?: string | null) =>
     axiosClient
-      .post<any>(orgId ? `/api/analytics/sync?orgId=${orgId}` : '/api/analytics/sync')
+      .get<any>(orgId ? `/api/analytics/summary?orgId=${orgId}` : '/api/analytics/summary')
       .then((r: ApiResponse<any>) => r.data),
   getTopPosts: (orgId?: string | null) =>
     axiosClient

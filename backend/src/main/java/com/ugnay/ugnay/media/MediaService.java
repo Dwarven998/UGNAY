@@ -16,6 +16,7 @@ import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.org.Organization;
 import com.ugnay.ugnay.org.OrganizationPermissionService;
 import com.ugnay.ugnay.org.OrganizationRepository;
+import com.ugnay.ugnay.post.PostRepository;
 
 import lombok.RequiredArgsConstructor;
 
@@ -32,6 +33,7 @@ public class MediaService {
     private final OrganizationPermissionService organizationPermissionService;
     private final GeminiClient geminiClient;
     private final SupabaseStorageService supabaseStorageService;
+    private final PostRepository postRepository;
 
     /** Personal folders (orgId == null) list the caller's own; org folders list that org's, visible to approved members only. */
     public List<MediaController.FolderDto> getFolders(User user, UUID orgId) {
@@ -67,6 +69,12 @@ public class MediaService {
         MediaFolder folder = folderRepository.findById(folderId).orElse(null);
         if (folder == null) return;
         requireManageAccess(user, folder);
+        // Posts hold a FK to their asset; deleting underneath a pending post would fail (or strip its image).
+        if (postRepository.existsByMediaAsset_Folder_Id(folderId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "This folder has media used by a draft or scheduled post. Remove or publish those posts first.");
+        }
+        folder.getAssets().forEach(a -> supabaseStorageService.deletePublicObject(a.getFileUrl()));
         folderRepository.delete(folder);
     }
 

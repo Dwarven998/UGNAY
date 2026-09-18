@@ -30,13 +30,10 @@ public class AnalyticsService {
     private final OrganizationPermissionService organizationPermissionService;
     private final EngagementSyncService engagementSyncService;
 
+    /** Answers from stored engagement right away; a fresh Facebook sync runs in the background for the next poll. */
     public AnalyticsSummary getSummary(User user, UUID orgId) {
-        return getSummary(user, orgId, false);
-    }
-
-    public AnalyticsSummary getSummary(User user, UUID orgId, boolean forceSync) {
         List<Post> posts = resolveScopedPosts(user, orgId);
-        syncEngagement(posts, user, orgId, forceSync);
+        syncEngagement(posts, user, orgId);
 
         long totalPosts = posts.size();
         long publishedPosts = posts.stream()
@@ -48,10 +45,6 @@ public class AnalyticsService {
         double avgEngagement = publishedPosts > 0 ? (double) totalEngagement / publishedPosts : 0;
 
         return new AnalyticsSummary(totalPosts, publishedPosts, totalEngagement, avgEngagement);
-    }
-
-    public AnalyticsSummary syncNow(User user, UUID orgId) {
-        return getSummary(user, orgId, true);
     }
 
     public List<TopPostDto> getTopPosts(User user, UUID orgId) {
@@ -123,16 +116,13 @@ public class AnalyticsService {
         return posts.stream().map(Post::getId).collect(Collectors.toList());
     }
 
-    /** Pulls fresh like/comment/share counts from Facebook for this scope's own Page token before the numbers are read. */
+    /** Starts a background pull of fresh like/comment/share counts from Facebook using this scope's own Page token. */
     private void syncEngagement(List<Post> posts, User user, UUID orgId) {
-        syncEngagement(posts, user, orgId, false);
-    }
-
-    private void syncEngagement(List<Post> posts, User user, UUID orgId, boolean forceSync) {
         String accessToken = orgId != null
             ? organizationRepository.findById(orgId).map(Organization::getFbAccessToken).orElse(null)
             : user.getFbAccessToken();
-        engagementSyncService.syncPosts(posts, accessToken, forceSync);
+        String scopeKey = orgId != null ? "org:" + orgId : "user:" + user.getId();
+        engagementSyncService.syncPostsInBackground(scopeKey, posts, accessToken);
     }
 
     // DTOs

@@ -1,6 +1,7 @@
 // features/media/pages/MediaRepository.tsx
 import { useState, useEffect, useRef } from 'react';
 import type { ChangeEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { mediaApi } from '../api/mediaApi.ts';
 import { useOrganization } from '../../../context/useOrganization';
@@ -16,6 +17,9 @@ export default function MediaRepository() {
   const [assets, setAssets] = useState<MediaAsset[]>([]);
   const [newFolderName, setNewFolderName] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [busyMessage, setBusyMessage] = useState<string | null>(null);
+  const [folderError, setFolderError] = useState('');
+  const [folderToDelete, setFolderToDelete] = useState<MediaFolder | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [aiDescription, setAiDescription] = useState('');
@@ -80,11 +84,52 @@ export default function MediaRepository() {
     setAiError('');
   };
 
-  const createFolder = async () => {
-    if (!newFolderName.trim() || !canCreateFolder) return;
-    const folder = await mediaApi.createFolder(newFolderName.trim(), activeOrgId);
-    setFolders(prev => [...prev, folder]);
-    setNewFolderName('');
+  // Folder create/delete run one at a time. The ref blocks a second click in the same tick
+  // (state updates are async, so `busyMessage` alone can't stop rapid double-clicks).
+  const folderActionRef = useRef(false);
+
+  const runFolderAction = async (message: string, action: () => Promise<void>) => {
+    if (folderActionRef.current) return;
+    folderActionRef.current = true;
+    setBusyMessage(message);
+    setFolderError('');
+    try {
+      await action();
+    } catch (err) {
+      setFolderError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
+    } finally {
+      folderActionRef.current = false;
+      setBusyMessage(null);
+    }
+  };
+
+  const createFolder = () => {
+    const name = newFolderName.trim();
+    if (!name || !canCreateFolder) return;
+    return runFolderAction('Creating folder...', async () => {
+      const folder = await mediaApi.createFolder(name, activeOrgId);
+      setFolders(prev => [...prev, folder]);
+      setNewFolderName('');
+    });
+  };
+
+  const deleteFolder = () => {
+    const folder = folderToDelete;
+    if (!folder) return;
+    setFolderToDelete(null);
+    return runFolderAction('Deleting folder...', async () => {
+      await mediaApi.deleteFolder(folder.id);
+      setFolders(prev => prev.filter(f => f.id !== folder.id));
+      if (selectedFolder?.id === folder.id) {
+        setSelectedFolder(null);
+        setAssets([]);
+        setAiResults(null);
+        setAiDescription('');
+        setAiError('');
+        setSelectMode(false);
+        setSelectedIds(new Set());
+      }
+    });
   };
 
   const handleDeleteAsset = async (assetId: string) => {
@@ -168,7 +213,12 @@ export default function MediaRepository() {
                 onKeyDown={e => e.key === 'Enter' && createFolder()}
                 className="mr-folder-input"
               />
-              <button onClick={createFolder} className="mr-folder-add-btn" aria-label="Create folder">
+              <button
+                onClick={createFolder}
+                disabled={busyMessage !== null}
+                className="mr-folder-add-btn"
+                aria-label="Create folder"
+              >
                 <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                 </svg>
@@ -177,6 +227,8 @@ export default function MediaRepository() {
           ) : (
             <p className="mr-folder-restricted-hint">Only officers/admins can create new directories in {activeOrg?.orgName}.</p>
           )}
+
+          {folderError && <p className="mr-folder-error" role="alert">{folderError}</p>}
 
           {/* Folder list */}
           <div className="mr-folder-list">
@@ -219,6 +271,18 @@ export default function MediaRepository() {
                   <p className="mr-content-subtitle">{assets.length} asset{assets.length !== 1 ? 's' : ''} in this folder</p>
                 </div>
                 <div className="mr-content-header-actions">
+                  {canCreateFolder && (
+                    <button
+                      onClick={() => setFolderToDelete(selectedFolder)}
+                      disabled={busyMessage !== null}
+                      className="mr-btn-delete-folder"
+                    >
+                      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Delete Folder
+                    </button>
+                  )}
                   {!aiResults && (
                     <button
                       onClick={toggleSelectMode}
@@ -436,6 +500,49 @@ export default function MediaRepository() {
         </div>
       </div>
 
+      {/* Portaled to <body> so they sit above the dashboard sidebar's own stacking context */}
+      {createPortal(
+        <>
+        {/* Delete-folder confirmation */}
+        {folderToDelete && (
+          <div className="mr-modal-backdrop" onClick={() => setFolderToDelete(null)}>
+            <div
+              className="mr-modal"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="mr-delete-title"
+              onClick={e => e.stopPropagation()}
+            >
+              <h3 id="mr-delete-title" className="mr-modal-title">Delete “{folderToDelete.name}”?</h3>
+              <p className="mr-modal-text">
+                {folderToDelete.assetCount > 0
+                  ? `This permanently deletes the folder and its ${folderToDelete.assetCount} file${folderToDelete.assetCount !== 1 ? 's' : ''}. This can't be undone.`
+                  : "This folder is empty. This can't be undone."}
+              </p>
+              <div className="mr-modal-actions">
+                <button onClick={() => setFolderToDelete(null)} className="mr-modal-cancel">Cancel</button>
+                <button onClick={deleteFolder} className="mr-modal-confirm">Delete Folder</button>
+              </div>
+            </div>
+          </div>
+        )}
+  
+        {/* Blocking loader: keeps the page unclickable while a folder is being created/deleted */}
+        {busyMessage && (
+          <div className="mr-busy-overlay" role="status" aria-live="polite">
+            <div className="mr-busy-box">
+              <svg className="mr-busy-spinner" width="44" height="44" viewBox="0 0 24 24" fill="none">
+                <circle className="mr-spinner-track" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"></circle>
+                <path className="mr-spinner-fill" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              <span>{busyMessage}</span>
+            </div>
+          </div>
+        )}
+        </>,
+        document.body
+      )}
+
       <style>{`
         .mr-layout {
           display: flex;
@@ -507,7 +614,102 @@ export default function MediaRepository() {
           transition: all 0.15s;
           flex-shrink: 0;
         }
-        .mr-folder-add-btn:hover { background: #0a3867; }
+        .mr-folder-add-btn:hover:not(:disabled) { background: #0a3867; }
+        .mr-folder-add-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .mr-folder-error {
+          font-size: 12px;
+          color: #b91c1c;
+          line-height: 1.5;
+          margin: -8px 0 16px;
+          padding: 0 8px;
+        }
+
+        /* Delete folder button */
+        .mr-btn-delete-folder {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          height: 40px;
+          padding: 0 16px;
+          background: #ffffff;
+          color: #dc2626;
+          font-size: 13px;
+          font-weight: 600;
+          border: 1px solid #fecaca;
+          border-radius: 10px;
+          cursor: pointer;
+          transition: all 0.15s;
+          font-family: inherit;
+        }
+        .mr-btn-delete-folder:hover:not(:disabled) { background: #fef2f2; border-color: #fca5a5; }
+        .mr-btn-delete-folder:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        /* Confirmation modal */
+        .mr-modal-backdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 900;
+          background: rgba(2,6,23,0.55);
+          backdrop-filter: blur(3px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+        }
+        .mr-modal {
+          width: 100%;
+          max-width: 400px;
+          background: #ffffff;
+          border-radius: 16px;
+          padding: 24px;
+          box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+          animation: fadeUp 0.25s cubic-bezier(0.16,1,0.3,1);
+        }
+        .mr-modal-title { margin: 0 0 8px; font-size: 17px; font-weight: 700; color: #0f172a; word-break: break-word; }
+        .mr-modal-text { margin: 0 0 20px; font-size: 13px; line-height: 1.6; color: #64748b; }
+        .mr-modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+        .mr-modal-cancel,
+        .mr-modal-confirm {
+          height: 38px;
+          padding: 0 18px;
+          border-radius: 10px;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          font-family: inherit;
+          border: 1px solid transparent;
+        }
+        .mr-modal-cancel { background: #f1f5f9; color: #475569; }
+        .mr-modal-cancel:hover { background: #e2e8f0; }
+        .mr-modal-confirm { background: #dc2626; color: #ffffff; }
+        .mr-modal-confirm:hover { background: #b91c1c; }
+
+        /* Blocking loader */
+        .mr-busy-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 1000;
+          background: rgba(2,6,23,0.45);
+          backdrop-filter: blur(2px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: wait;
+        }
+        .mr-busy-box {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 14px;
+          padding: 28px 36px;
+          background: #ffffff;
+          color: #0C447C;
+          font-size: 14px;
+          font-weight: 600;
+          border-radius: 16px;
+          box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+        }
+        .mr-busy-spinner { animation: spin 0.8s linear infinite; }
         .mr-folder-restricted-hint {
           font-size: 12px;
           color: #94a3b8;

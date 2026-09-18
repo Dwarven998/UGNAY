@@ -20,6 +20,9 @@ public interface PostRepository extends JpaRepository<Post, UUID> {
 
     List<Post> findByOrganization_IdAndStatusOrderByCreatedAtDesc(UUID organizationId, Post.PostStatus status);
 
+    /** True while any post (draft/scheduled — published posts release their asset) still points at an asset in the folder. */
+    boolean existsByMediaAsset_Folder_Id(UUID folderId);
+
     boolean existsByUserAndScheduledAtBetween(User user, Instant start, Instant end);
 
     List<Post> findByStatusAndScheduledAtBefore(Post.PostStatus status, Instant before);

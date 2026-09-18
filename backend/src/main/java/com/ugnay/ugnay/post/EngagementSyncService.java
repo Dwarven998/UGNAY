@@ -4,6 +4,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -24,33 +29,67 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class EngagementSyncService {
 
-    /** Skip re-fetching a post's engagement if it was refreshed more recently than this, to avoid hammering the Graph API. */
-    private static final Duration MIN_REFRESH_INTERVAL = Duration.ofSeconds(30);
+    /**
+     * Skip re-fetching a post's engagement if it was refreshed more recently than this, to avoid hammering the Graph API.
+     * Kept just under the Analytics panel's poll interval so every poll can trigger a fresh fetch.
+     */
+    private static final Duration MIN_REFRESH_INTERVAL = Duration.ofSeconds(3);
 
     private final PostEngagementRepository engagementRepository;
     private final FacebookService facebookService;
 
-    public void syncPosts(List<Post> posts, String accessToken) {
-        syncPosts(posts, accessToken, false);
-    }
+    /** Scopes (an organization or a personal account) that already have a background sync running. */
+    private final Set<String> inFlightScopes = ConcurrentHashMap.newKeySet();
 
-    public void syncPosts(List<Post> posts, String accessToken, boolean forceRefresh) {
+    /** Graph API calls are blocking, so posts are fetched in parallel instead of one after another. */
+    private final ExecutorService postFetchPool = Executors.newFixedThreadPool(4, runnable -> {
+        Thread thread = new Thread(runnable, "engagement-sync");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    public void syncPosts(List<Post> posts, String accessToken) {
         if (accessToken == null || accessToken.isBlank()) {
             return;
         }
         Instant now = Instant.now();
         for (Post post : posts) {
-            if (post.getStatus() != Post.PostStatus.PUBLISHED
-                || post.getFbPostId() == null || post.getFbPostId().isBlank()) {
-                continue;
+            if (isSyncable(post)) {
+                syncPost(post, accessToken, now);
             }
-            syncPost(post, accessToken, now, forceRefresh);
         }
     }
 
-    private void syncPost(Post post, String accessToken, Instant now, boolean forceRefresh) {
+    /**
+     * Refreshes engagement without blocking the caller, so an API request can answer from the database
+     * immediately while fresh Facebook counts land in time for the next poll. At most one background
+     * sync runs per scope; overlapping requests for the same scope are skipped.
+     */
+    public void syncPostsInBackground(String scopeKey, List<Post> posts, String accessToken) {
+        if (accessToken == null || accessToken.isBlank() || !inFlightScopes.add(scopeKey)) {
+            return;
+        }
+        try {
+            Instant now = Instant.now();
+            CompletableFuture<?>[] tasks = posts.stream()
+                .filter(this::isSyncable)
+                .map(post -> CompletableFuture.runAsync(() -> syncPost(post, accessToken, now), postFetchPool))
+                .toArray(CompletableFuture[]::new);
+            CompletableFuture.allOf(tasks).whenComplete((result, error) -> inFlightScopes.remove(scopeKey));
+        } catch (RuntimeException ex) {
+            inFlightScopes.remove(scopeKey);
+            throw ex;
+        }
+    }
+
+    private boolean isSyncable(Post post) {
+        return post.getStatus() == Post.PostStatus.PUBLISHED
+            && post.getFbPostId() != null && !post.getFbPostId().isBlank();
+    }
+
+    private void syncPost(Post post, String accessToken, Instant now) {
         PostEngagement engagement = engagementRepository.findFirstByPost_Id(post.getId()).orElse(null);
-        if (!forceRefresh && engagement != null && engagement.getFetchedAt() != null
+        if (engagement != null && engagement.getFetchedAt() != null
             && Duration.between(engagement.getFetchedAt(), now).compareTo(MIN_REFRESH_INTERVAL) < 0) {
             return;
         }

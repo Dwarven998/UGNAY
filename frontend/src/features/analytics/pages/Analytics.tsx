@@ -3,15 +3,14 @@ import { Link } from 'react-router-dom';
 import { analyticsApi } from '../api/analyticsApi.ts';
 import { useOrganization } from '../../../context/useOrganization';
 
-// Keeps the panel in sync with live Facebook engagement without a manual refresh.
-const REFRESH_INTERVAL_MS = 30_000;
+// The panel syncs itself while it is open: no manual refresh button, and the interval stays under 5s.
+const REFRESH_INTERVAL_MS = 4_000;
 
 export default function Analytics() {
   const { activeOrgId, activeOrg, loading: orgLoading, memberships } = useOrganization();
   const [summary, setSummary] = useState<any>(null);
   const [topPosts, setTopPosts] = useState<any[]>([]);
   const [recommendation, setRecommendation] = useState<any>(null);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   // If the user has memberships, ensure we don't query until activeOrgId is fully resolved
@@ -21,20 +20,28 @@ export default function Analytics() {
     if (isResolvingOrg) return;
 
     let cancelled = false;
+    let inFlight = false;
 
-    const fetchAll = (forceSync = false) => {
-      analyticsApi.getSummary(activeOrgId, forceSync).then((data) => {
-        if (!cancelled) {
-          setSummary(data);
-          setLastSyncedAt(new Date());
-        }
-      });
-      analyticsApi.getTopPosts(activeOrgId).then((posts) => {
-        if (!cancelled) setTopPosts(posts);
-      });
-      analyticsApi.getRecommendation(activeOrgId).then((rec) => {
-        if (!cancelled) setRecommendation(rec);
-      });
+    // Fetches all three panels together so they always update as one consistent snapshot.
+    const fetchAll = async () => {
+      if (inFlight) return; // a slow response must never stack up overlapping requests
+      inFlight = true;
+      try {
+        const [newSummary, newTopPosts, newRecommendation] = await Promise.all([
+          analyticsApi.getSummary(activeOrgId),
+          analyticsApi.getTopPosts(activeOrgId),
+          analyticsApi.getRecommendation(activeOrgId),
+        ]);
+        if (cancelled) return;
+        setSummary(newSummary);
+        setTopPosts(newTopPosts);
+        setRecommendation(newRecommendation);
+        setLastSyncedAt(new Date());
+      } catch (err) {
+        console.error('Failed to refresh analytics:', err);
+      } finally {
+        inFlight = false;
+      }
     };
 
     setSummary(null);
@@ -42,32 +49,14 @@ export default function Analytics() {
     setRecommendation(null);
     fetchAll();
 
-    const interval = setInterval(() => fetchAll(false), REFRESH_INTERVAL_MS);
+    const interval = setInterval(() => {
+      if (!document.hidden) fetchAll();
+    }, REFRESH_INTERVAL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
   }, [activeOrgId, isResolvingOrg]);
-
-  const handleSyncNow = async () => {
-    if (isSyncing || isResolvingOrg) return;
-    setIsSyncing(true);
-    try {
-      const [newSummary, newTopPosts, newRec] = await Promise.all([
-        analyticsApi.sync(activeOrgId),
-        analyticsApi.getTopPosts(activeOrgId),
-        analyticsApi.getRecommendation(activeOrgId),
-      ]);
-      setSummary(newSummary);
-      setTopPosts(newTopPosts);
-      setRecommendation(newRec);
-      setLastSyncedAt(new Date());
-    } catch (err) {
-      console.error('Failed to sync analytics:', err);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
 
   const kpiCards = summary ? [
     { label: 'Total Posts',       value: summary.totalPosts,              icon: '📋', color: '#0C447C' },
@@ -105,33 +94,9 @@ export default function Analytics() {
               <span className="an-sync-time">
                 {lastSyncedAt
                   ? `Updated ${lastSyncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
-                  : 'Auto-syncing (30s)'}
+                  : 'Auto-syncing'}
               </span>
             </div>
-            <button
-              type="button"
-              className="an-sync-btn"
-              onClick={handleSyncNow}
-              disabled={isSyncing || isResolvingOrg}
-              title="Fetch latest live reactions and comments from Facebook"
-            >
-              <svg
-                className={`an-sync-icon ${isSyncing ? 'spinning' : ''}`}
-                width="16"
-                height="16"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2.2}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
-              <span>{isSyncing ? 'Syncing...' : 'Sync Now'}</span>
-            </button>
           </div>
         </div>
 
@@ -313,36 +278,6 @@ export default function Analytics() {
           font-size: 11px;
           color: #94a3b8;
           font-weight: 500;
-        }
-        .an-sync-btn {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          padding: 9px 16px;
-          background: #0C447C;
-          color: #ffffff;
-          border: none;
-          border-radius: 10px;
-          font-size: 13px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-          box-shadow: 0 2px 6px rgba(12, 68, 124, 0.18);
-        }
-        .an-sync-btn:hover:not(:disabled) {
-          background: #093561;
-          transform: translateY(-1px);
-          box-shadow: 0 4px 12px rgba(12, 68, 124, 0.28);
-        }
-        .an-sync-btn:disabled {
-          opacity: 0.7;
-          cursor: not-allowed;
-        }
-        .an-sync-icon.spinning {
-          animation: anSpin 0.9s linear infinite;
-        }
-        @keyframes anSpin {
-          100% { transform: rotate(360deg); }
         }
 
         /* Notice Banner */
