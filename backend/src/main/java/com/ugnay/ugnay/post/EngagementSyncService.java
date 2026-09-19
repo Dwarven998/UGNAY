@@ -82,6 +82,26 @@ public class EngagementSyncService {
         }
     }
 
+    /**
+     * Stores counts the Analytics panel has just read live from Facebook, so the stored totals used by the
+     * summary cards never lag behind what the rest of the panel shows. No-op when nothing changed.
+     */
+    public void recordLive(Post post, int likes, int comments, int shares, Integer reach) {
+        PostEngagement engagement = engagementRepository.findFirstByPost_Id(post.getId()).orElse(null);
+        if (engagement == null) {
+            engagement = PostEngagement.builder().post(post).build();
+        } else if (engagement.getLikes() == likes && engagement.getComments() == comments
+            && engagement.getShares() == shares && (reach == null || engagement.getReach() == reach)) {
+            return;
+        }
+        engagement.setLikes(likes);
+        engagement.setComments(comments);
+        engagement.setShares(shares);
+        if (reach != null) engagement.setReach(reach);
+        engagement.setFetchedAt(Instant.now());
+        engagementRepository.save(engagement);
+    }
+
     private boolean isSyncable(Post post) {
         return post.getStatus() == Post.PostStatus.PUBLISHED
             && post.getFbPostId() != null && !post.getFbPostId().isBlank();
