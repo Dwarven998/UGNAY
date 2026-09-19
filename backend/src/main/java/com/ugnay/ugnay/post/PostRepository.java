@@ -18,6 +18,25 @@ public interface PostRepository extends JpaRepository<Post, UUID> {
 
     List<Post> findByOrganization_IdOrderByCreatedAtDesc(UUID organizationId);
 
+    /** One round trip for the summary cards — the database is remote, so every extra query is felt. */
+    @Query("""
+        select count(distinct p.id) as totalPosts,
+               count(distinct case when p.status = com.ugnay.ugnay.post.Post.PostStatus.PUBLISHED then p.id end) as publishedPosts,
+               coalesce(sum(e.likes + e.comments + e.shares), 0) as totalEngagement
+        from Post p left join PostEngagement e on e.post = p
+        where p.organization.id = :orgId
+    """)
+    PostTotals totalsForOrganization(@Param("orgId") UUID orgId);
+
+    @Query("""
+        select count(distinct p.id) as totalPosts,
+               count(distinct case when p.status = com.ugnay.ugnay.post.Post.PostStatus.PUBLISHED then p.id end) as publishedPosts,
+               coalesce(sum(e.likes + e.comments + e.shares), 0) as totalEngagement
+        from Post p left join PostEngagement e on e.post = p
+        where p.user = :user and p.organization is null
+    """)
+    PostTotals totalsForPersonal(@Param("user") User user);
+
     List<Post> findByOrganization_IdAndStatusOrderByCreatedAtDesc(UUID organizationId, Post.PostStatus status);
 
     /** True while any post (draft/scheduled — published posts release their asset) still points at an asset in the folder. */

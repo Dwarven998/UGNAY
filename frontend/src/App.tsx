@@ -11,6 +11,7 @@ import MediaRepository from './features/media/pages/MediaRepository.tsx';
 import CaptionStudio from './features/caption/pages/CaptionStudio.tsx';
 import CaptionToneSelection from './features/caption/pages/CaptionToneSelection.tsx';
 import Analytics from './features/analytics/pages/Analytics.tsx';
+import PostInsights from './features/analytics/pages/PostInsights.tsx';
 import OrganizationsPage from './features/organizations/user/pages/OrganizationsPage.tsx';
 import OrganizationAdminPage from './features/organizations/admin/pages/OrganizationAdminPage.tsx';
 
@@ -35,6 +36,7 @@ export default function App() {
             <Route path="caption" element={<CaptionStudio />} />
             <Route path="caption/select-tone" element={<CaptionToneSelection />} />
             <Route path="analytics" element={<Analytics />} />
+            <Route path="analytics/posts/:postId" element={<PostInsights />} />
             <Route path="organizations" element={<OrganizationsPage />} />
             <Route path="organizations/:orgId/manage" element={<OrganizationAdminPage />} />
           </Route>

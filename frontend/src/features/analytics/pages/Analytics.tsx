@@ -1,609 +1,342 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { analyticsApi } from '../api/analyticsApi.ts';
+import type { ContentItem, DayPoint, Dashboard, FormatStat, Trend } from '../api/analyticsApi.ts';
 import { useOrganization } from '../../../context/useOrganization';
+import { usePolling } from '../usePolling.ts';
+import TimeChart from '../components/TimeChart.tsx';
+import { Icon } from '../components/icons.tsx';
+import { SyncBadge, SyncingPanel } from '../components/SyncIndicator.tsx';
+import type { IconName } from '../components/icons.tsx';
+import { dayToMs, formatCount, formatDate, formatDay, formatDuration, formatLongDay } from '../format.ts';
+import '../analytics.css';
 
-// The panel syncs itself while it is open: no manual refresh button, and the interval stays under 5s.
-const REFRESH_INTERVAL_MS = 4_000;
+type MetricKey = 'views' | 'threeSecond' | 'interactions' | 'watch';
+
+const RANGES = [{ days: 7, label: 'Last 7 days' }, { days: 28, label: 'Last 28 days' }];
+
+const KPI_CARDS: { label: string; icon: IconName; color: string; pick: (d: Dashboard) => string }[] = [
+  { label: 'Total Posts', icon: 'doc', color: '#0C447C', pick: d => d.kpis.totalPosts.toLocaleString() },
+  { label: 'Published', icon: 'rocket', color: '#059669', pick: d => d.kpis.publishedPosts.toLocaleString() },
+  { label: 'Total Engagement', icon: 'chat', color: '#7c3aed', pick: d => d.kpis.totalEngagement.toLocaleString() },
+  { label: 'Avg Engagement', icon: 'trend', color: '#d97706', pick: d => d.kpis.avgEngagement.toFixed(1) },
+];
+
+function TrendChip({ trend }: Readonly<{ trend: Trend }>) {
+  const pct = trend.changePercent ?? 0;
+  const kind = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
+  return (
+    <span className={`an-trend ${kind}`} title={`Previous period: ${trend.previous.toLocaleString()}`}>
+      {pct > 0 ? '↑' : pct < 0 ? '↓' : ''} {Math.abs(pct)}%
+    </span>
+  );
+}
+
+function CardTitle({ icon, children }: Readonly<{ icon: IconName; children: string }>) {
+  return (
+    <h2 className="an-card-title">
+      <span className="an-card-badge"><Icon name={icon} size={15} /></span>
+      {children}
+    </h2>
+  );
+}
+
+function ContentThumb({ item }: Readonly<{ item: ContentItem }>) {
+  return (
+    <div className="an-thumb">
+      {item.imageUrl
+        ? <img src={item.imageUrl} alt="" loading="lazy" />
+        : <div className="an-thumb-text">{item.message || 'Post'}</div>}
+      <span className="an-fmt-chip">{item.format === 'PHOTO' ? 'Photo' : item.format === 'VIDEO' ? 'Video' : item.format === 'LINK' ? 'Link' : item.format === 'TEXT' ? 'Text' : 'Post'}</span>
+    </div>
+  );
+}
+
+function ContentCarousel({ items }: Readonly<{ items: ContentItem[] }>) {
+  const railRef = useRef<HTMLDivElement>(null);
+  const scroll = (dir: number) => railRef.current?.scrollBy({ left: dir * 380, behavior: 'smooth' });
+  return (
+    <div className="an-carousel-wrap">
+      <button className="an-carousel-btn left" onClick={() => scroll(-1)} aria-label="Scroll left"><Icon name="left" /></button>
+      <div className="an-carousel" ref={railRef}>
+        {items.map(item => (
+          <Link key={item.id} to={`/analytics/posts/${encodeURIComponent(item.id)}`} className="an-content-card">
+            <ContentThumb item={item} />
+            <div className="an-content-body">
+              <p className="an-content-caption">{item.message || 'Untitled post'}</p>
+              <p className="an-content-date">{formatDate(item.createdTime)}</p>
+              <div className="an-content-stats">
+                <span title="Views"><Icon name="eye" size={13} /> {formatCount(item.views)}</span>
+                <span title="Reactions"><Icon name="heart" size={13} /> {item.reactions}</span>
+                <span title="Comments"><Icon name="chat" size={13} /> {item.comments}</span>
+                <span title="Shares"><Icon name="share" size={13} /> {item.shares}</span>
+              </div>
+            </div>
+          </Link>
+        ))}
+      </div>
+      <button className="an-carousel-btn right" onClick={() => scroll(1)} aria-label="Scroll right"><Icon name="right" /></button>
+    </div>
+  );
+}
+
+function ContentTable({ items }: Readonly<{ items: ContentItem[] }>) {
+  const navigate = useNavigate();
+  return (
+    <div className="an-table-wrap">
+      <table className="an-table">
+        <thead>
+          <tr><th>Post</th><th>Views</th><th>Reactions</th><th>Comments</th><th>Shares</th></tr>
+        </thead>
+        <tbody>
+          {items.map(item => (
+            <tr key={item.id} className="an-row" onClick={() => navigate(`/analytics/posts/${encodeURIComponent(item.id)}`)}>
+              <td>
+                <div className="an-table-post">
+                  {item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" /> : <div className="ph" />}
+                  <div>
+                    <p>{item.message || 'Untitled post'}</p>
+                    <small>{formatDate(item.createdTime)}</small>
+                  </div>
+                </div>
+              </td>
+              <td>{formatCount(item.views)}</td>
+              <td>{item.reactions}</td>
+              <td>{item.comments}</td>
+              <td>{item.shares}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FormatCard({ title, stats, pick }: Readonly<{ title: string; stats: FormatStat[]; pick: (s: FormatStat) => number }>) {
+  const max = Math.max(1, ...stats.map(pick));
+  return (
+    <div className="an-format-card">
+      <h3>{title}</h3>
+      {stats.map(stat => (
+        <div className="an-bar-row" key={stat.key}>
+          <span>{stat.label}</span>
+          <div className="an-bar-track"><div className="an-bar-fill" style={{ width: `${(pick(stat) / max) * 100}%` }} /></div>
+          <b>{pick(stat).toLocaleString()}</b>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading analytics">
+      <SyncingPanel />
+      <div className="an-kpi-grid">{[0, 1, 2, 3].map(i => <div key={i} className="an-skel" style={{ height: 104 }} />)}</div>
+      <div className="an-skel" style={{ height: 420, marginBottom: 24, borderRadius: 20 }} />
+      <div className="an-skel" style={{ height: 300, borderRadius: 20 }} />
+    </div>
+  );
+}
+
+function OverviewCard({ data }: Readonly<{ data: Dashboard }>) {
+  const [metric, setMetric] = useState<MetricKey>('views');
+  const o = data.overview;
+
+  const tiles: { key: MetricKey; label: string; value: string; trend: Trend }[] = [
+    { key: 'views', label: 'Views', value: data.viewsAvailable ? o.views.value.toLocaleString() : '--', trend: o.views },
+    { key: 'threeSecond', label: '3-second views', value: o.threeSecondViews.value.toLocaleString(), trend: o.threeSecondViews },
+    { key: 'interactions', label: 'Content interactions', value: o.interactions.value.toLocaleString(), trend: o.interactions },
+    { key: 'watch', label: 'Watch time', value: formatDuration(o.watchTimeSeconds.value), trend: o.watchTimeSeconds },
+  ];
+  const series: Record<MetricKey, { points: DayPoint[]; label: string }> = {
+    views: { points: o.viewsSeries, label: 'views' },
+    threeSecond: { points: o.threeSecondViewsSeries, label: '3-second views' },
+    interactions: { points: o.interactionsSeries, label: 'interactions (by publish day)' },
+    watch: { points: o.watchTimeSeries, label: 'seconds watched' },
+  };
+  const active = series[metric];
+  const chartPoints = active.points.map(p => ({ x: dayToMs(p.date), y: p.value }));
+  const best = o.viewsSeries.reduce<DayPoint | null>((top, p) => (!top || p.value > top.value ? p : top), null);
+
+  return (
+    <section className="an-card" style={{ animationDelay: '0.1s' }}>
+      <div className="an-card-head">
+        <CardTitle icon="chart">Content overview</CardTitle>
+        <span className="an-card-sub">{formatDay(dayToMs(o.periodStart))} – {formatDay(dayToMs(o.periodEnd))}</span>
+      </div>
+      <div className="an-card-body">
+        <div className="an-tiles" role="group" aria-label="Choose a metric to chart">
+          {tiles.map(tile => (
+            <button key={tile.key} className="an-tile" aria-pressed={metric === tile.key} onClick={() => setMetric(tile.key)}>
+              <div className="an-tile-label">{tile.label}</div>
+              <div className="an-tile-row">
+                <span className="an-tile-value">{tile.value}</span>
+                <TrendChip trend={tile.trend} />
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <div className="an-overview-grid">
+          <TimeChart
+            points={chartPoints}
+            snapTicks
+            formatX={formatDay}
+            formatTooltipX={formatLongDay}
+            valueLabel={active.label}
+            ariaLabel={`Daily ${active.label} from ${o.periodStart} to ${o.periodEnd}`}
+          />
+          <aside className="an-side">
+            <div>
+              <h3>Views breakdown</h3>
+              <small>{formatDay(dayToMs(o.periodStart))} – {formatDay(dayToMs(o.periodEnd))}</small>
+            </div>
+            <div className="an-side-stat">
+              <span>Total views</span>
+              <b>{data.viewsAvailable ? o.views.value.toLocaleString() : '--'}</b>
+              {data.viewsAvailable && <TrendChip trend={o.views} />}
+            </div>
+            <div className="an-side-stat"><span>Viewers</span><b>{formatCount(o.viewers)}</b></div>
+            <div className="an-side-stat">
+              <span>Best day</span>
+              <b>{best && best.value > 0 ? formatDay(dayToMs(best.date)) : '--'}</b>
+              {best && best.value > 0 && <small style={{ margin: 0 }}>{best.value.toLocaleString()} views</small>}
+            </div>
+          </aside>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export default function Analytics() {
   const { activeOrgId, activeOrg, loading: orgLoading, memberships } = useOrganization();
-  const [summary, setSummary] = useState<any>(null);
-  const [topPosts, setTopPosts] = useState<any[]>([]);
-  const [recommendation, setRecommendation] = useState<any>(null);
-  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [days, setDays] = useState(28);
+  const [showAll, setShowAll] = useState(false);
 
   // If the user has memberships, ensure we don't query until activeOrgId is fully resolved
   const isResolvingOrg = orgLoading || (memberships.length > 0 && !activeOrgId);
 
-  useEffect(() => {
-    if (isResolvingOrg) return;
+  const { data, error, syncedAt, syncing } = usePolling(
+    `${activeOrgId ?? 'personal'}|${days}`,
+    !isResolvingOrg,
+    () => analyticsApi.getDashboard(activeOrgId, days),
+  );
 
-    let cancelled = false;
-    let inFlight = false;
-
-    // Fetches all three panels together so they always update as one consistent snapshot.
-    const fetchAll = async () => {
-      if (inFlight) return; // a slow response must never stack up overlapping requests
-      inFlight = true;
-      try {
-        const [newSummary, newTopPosts, newRecommendation] = await Promise.all([
-          analyticsApi.getSummary(activeOrgId),
-          analyticsApi.getTopPosts(activeOrgId),
-          analyticsApi.getRecommendation(activeOrgId),
-        ]);
-        if (cancelled) return;
-        setSummary(newSummary);
-        setTopPosts(newTopPosts);
-        setRecommendation(newRecommendation);
-        setLastSyncedAt(new Date());
-      } catch (err) {
-        console.error('Failed to refresh analytics:', err);
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    setSummary(null);
-    setTopPosts([]);
-    setRecommendation(null);
-    fetchAll();
-
-    const interval = setInterval(() => {
-      if (!document.hidden) fetchAll();
-    }, REFRESH_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [activeOrgId, isResolvingOrg]);
-
-  const kpiCards = summary ? [
-    { label: 'Total Posts',       value: summary.totalPosts,              icon: '📋', color: '#0C447C' },
-    { label: 'Published',         value: summary.publishedPosts,          icon: '🚀', color: '#059669' },
-    { label: 'Total Engagement',  value: summary.totalEngagement,         icon: '💬', color: '#7c3aed' },
-    { label: 'Avg Engagement',    value: summary.avgEngagement.toFixed(1),icon: '📈', color: '#f59e0b' },
-  ] : [];
+  const scopeName = activeOrg ? activeOrg.orgName : 'your Page';
+  const loading = isResolvingOrg || !data;
+  const carouselItems = data ? data.content.slice(0, 12) : [];
 
   return (
-    <>
-      <div className="an-container">
-        {/* Header */}
-        <div className="an-header" style={{ animation: 'fadeUp 0.4s cubic-bezier(0.16,1,0.3,1)' }}>
-          <div className="an-header-left">
-            <div className="an-breadcrumb">
-              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-              <span>Analytics {activeOrg ? `• ${activeOrg.orgName}` : ''}</span>
-            </div>
-            <h1 className="an-title">Insights &amp; Performance</h1>
-            <p className="an-subtitle">
-              {activeOrg
-                ? `Real-time social media performance and smart recommendations for ${activeOrg.orgName}.`
-                : 'Track your organization\'s social media performance and get smart recommendations.'}
-            </p>
+    <div className="an-container">
+      <div className="an-header">
+        <div className="an-header-left">
+          <div className="an-breadcrumb">
+            <Icon name="chart" />
+            <span>Analytics {activeOrg ? `• ${activeOrg.orgName}` : ''}</span>
           </div>
-
-          <div className="an-header-right">
-            <div className="an-sync-meta">
-              <span className="an-pulse-badge">
-                <span className="an-pulse-dot" />
-                Live Sync Active
-              </span>
-              <span className="an-sync-time">
-                {lastSyncedAt
-                  ? `Updated ${lastSyncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
-                  : 'Auto-syncing'}
-              </span>
-            </div>
-          </div>
+          <h1 className="an-title">Insights &amp; Performance</h1>
+          <p className="an-subtitle">
+            Live Facebook performance for {scopeName}, synced every few seconds.
+          </p>
         </div>
-
-        {/* Loading placeholder while organization context or summary initializes */}
-        {(isResolvingOrg || !summary) && (
-          <div className="an-loading-state" style={{ padding: '60px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-            <div className="an-pulse-badge" style={{ padding: '8px 18px', fontSize: '13px' }}>
-              <span className="an-pulse-dot" />
-              Loading {activeOrg ? activeOrg.orgName : 'organization'} analytics...
-            </div>
+        <div className="an-header-right">
+          <div className="an-segment" role="group" aria-label="Date range">
+            {RANGES.map(range => (
+              <button key={range.days} aria-pressed={days === range.days} onClick={() => setDays(range.days)}>{range.label}</button>
+            ))}
           </div>
-        )}
+          <SyncBadge syncing={syncing} syncedAt={syncedAt} />
+        </div>
+      </div>
 
-        {/* Notice if published posts exist but engagement is 0 */}
-        {!isResolvingOrg && summary && summary.publishedPosts > 0 && summary.totalEngagement === 0 && (
-          <div className="an-reconnect-notice">
-            <div className="an-notice-icon">💬</div>
-            <div className="an-notice-text">
-              <strong>Reactions or Comments Not Appearing?</strong>
-              <span>
-                If members recently reacted to your Facebook post, make sure your Facebook Page connection has granted the updated reaction permissions.
-                You can quickly reconnect your Page in <Link to="/posts">Post Creator</Link> to ensure all live reaction insights sync.
-              </span>
+      {error && (
+        <div className="an-notice error" role="alert">
+          <Icon name="info" size={18} />
+          <div><strong>Couldn't refresh analytics</strong>Retrying automatically. {data ? 'Showing the last synced numbers.' : ''}</div>
+        </div>
+      )}
+
+      {loading && !error && <DashboardSkeleton />}
+
+      {!loading && data && (
+        <>
+          {!data.connected && (
+            <div className="an-notice info">
+              <Icon name="info" size={18} />
+              <div>
+                <strong>Facebook Page not connected</strong>
+                Connect the Page for {scopeName} in <Link to="/posts">Post Creator</Link> to see views, interactions and comments.
+              </div>
             </div>
-          </div>
-        )}
+          )}
+          {data.warnings.length > 0 && (
+            <div className="an-notice warn">
+              <Icon name="info" size={18} />
+              <div>
+                <strong>Some Facebook data is unavailable</strong>
+                {data.warnings.join(' · ')}. If this mentions permissions, reconnect your Page in <Link to="/posts">Post Creator</Link> to grant insights access.
+              </div>
+            </div>
+          )}
 
-        {/* KPI Cards */}
-        {!isResolvingOrg && summary && (
           <div className="an-kpi-grid">
-            {kpiCards.map((card, i) => (
+            {KPI_CARDS.map((card, i) => (
               <div key={card.label} className="an-kpi-card" style={{ animationDelay: `${i * 0.06}s` }}>
                 <div className="an-kpi-top">
-                  <div className="an-kpi-icon" style={{ background: `${card.color}10`, color: card.color }}>
-                    <span>{card.icon}</span>
+                  <div className="an-kpi-icon" style={{ background: `${card.color}14`, color: card.color }}>
+                    <Icon name={card.icon} size={17} />
                   </div>
                   <span className="an-kpi-label">{card.label}</span>
                 </div>
-                <p className="an-kpi-value" style={{ color: card.color }}>{card.value}</p>
+                <p className="an-kpi-value" style={{ color: card.color }}>{card.pick(data)}</p>
               </div>
             ))}
           </div>
-        )}
 
-        {/* Recommendation */}
-        {!isResolvingOrg && summary && recommendation && (
-          <div className="an-rec-card" style={{ animation: 'fadeUp 0.5s cubic-bezier(0.16,1,0.3,1) 0.2s backwards' }}>
-            <div className="an-rec-glow"></div>
-            <div className="an-rec-content">
-              <div className="an-rec-icon">
-                <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                </svg>
-              </div>
-              <div className="an-rec-text">
-                <h3 className="an-rec-headline">{recommendation.headline}</h3>
-                <p className="an-rec-detail">{recommendation.detail}</p>
-                {!recommendation.personalized && (
-                  <div className="an-rec-unlock">
-                    <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                    </svg>
-                    Publish at least 5 posts to unlock personalized recommendations.
-                  </div>
+          {data.connected && <OverviewCard data={data} />}
+
+          {data.connected && (
+            <section className="an-card" style={{ animationDelay: '0.15s' }}>
+              <div className="an-card-head">
+                <CardTitle icon="trend">Top content by views</CardTitle>
+                {data.content.length > 0 && (
+                  <button className="an-link-btn" onClick={() => setShowAll(v => !v)}>
+                    {showAll ? 'Show top content' : `See all content (${data.content.length})`}
+                  </button>
                 )}
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* Top Posts */}
-        {!isResolvingOrg && summary && (
-          <div className="an-top-card" style={{ animation: 'fadeUp 0.5s cubic-bezier(0.16,1,0.3,1) 0.25s backwards' }}>
-            <div className="an-top-header">
-              <div className="an-top-header-left">
-                <div className="an-top-header-icon">
-                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                  </svg>
-                </div>
-                <h2 className="an-top-title">Top Performing Posts</h2>
+              <div className="an-card-body">
+                {data.content.length === 0 && (
+                  <div className="an-empty">
+                    <div className="an-empty-icon"><Icon name="chart" size={28} stroke={1.3} /></div>
+                    <p className="an-empty-title">No posts in this period</p>
+                    <p>Posts published to your Facebook Page in the last {days} days will appear here.</p>
+                  </div>
+                )}
+                {data.content.length > 0 && (showAll ? <ContentTable items={data.content} /> : <ContentCarousel items={carouselItems} />)}
               </div>
-            </div>
-            <div className="an-top-body">
-              {topPosts.map((post, i) => (
-                <div key={post.id} className="an-top-row" style={{ animationDelay: `${i * 0.05}s` }}>
-                  <div className="an-top-rank">
-                    <span className={`an-rank-badge ${i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze'}`}>
-                      {i + 1}
-                    </span>
-                  </div>
-                  <div className="an-top-info">
-                    <p className="an-top-caption">{post.captionPreview}...</p>
-                    <p className="an-top-date">
-                      {post.publishedAt && new Date(post.publishedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
-                    </p>
-                  </div>
-                  <div className="an-top-engagement">
-                    <span className="an-engagement-value">{post.totalEngagement}</span>
-                    <span className="an-engagement-label">engagements</span>
-                  </div>
+            </section>
+          )}
+
+          {data.connected && data.formats.length > 0 && (
+            <section className="an-card" style={{ animationDelay: '0.2s' }}>
+              <div className="an-card-head">
+                <CardTitle icon="doc">Top content formats</CardTitle>
+                <span className="an-card-sub">Posts published in this period</span>
+              </div>
+              <div className="an-card-body">
+                <div className="an-format-grid">
+                  <FormatCard title="Published content" stats={data.formats} pick={s => s.published} />
+                  <FormatCard title="Views" stats={data.formats} pick={s => s.views} />
+                  <FormatCard title="Content interactions" stats={data.formats} pick={s => s.interactions} />
                 </div>
-              ))}
-              {topPosts.length === 0 && (
-                <div className="an-top-empty">
-                  <div className="an-top-empty-icon">
-                    <svg width="32" height="32" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                    </svg>
-                  </div>
-                  <p className="an-top-empty-title">No published posts yet</p>
-                  <p className="an-top-empty-text">Publish some posts to see your analytics here.</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      <style>{`
-        .an-container {
-          padding: 36px 40px 48px;
-          max-width: 1060px;
-          margin: 0 auto;
-        }
-
-        /* Header */
-        .an-header {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 20px;
-          margin-bottom: 24px;
-          flex-wrap: wrap;
-        }
-        .an-header-left {
-          flex: 1;
-          min-width: 260px;
-        }
-        .an-header-right {
-          display: flex;
-          align-items: center;
-          gap: 14px;
-          margin-top: 4px;
-        }
-        .an-sync-meta {
-          display: flex;
-          flex-direction: column;
-          align-items: flex-end;
-          gap: 4px;
-        }
-        .an-pulse-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          background: rgba(16, 185, 129, 0.08);
-          border: 1px solid rgba(16, 185, 129, 0.2);
-          color: #059669;
-          font-size: 11px;
-          font-weight: 600;
-          padding: 3px 9px;
-          border-radius: 9999px;
-          letter-spacing: 0.02em;
-        }
-        .an-pulse-dot {
-          width: 7px;
-          height: 7px;
-          border-radius: 50%;
-          background: #10b981;
-          box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
-          animation: anPulse 1.8s infinite;
-        }
-        @keyframes anPulse {
-          0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-          70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-          100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-        }
-        .an-sync-time {
-          font-size: 11px;
-          color: #94a3b8;
-          font-weight: 500;
-        }
-
-        /* Notice Banner */
-        .an-reconnect-notice {
-          display: flex;
-          align-items: flex-start;
-          gap: 14px;
-          background: #eff6ff;
-          border: 1px solid #bfdbfe;
-          border-radius: 14px;
-          padding: 14px 18px;
-          margin-bottom: 24px;
-          color: #1e3a8a;
-          font-size: 13px;
-          line-height: 1.5;
-          animation: fadeUp 0.35s ease;
-        }
-        .an-notice-icon {
-          font-size: 20px;
-          line-height: 1;
-        }
-        .an-notice-text {
-          display: flex;
-          flex-direction: column;
-          gap: 3px;
-        }
-        .an-notice-text strong {
-          color: #1e40af;
-          font-size: 13px;
-          font-weight: 700;
-        }
-        .an-notice-text span {
-          color: #1e3a8a;
-        }
-        .an-notice-text a {
-          color: #0C447C;
-          font-weight: 700;
-          text-decoration: underline;
-        }
-
-        .an-breadcrumb {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          color: #0C447C;
-          font-size: 12px;
-          font-weight: 600;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          margin-bottom: 8px;
-        }
-        .an-title {
-          font-size: 28px;
-          font-weight: 800;
-          color: #0f172a;
-          letter-spacing: -0.03em;
-          margin: 0 0 6px;
-        }
-        .an-subtitle {
-          font-size: 14px;
-          color: #64748b;
-          margin: 0;
-        }
-
-        /* KPI Grid */
-        .an-kpi-grid {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 16px;
-          margin-bottom: 24px;
-        }
-        .an-kpi-card {
-          background: #ffffff;
-          border-radius: 16px;
-          border: 1px solid #e2e8f0;
-          padding: 22px;
-          transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
-          animation: fadeUp 0.4s cubic-bezier(0.16,1,0.3,1) backwards;
-        }
-        .an-kpi-card:hover {
-          border-color: #cbd5e1;
-          box-shadow: 0 8px 24px rgba(0,0,0,0.06);
-          transform: translateY(-2px);
-        }
-        .an-kpi-top {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          margin-bottom: 16px;
-        }
-        .an-kpi-icon {
-          width: 36px; height: 36px;
-          border-radius: 10px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 16px;
-        }
-        .an-kpi-label {
-          font-size: 13px;
-          font-weight: 500;
-          color: #64748b;
-        }
-        .an-kpi-value {
-          font-size: 36px;
-          font-weight: 800;
-          margin: 0;
-          letter-spacing: -0.02em;
-          line-height: 1;
-        }
-
-        /* Recommendation */
-        .an-rec-card {
-          background: #ffffff;
-          border-radius: 18px;
-          border: 1px solid #e2e8f0;
-          padding: 24px 28px;
-          margin-bottom: 24px;
-          position: relative;
-          overflow: hidden;
-        }
-        .an-rec-glow {
-          position: absolute;
-          top: -40px; right: -40px;
-          width: 200px; height: 200px;
-          background: radial-gradient(circle, rgba(59,130,246,0.08) 0%, transparent 70%);
-          pointer-events: none;
-        }
-        .an-rec-content {
-          display: flex;
-          gap: 18px;
-          position: relative;
-          z-index: 1;
-        }
-        .an-rec-icon {
-          width: 44px; height: 44px;
-          background: linear-gradient(135deg, rgba(12,68,124,0.08), rgba(59,130,246,0.08));
-          border-radius: 12px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #0C447C;
-          flex-shrink: 0;
-        }
-        .an-rec-text { flex: 1; }
-        .an-rec-headline {
-          font-size: 16px;
-          font-weight: 700;
-          color: #0C447C;
-          margin: 0 0 6px;
-        }
-        .an-rec-detail {
-          font-size: 13px;
-          color: #475569;
-          line-height: 1.6;
-          margin: 0;
-        }
-        .an-rec-unlock {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          margin-top: 12px;
-          padding: 8px 14px;
-          background: rgba(12,68,124,0.04);
-          border: 1px solid rgba(12,68,124,0.08);
-          border-radius: 10px;
-          font-size: 12px;
-          font-weight: 500;
-          color: #0C447C;
-        }
-
-        /* Top Posts */
-        .an-top-card {
-          background: #ffffff;
-          border-radius: 20px;
-          border: 1px solid #e2e8f0;
-          overflow: hidden;
-        }
-        .an-top-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 20px 28px;
-          background: linear-gradient(135deg, rgba(12,68,124,0.03) 0%, rgba(59,130,246,0.02) 100%);
-          border-bottom: 1px solid #f1f5f9;
-        }
-        .an-top-header-left {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-        .an-top-header-icon {
-          width: 36px; height: 36px;
-          background: linear-gradient(135deg, #0C447C, #3b82f6);
-          border-radius: 10px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: white;
-        }
-        .an-top-title {
-          font-size: 16px;
-          font-weight: 700;
-          color: #0f172a;
-          margin: 0;
-        }
-        .an-top-body {
-          padding: 8px 16px;
-        }
-        .an-top-row {
-          display: flex;
-          align-items: center;
-          gap: 18px;
-          padding: 16px 12px;
-          border-radius: 12px;
-          transition: all 0.15s;
-          animation: fadeUp 0.4s cubic-bezier(0.16,1,0.3,1) backwards;
-        }
-        .an-top-row:hover {
-          background: #f8fafc;
-        }
-        .an-top-row + .an-top-row {
-          border-top: 1px solid #f8fafc;
-        }
-        .an-top-rank {
-          flex-shrink: 0;
-        }
-        .an-rank-num {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 32px; height: 32px;
-          border-radius: 10px;
-          background: #f1f5f9;
-          color: #94a3b8;
-          font-size: 13px;
-          font-weight: 700;
-        }
-        .an-rank-top {
-          background: linear-gradient(135deg, #0C447C, #3b82f6);
-          color: #ffffff;
-          box-shadow: 0 2px 6px rgba(12,68,124,0.2);
-        }
-        .an-top-info {
-          flex: 1;
-          min-width: 0;
-        }
-        .an-top-caption {
-          font-size: 14px;
-          font-weight: 500;
-          color: #334155;
-          margin: 0 0 4px;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-        .an-top-date {
-          font-size: 12px;
-          color: #94a3b8;
-          margin: 0;
-        }
-        .an-top-engagement {
-          display: flex;
-          flex-direction: column;
-          align-items: flex-end;
-          flex-shrink: 0;
-          padding-left: 16px;
-          border-left: 1px solid #f1f5f9;
-        }
-        .an-engagement-value {
-          font-size: 22px;
-          font-weight: 800;
-          color: #059669;
-          line-height: 1;
-        }
-        .an-engagement-label {
-          font-size: 10px;
-          font-weight: 600;
-          color: #94a3b8;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          margin-top: 2px;
-        }
-
-        /* Empty state */
-        .an-top-empty {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          padding: 56px 24px;
-          text-align: center;
-        }
-        .an-top-empty-icon {
-          width: 64px; height: 64px;
-          background: linear-gradient(135deg, rgba(12,68,124,0.04), rgba(59,130,246,0.06));
-          border-radius: 18px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #cbd5e1;
-          margin-bottom: 16px;
-        }
-        .an-top-empty-title {
-          font-size: 16px;
-          font-weight: 700;
-          color: #334155;
-          margin: 0 0 6px;
-        }
-        .an-top-empty-text {
-          font-size: 13px;
-          color: #94a3b8;
-          margin: 0;
-        }
-
-        @media (max-width: 1024px) {
-          .an-kpi-grid { grid-template-columns: repeat(2, 1fr); }
-        }
-        @media (max-width: 640px) {
-          .an-container { padding: 24px 20px; }
-          .an-kpi-grid { grid-template-columns: 1fr; }
-          .an-top-row { flex-direction: column; align-items: flex-start; }
-          .an-top-engagement { border-left: none; padding-left: 0; border-top: 1px solid #f1f5f9; padding-top: 10px; align-items: flex-start; }
-          .an-rec-content { flex-direction: column; }
-        }
-      `}</style>
-    </>
+              </div>
+            </section>
+          )}
+        </>
+      )}
+    </div>
   );
 }
