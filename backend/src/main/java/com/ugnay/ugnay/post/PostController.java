@@ -105,7 +105,8 @@ public class PostController {
     // DTOs
     public record CreatePostRequest(
         String caption, String[] hashtags, String tone,
-        UUID mediaAssetId, String scheduledAt,   // ISO-8601
+        UUID mediaAssetId, List<UUID> mediaAssetIds,
+        String scheduledAt,   // ISO-8601
         UUID orgId
     ) {}
 
@@ -113,7 +114,9 @@ public class PostController {
 
     public record PostDto(
         UUID id, String caption, String[] hashtags, String tone,
-        String status, String scheduledAt, String mediaUrl, String fbPostId, UUID orgId,
+        String status, String scheduledAt, String mediaUrl,
+        List<String> mediaUrls, List<UUID> mediaAssetIds,
+        String fbPostId, UUID orgId,
         UUID ownerId, String appealType, boolean editUnlocked
     ) {}
 }

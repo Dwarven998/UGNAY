@@ -24,6 +24,16 @@ public class Post {
     @JoinColumn(name = "media_asset_id")
     private MediaAsset mediaAsset;
 
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+        name = "post_media_assets",
+        joinColumns = @JoinColumn(name = "post_id"),
+        inverseJoinColumns = @JoinColumn(name = "media_asset_id")
+    )
+    @OrderColumn(name = "position")
+    @Builder.Default
+    private List<MediaAsset> mediaAssets = new ArrayList<>();
+
     /** Which organization this post belongs to, if the author had one active when it was created. Nullable for backward compatibility with posts made before organizations existed. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "organization_id")

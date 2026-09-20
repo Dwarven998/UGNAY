@@ -31,16 +31,27 @@ function parseCaptionDraftFromSession(): Partial<PostEditorDraft> | null {
       hashtags?: string[];
       tone?: string;
       imageUrl?: string;
+      imageUrls?: string[];
       assetId?: string;
+      assetIds?: string[];
     };
+    const resolvedUrls = data.imageUrls && data.imageUrls.length > 0
+      ? data.imageUrls
+      : (data.imageUrl ? [data.imageUrl] : []);
+    const resolvedAssetIds = data.assetIds && data.assetIds.length > 0
+      ? data.assetIds
+      : (data.assetId ? [data.assetId] : []);
+
     return {
       caption: data.caption ?? '',
       /* Keep hashtags as-is (with # prefix) — the backend's FacebookPublishingJob
          uses String.join(" ", hashtags) and expects # to already be present. */
       hashtags: data.hashtags ?? [],
       tone: data.tone ?? 'FORMAL',
-      mediaAssetId: data.assetId || undefined,
-      mediaPreviewUrl: data.imageUrl || undefined,
+      mediaAssetId: resolvedAssetIds[0] || undefined,
+      mediaAssetIds: resolvedAssetIds,
+      mediaPreviewUrl: resolvedUrls[0] || undefined,
+      mediaPreviewUrls: resolvedUrls,
       fromCaptionStudio: true,
     };
   } catch {
@@ -54,8 +65,10 @@ function getDefaultDraft(date?: Date | null, initial?: Partial<PostEditorDraft> 
     hashtags: initial?.hashtags ?? [],
     tone: initial?.tone ?? 'FORMAL',
     mediaAssetId: initial?.mediaAssetId ?? '',
+    mediaAssetIds: initial?.mediaAssetIds ?? [],
     scheduledAt: date ? date.toISOString() : initial?.scheduledAt,
     mediaPreviewUrl: initial?.mediaPreviewUrl,
+    mediaPreviewUrls: initial?.mediaPreviewUrls ?? [],
     fromCaptionStudio: initial?.fromCaptionStudio,
   };
 }
@@ -143,6 +156,9 @@ export default function PostManager() {
   const openEdit = (post: Post) => {
     setConflict(null);
     setError('');
+    const postUrls = post.mediaUrls && post.mediaUrls.length > 0
+      ? post.mediaUrls
+      : (post.mediaUrl ? [post.mediaUrl] : []);
     setEditor({
       mode: 'edit',
       post,
@@ -150,6 +166,10 @@ export default function PostManager() {
         caption: post.caption,
         hashtags: post.hashtags,
         tone: post.tone,
+        mediaAssetId: post.mediaAssetIds?.[0],
+        mediaAssetIds: post.mediaAssetIds ?? [],
+        mediaPreviewUrl: postUrls[0],
+        mediaPreviewUrls: postUrls,
       }),
     });
   };
@@ -220,6 +240,7 @@ export default function PostManager() {
       hashtags: draft.hashtags,
       tone: draft.tone,
       mediaAssetId: draft.mediaAssetId || undefined,
+      mediaAssetIds: draft.mediaAssetIds && draft.mediaAssetIds.length > 0 ? draft.mediaAssetIds : undefined,
       scheduledAt: draft.scheduledAt || undefined,
     };
 
@@ -473,6 +494,11 @@ export default function PostManager() {
                     <span className={`upe-status-dot is-${post.status.toLowerCase()}`} />
                     {STATUS_BADGE[post.status]?.label ?? post.status}
                   </span>
+                  {post.mediaUrls && post.mediaUrls.length > 1 && (
+                    <span style={{ fontSize: '11px', color: '#0C447C', background: 'rgba(12,68,124,0.08)', padding: '2px 6px', borderRadius: '6px', fontWeight: 600 }}>
+                      📷 {post.mediaUrls.length} photos
+                    </span>
+                  )}
                   {post.scheduledAt && (
                     <time className="upe-queue-time">
                       {new Date(post.scheduledAt).toLocaleString(undefined, {
