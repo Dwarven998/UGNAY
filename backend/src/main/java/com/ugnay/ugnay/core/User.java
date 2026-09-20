@@ -4,6 +4,7 @@ package com.ugnay.ugnay.core;
 import jakarta.persistence.*;
 import lombok.*;
 import java.util.UUID;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "users")

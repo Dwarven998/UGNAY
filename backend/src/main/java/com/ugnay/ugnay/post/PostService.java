@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.ugnay.ugnay.core.User;
+import com.ugnay.ugnay.media.MediaAsset;
 import com.ugnay.ugnay.org.OrganizationPermissionService;
 
 import lombok.RequiredArgsConstructor;
@@ -86,11 +87,30 @@ public class PostService {
     }
 
     private PostController.PostDto toDto(Post p) {
+        java.util.List<String> mediaUrls = new java.util.ArrayList<>();
+        java.util.List<UUID> mediaAssetIds = new java.util.ArrayList<>();
+
+        if (p.getMediaAssets() != null && !p.getMediaAssets().isEmpty()) {
+            for (MediaAsset asset : p.getMediaAssets()) {
+                if (asset != null) {
+                    if (asset.getFileUrl() != null) mediaUrls.add(asset.getFileUrl());
+                    if (asset.getId() != null) mediaAssetIds.add(asset.getId());
+                }
+            }
+        } else if (p.getMediaAsset() != null) {
+            if (p.getMediaAsset().getFileUrl() != null) mediaUrls.add(p.getMediaAsset().getFileUrl());
+            if (p.getMediaAsset().getId() != null) mediaAssetIds.add(p.getMediaAsset().getId());
+        }
+
+        String primaryMediaUrl = !mediaUrls.isEmpty() ? mediaUrls.get(0) : null;
+
         return new PostController.PostDto(
             p.getId(), p.getCaption(), p.getHashtags(), p.getTone(),
             p.getStatus().name(),
             p.getScheduledAt() != null ? p.getScheduledAt().toString() : null,
-            p.getMediaAsset() != null ? p.getMediaAsset().getFileUrl() : null,
+            primaryMediaUrl,
+            mediaUrls,
+            mediaAssetIds,
             p.getFbPostId(),
             p.getOrganization() != null ? p.getOrganization().getId() : null,
             p.getUser() != null ? p.getUser().getId() : null,

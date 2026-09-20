@@ -49,10 +49,12 @@ public interface PostRepository extends JpaRepository<Post, UUID> {
     List<Post> findByStatusAndScheduledAtAfterOrderByScheduledAtAsc(Post.PostStatus status, Instant after);
 
     @Query("""
-        select p
+        select distinct p
         from Post p
         join fetch p.user u
+        left join fetch p.organization
         left join fetch p.mediaAsset
+        left join fetch p.mediaAssets
         where p.id = :postId
     """)
     Optional<Post> findDetailedById(@Param("postId") UUID postId);

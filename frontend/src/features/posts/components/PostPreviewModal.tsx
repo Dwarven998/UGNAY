@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import type { Post } from '../../../types';
 
 export interface PostPreviewModalProps {
@@ -32,6 +33,12 @@ export default function PostPreviewModal({
   onRejectAppeal,
   onEditNow,
 }: PostPreviewModalProps) {
+  const [activeImageIdx, setActiveImageIdx] = useState(0);
+
+  useEffect(() => {
+    setActiveImageIdx(0);
+  }, [post?.id]);
+
   if (!open || !post) return null;
 
   const isOwner = Boolean(currentUserId) && post.ownerId === currentUserId;
@@ -58,11 +65,35 @@ export default function PostPreviewModal({
         )}
 
         <div className="upe-modal-body">
-          {post.mediaUrl && (
+          {post.mediaUrls && post.mediaUrls.length > 1 ? (
+            <div className="upe-preview-multi-wrap">
+              <div className="upe-preview-media">
+                <img
+                  src={post.mediaUrls[activeImageIdx] || post.mediaUrls[0]}
+                  alt={`Post media ${activeImageIdx + 1}`}
+                />
+                <span className="upe-preview-counter">
+                  📷 {activeImageIdx + 1} / {post.mediaUrls.length}
+                </span>
+              </div>
+              <div className="upe-preview-thumb-row">
+                {post.mediaUrls.map((url, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    className={`upe-preview-thumb-btn${idx === activeImageIdx ? ' is-active' : ''}`}
+                    onClick={() => setActiveImageIdx(idx)}
+                  >
+                    <img src={url} alt={`Thumbnail ${idx + 1}`} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : post.mediaUrl ? (
             <div className="upe-preview-media">
               <img src={post.mediaUrl} alt="Post media" />
             </div>
-          )}
+          ) : null}
 
           <div className="upe-field">
             <span>Caption</span>
@@ -176,16 +207,65 @@ export default function PostPreviewModal({
       </div>
 
       <style>{`
+        .upe-preview-multi-wrap {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
         .upe-preview-media {
+          position: relative;
           height: 220px;
           border-radius: 14px;
           overflow: hidden;
           border: 1px solid #e2e8f0;
+          background: #f8fafc;
         }
         .upe-preview-media img {
           width: 100%;
           height: 100%;
           object-fit: cover;
+        }
+        .upe-preview-counter {
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          background: rgba(15, 23, 42, 0.75);
+          color: #ffffff;
+          padding: 4px 10px;
+          border-radius: 20px;
+          font-size: 11px;
+          font-weight: 600;
+          backdrop-filter: blur(4px);
+        }
+        .upe-preview-thumb-row {
+          display: flex;
+          gap: 8px;
+          overflow-x: auto;
+          padding-bottom: 4px;
+        }
+        .upe-preview-thumb-btn {
+          width: 52px;
+          height: 52px;
+          border-radius: 10px;
+          overflow: hidden;
+          border: 2px solid #e2e8f0;
+          padding: 0;
+          background: #f1f5f9;
+          cursor: pointer;
+          flex-shrink: 0;
+          transition: all 0.15s;
+        }
+        .upe-preview-thumb-btn img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+        .upe-preview-thumb-btn:hover {
+          border-color: #94a3b8;
+        }
+        .upe-preview-thumb-btn.is-active {
+          border-color: #0C447C;
+          box-shadow: 0 0 0 2px rgba(12, 68, 124, 0.2);
         }
         .upe-preview-text {
           margin: 0;

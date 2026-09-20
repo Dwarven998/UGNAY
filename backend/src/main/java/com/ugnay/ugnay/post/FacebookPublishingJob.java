@@ -1,21 +1,17 @@
 package com.ugnay.ugnay.post;
 
-import java.time.Duration;
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.core.UserRepository;
+import com.ugnay.ugnay.facebook.FacebookService;
 import com.ugnay.ugnay.media.MediaAsset;
 import com.ugnay.ugnay.media.MediaService;
 import com.ugnay.ugnay.org.Organization;
@@ -29,20 +25,11 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class FacebookPublishingJob {
 
-    private static final Duration N8N_TIMEOUT = Duration.ofSeconds(60);
-
-    @Value("${n8n.facebook.publish.webhook-url}")
-    private String n8nWebhookUrl;
-
-    @Value("${n8n.facebook.publish.webhook-secret:}")
-    private String n8nWebhookSecret;
-
     private final PostRepository postRepository;
     private final UserRepository userRepository;
     private final OrganizationRepository organizationRepository;
     private final MediaService mediaService;
-
-    private final WebClient webClient = WebClient.builder().build();
+    private final FacebookService facebookService;
 
     /**
      * Resolves the Facebook Page credentials for the post.
@@ -55,10 +42,12 @@ public class FacebookPublishingJob {
         boolean orgScoped
     ) {}
 
+    @Transactional
     public void publishScheduledPost(UUID postId) {
         publishInternal(postId, false);
     }
 
+    @Transactional
     public void publishImmediately(UUID postId) {
         publishInternal(postId, true);
     }
@@ -93,105 +82,51 @@ public class FacebookPublishingJob {
             return;
         }
 
-        boolean hasImage =
-            post.getMediaAsset() != null
+        List<String> imageUrls = new java.util.ArrayList<>();
+        if (post.getMediaAssets() != null && !post.getMediaAssets().isEmpty()) {
+            for (MediaAsset asset : post.getMediaAssets()) {
+                if (asset != null && asset.getFileUrl() != null && !asset.getFileUrl().isBlank()) {
+                    imageUrls.add(asset.getFileUrl());
+                }
+            }
+        } else if (post.getMediaAsset() != null
             && post.getMediaAsset().getFileUrl() != null
-            && !post.getMediaAsset().getFileUrl().isBlank();
+            && !post.getMediaAsset().getFileUrl().isBlank()) {
+            imageUrls.add(post.getMediaAsset().getFileUrl());
+        }
 
         String message = buildMessage(post);
-
-        /*
-         * Important:
-         *
-         * UGNAY already handles scheduling through
-         * PostSchedulerService. Therefore, when this method
-         * is called at the scheduled time, n8n should publish
-         * immediately rather than schedule another Facebook post.
-         *
-         * We therefore send scheduledPublishTime as null.
-         */
-
-        Map<String, Object> payload = new HashMap<>();
-
-        payload.put("postId", post.getId().toString());
-        payload.put("pageId", credentials.pageId());
-        payload.put("pageAccessToken", credentials.accessToken());
-        payload.put("caption", message);
-
-        payload.put(
-            "imageUrl",
-            hasImage
-                ? post.getMediaAsset().getFileUrl()
-                : ""
-        );
-
-        payload.put(
-            "scheduledPublishTime",
-            null
-        );
-
-        payload.put(
-            "manualTrigger",
-            manualTrigger
-        );
 
         try {
 
             log.info(
-                "Sending UGNAY post {} to n8n for Facebook publishing",
-                postId
+                "Publishing UGNAY post {} with {} image(s) to Facebook{}",
+                postId,
+                imageUrls.size(),
+                manualTrigger ? " (manual trigger)" : ""
             );
 
-            Map<String, Object> response = webClient.post()
-                .uri(n8nWebhookUrl)
-                .contentType(MediaType.APPLICATION_JSON)
-                .headers(headers -> {
+            String facebookPostId = facebookService.publishPost(
+                credentials.accessToken(),
+                credentials.pageId(),
+                message,
+                imageUrls
+            );
 
-                    if (n8nWebhookSecret != null
-                        && !n8nWebhookSecret.isBlank()) {
-
-                        headers.set(
-                            "X-UGNAY-Webhook-Secret",
-                            n8nWebhookSecret
-                        );
-                    }
-                })
-                .bodyValue(payload)
-                .retrieve()
-                .bodyToMono(
-                    new ParameterizedTypeReference<
-                        Map<String, Object>
-                    >() {}
-                )
-                .timeout(N8N_TIMEOUT)
-                .block();
-
-            if (response == null) {
+            if (facebookPostId == null
+                || facebookPostId.isBlank()) {
 
                 throw new IllegalStateException(
-                    "n8n returned an empty response"
+                    "Facebook returned an empty post ID"
                 );
             }
 
-            boolean success =
-                Boolean.TRUE.equals(response.get("success"));
-
-            if (!success) {
-
-                Object error = response.get("error");
-
-                throw new IllegalStateException(
-                    error != null
-                        ? String.valueOf(error)
-                        : "n8n failed to publish the Facebook post"
-                );
-            }
-
-            markPublished(postId, response);
+            markPublished(postId, facebookPostId);
 
             log.info(
-                "UGNAY post {} successfully published through n8n",
-                postId
+                "UGNAY post {} successfully published to Facebook, facebookPostId={}",
+                postId,
+                facebookPostId
             );
 
         } catch (Exception error) {
@@ -244,7 +179,7 @@ public class FacebookPublishingJob {
     @Transactional
     protected void markPublished(
         UUID postId,
-        Map<String, Object> response
+        String facebookPostId
     ) {
 
         postRepository.findById(postId)
@@ -258,54 +193,38 @@ public class FacebookPublishingJob {
                     Instant.now()
                 );
 
-                Object facebookPostId =
-                    response.get("facebookPostId");
-
-                /*
-                 * Fallback for the raw Facebook response
-                 * returned by the n8n workflow.
-                 */
-                if (facebookPostId == null) {
-
-                    Object facebook =
-                        response.get("facebook");
-
-                    if (facebook instanceof Map<?, ?> fb) {
-
-                        Object nestedId =
-                            fb.get("post_id") != null
-                                ? fb.get("post_id")
-                                : fb.get("id");
-
-                        facebookPostId = nestedId;
-                    }
-                }
-
                 if (facebookPostId != null) {
 
-                    post.setFbPostId(
-                        String.valueOf(
-                            facebookPostId
-                        )
-                    );
+                    post.setFbPostId(facebookPostId);
                 }
 
-                MediaAsset publishedAsset =
-                    post.getMediaAsset();
+                java.util.List<MediaAsset> assetsToRelease = new java.util.ArrayList<>();
+                if (post.getMediaAssets() != null && !post.getMediaAssets().isEmpty()) {
+                    assetsToRelease.addAll(post.getMediaAssets());
+                    post.getMediaAssets().clear();
+                } else if (post.getMediaAsset() != null) {
+                    assetsToRelease.add(post.getMediaAsset());
+                }
 
                 post.setMediaAsset(null);
 
                 postRepository.save(post);
 
-                if (publishedAsset != null) {
-
-                    mediaService.releasePublishedAsset(
-                        publishedAsset.getId()
-                    );
+                for (MediaAsset asset : assetsToRelease) {
+                    try {
+                        mediaService.releasePublishedAsset(asset.getId());
+                    } catch (Exception ex) {
+                        log.warn(
+                            "Failed to release published asset {} for post {}: {}",
+                            asset.getId(),
+                            postId,
+                            ex.getMessage()
+                        );
+                    }
                 }
 
                 log.info(
-                    "Published post {} through n8n, facebookPostId={}",
+                    "Published post {}, facebookPostId={}",
                     postId,
                     facebookPostId
                 );
@@ -327,89 +246,21 @@ public class FacebookPublishingJob {
 
                 postRepository.save(post);
 
-                /*
-                 * Only clear Facebook credentials when the
-                 * actual Facebook authorization appears invalid.
-                 */
-                if (isConnectionInvalid(error)) {
-
-                    if (post.getOrganization() != null) {
-
-                        organizationRepository
-                            .findById(
-                                post.getOrganization().getId()
-                            )
-                            .ifPresent(org -> {
-
-                                org.setFbPageId(null);
-                                org.setFbAccessToken(null);
-
-                                organizationRepository.save(org);
-
-                                log.warn(
-                                    "Cleared invalid Facebook credentials for organization {}",
-                                    org.getId()
-                                );
-                            });
-
-                    } else {
-
-                        userRepository
-                            .findById(
-                                post.getUser().getId()
-                            )
-                            .ifPresent(user -> {
-
-                                user.setFbPageId(null);
-                                user.setFbAccessToken(null);
-
-                                userRepository.save(user);
-
-                                log.warn(
-                                    "Cleared invalid Facebook credentials for user {}",
-                                    user.getId()
-                                );
-                            });
-                    }
+                if (error instanceof WebClientResponseException wce) {
+                    log.error(
+                        "Failed to publish post {} to Facebook [HTTP {}]: {}. Facebook credentials preserved.",
+                        postId,
+                        wce.getStatusCode(),
+                        wce.getResponseBodyAsString(),
+                        error
+                    );
+                } else {
+                    log.error(
+                        "Failed to publish post {} to Facebook. Facebook credentials preserved.",
+                        postId,
+                        error
+                    );
                 }
-
-                log.error(
-                    "Failed to publish post {} through n8n",
-                    postId,
-                    error
-                );
             });
-    }
-
-    private boolean isConnectionInvalid(
-        Throwable error
-    ) {
-
-        if (error instanceof WebClientResponseException webClientError) {
-
-            int status =
-                webClientError
-                    .getStatusCode()
-                    .value();
-
-            if (status == 401 || status == 403) {
-                return true;
-            }
-
-            String body =
-                webClientError
-                    .getResponseBodyAsString();
-
-            return body != null
-                && (
-                    body.contains("OAuthException")
-                    || body.contains("190")
-                    || body.contains(
-                        "Invalid OAuth access token"
-                    )
-                );
-        }
-
-        return false;
     }
 }

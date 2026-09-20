@@ -10,9 +10,11 @@ export interface PostEditorDraft {
   hashtags: string[];
   tone: string;
   mediaAssetId: string;
+  mediaAssetIds?: string[];
   scheduledAt: string;
   /** Preview URL carried from Caption Studio (not an asset ID). */
   mediaPreviewUrl?: string;
+  mediaPreviewUrls?: string[];
   /** True when the draft originated from Caption Studio (tone was pre-selected). */
   fromCaptionStudio?: boolean;
 }
@@ -51,8 +53,7 @@ export default function PostEditorModal({
   const [caption, setCaption] = useState('');
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [tone, setTone] = useState('FORMAL');
-  const [mediaAssetId, setMediaAssetId] = useState('');
-  const [mediaPreviewUrl, setMediaPreviewUrl] = useState<string | null>(null);
+  const [selectedAssets, setSelectedAssets] = useState<{ id: string; url: string }[]>([]);
   const [scheduledAt, setScheduledAt] = useState<Date | null>(suggestedTime);
   const [hashtagInput, setHashtagInput] = useState('');
 
@@ -69,8 +70,31 @@ export default function PostEditorModal({
     setCaption(initialPost?.caption ?? initialDraft?.caption ?? '');
     setHashtags(mergedHashtags);
     setTone(initialPost?.tone ?? initialDraft?.tone ?? 'FORMAL');
-    setMediaAssetId(initialDraft?.mediaAssetId ?? '');
-    setMediaPreviewUrl(initialPost?.mediaUrl ?? initialDraft?.mediaPreviewUrl ?? null);
+
+    const urls: string[] = initialDraft?.mediaPreviewUrls && initialDraft.mediaPreviewUrls.length > 0
+      ? initialDraft.mediaPreviewUrls
+      : initialPost?.mediaUrls && initialPost.mediaUrls.length > 0
+        ? initialPost.mediaUrls
+        : (initialPost?.mediaUrl ? [initialPost.mediaUrl] : (initialDraft?.mediaPreviewUrl ? [initialDraft.mediaPreviewUrl] : []));
+
+    const ids: string[] = initialDraft?.mediaAssetIds && initialDraft.mediaAssetIds.length > 0
+      ? initialDraft.mediaAssetIds
+      : initialPost?.mediaAssetIds && initialPost.mediaAssetIds.length > 0
+        ? initialPost.mediaAssetIds
+        : (initialDraft?.mediaAssetId ? [initialDraft.mediaAssetId] : []);
+
+    const combined: { id: string; url: string }[] = [];
+    const count = Math.max(urls.length, ids.length);
+    for (let i = 0; i < count; i++) {
+      if (urls[i] || ids[i]) {
+        combined.push({
+          id: ids[i] || '',
+          url: urls[i] || '',
+        });
+      }
+    }
+    setSelectedAssets(combined);
+
     setScheduledAt(
       initialDraft?.scheduledAt
         ? new Date(initialDraft.scheduledAt)
@@ -100,10 +124,20 @@ export default function PostEditorModal({
     }
   };
 
-  const selectAsset = (asset: MediaAsset) => {
-    setMediaAssetId(asset.id);         // ✅ send UUID to backend
-    setMediaPreviewUrl(asset.fileUrl); // show preview
-    setPickerOpen(false);
+  const toggleAsset = (asset: MediaAsset) => {
+    setSelectedAssets(prev => {
+      const exists = prev.some(item => (item.id && item.id === asset.id) || (item.url && item.url === asset.fileUrl));
+      if (exists) {
+        return prev.filter(item => !(item.id === asset.id || item.url === asset.fileUrl));
+      } else {
+        return [...prev, { id: asset.id, url: asset.fileUrl }];
+      }
+    });
+    onClearConflict?.();
+  };
+
+  const removeAssetAt = (index: number) => {
+    setSelectedAssets(prev => prev.filter((_, i) => i !== index));
     onClearConflict?.();
   };
 
@@ -118,11 +152,16 @@ export default function PostEditorModal({
   };
 
   const submit = async () => {
+    const assetIds = selectedAssets.map(a => a.id).filter(Boolean);
+    const urls = selectedAssets.map(a => a.url).filter(Boolean);
     await onSubmit({
       caption,
       hashtags,
       tone,
-      mediaAssetId,
+      mediaAssetId: assetIds[0] || '',
+      mediaAssetIds: assetIds,
+      mediaPreviewUrl: urls[0] || '',
+      mediaPreviewUrls: urls,
       scheduledAt: scheduledAt ? scheduledAt.toISOString() : '',
     });
   };
@@ -161,17 +200,29 @@ export default function PostEditorModal({
 
           {/* ── Media picker ── */}
           <div className="upe-field">
-            <span>Media</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Media {selectedAssets.length > 0 ? `(${selectedAssets.length})` : ''}</span>
+              {selectedAssets.length > 1 && (
+                <span style={{ fontSize: '11px', color: '#0C447C', fontWeight: 600 }}>
+                  Multi-image Carousel Post
+                </span>
+              )}
+            </div>
             <div className="upe-media-picker-row">
-              {mediaPreviewUrl ? (
-                <div className="upe-media-thumb">
-                  <img src={mediaPreviewUrl} alt="Selected media" />
-                  <button
-                    type="button"
-                    className="upe-media-thumb-remove"
-                    onClick={() => { setMediaAssetId(''); setMediaPreviewUrl(null); }}
-                    title="Remove"
-                  >×</button>
+              {selectedAssets.length > 0 ? (
+                <div className="upe-media-strip">
+                  {selectedAssets.map((item, idx) => (
+                    <div key={`${item.id || item.url}-${idx}`} className="upe-media-thumb">
+                      <img src={item.url} alt={`Media ${idx + 1}`} />
+                      <span className="upe-media-thumb-num">{idx + 1}</span>
+                      <button
+                        type="button"
+                        className="upe-media-thumb-remove"
+                        onClick={() => removeAssetAt(idx)}
+                        title="Remove"
+                      >×</button>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div className="upe-media-empty-thumb">
@@ -185,7 +236,7 @@ export default function PostEditorModal({
                 className="upe-secondary-btn"
                 onClick={() => setPickerOpen(p => !p)}
               >
-                {pickerOpen ? 'Close picker' : mediaPreviewUrl ? 'Change image' : 'Choose from library'}
+                {pickerOpen ? 'Done selecting' : selectedAssets.length > 0 ? 'Add / Manage images' : 'Choose from library'}
               </button>
             </div>
 
@@ -215,20 +266,26 @@ export default function PostEditorModal({
                   {!loadingAssets && !selectedFolder && (
                     <p className="upe-picker-empty">Select a folder to browse assets</p>
                   )}
-                  {assets.map(asset => (
-                    <button
-                      key={asset.id}
-                      type="button"
-                      className={`upe-picker-asset${mediaAssetId === asset.id ? ' upe-picker-asset-selected' : ''}`}
-                      onClick={() => selectAsset(asset)}
-                      title={asset.fileName}
-                    >
-                      <img src={asset.fileUrl} alt={asset.fileName} />
-                      {mediaAssetId === asset.id && (
-                        <div className="upe-picker-asset-check">✓</div>
-                      )}
-                    </button>
-                  ))}
+                  {assets.map(asset => {
+                    const isSelected = selectedAssets.some(item => (item.id && item.id === asset.id) || (item.url && item.url === asset.fileUrl));
+                    const selectedIndex = selectedAssets.findIndex(item => (item.id && item.id === asset.id) || (item.url && item.url === asset.fileUrl));
+                    return (
+                      <button
+                        key={asset.id}
+                        type="button"
+                        className={`upe-picker-asset${isSelected ? ' upe-picker-asset-selected' : ''}`}
+                        onClick={() => toggleAsset(asset)}
+                        title={asset.fileName}
+                      >
+                        <img src={asset.fileUrl} alt={asset.fileName} />
+                        {isSelected && (
+                          <div className="upe-picker-asset-check">
+                            <span>{selectedIndex + 1}</span>
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -321,6 +378,24 @@ export default function PostEditorModal({
           align-items: center;
           gap: 12px;
           margin-top: 6px;
+        }
+        .upe-media-strip {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .upe-media-thumb-num {
+          position: absolute;
+          bottom: 3px;
+          left: 3px;
+          background: rgba(12, 68, 124, 0.85);
+          color: #fff;
+          font-size: 10px;
+          font-weight: 700;
+          padding: 1px 5px;
+          border-radius: 6px;
+          line-height: 1.2;
         }
         .upe-media-thumb {
           position: relative;

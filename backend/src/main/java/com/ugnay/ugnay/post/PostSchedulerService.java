@@ -22,9 +22,11 @@ import com.ugnay.ugnay.org.OrganizationPermissionService;
 import com.ugnay.ugnay.org.OrganizationRepository;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class PostSchedulerService {
 
     private final PostRepository postRepository;
@@ -39,6 +41,13 @@ public class PostSchedulerService {
     @EventListener(ApplicationReadyEvent.class)
     public void restoreScheduledPosts() {
         Instant now = Instant.now();
+        // Immediately publish any posts whose scheduled time passed while the server was offline
+        postRepository.findByStatusAndScheduledAtBefore(Post.PostStatus.SCHEDULED, now)
+            .forEach(post -> {
+                log.info("Publishing overdue scheduled post {}", post.getId());
+                facebookPublishingJob.publishScheduledPost(post.getId());
+            });
+
         postRepository.findByStatusAndScheduledAtAfterOrderByScheduledAtAsc(Post.PostStatus.SCHEDULED, now)
             .forEach(this::schedulePost);
     }
@@ -228,13 +237,25 @@ public class PostSchedulerService {
                 .ifPresent(conflict -> { throw new SchedulingConflictException(conflict); });
         }
 
-        MediaAsset asset = req.mediaAssetId() != null
-            ? assetRepository.findById(req.mediaAssetId()).orElse(null)
-            : post.getMediaAsset();
+        List<MediaAsset> assets = new java.util.ArrayList<>();
+        if (req.mediaAssetIds() != null && !req.mediaAssetIds().isEmpty()) {
+            for (UUID assetId : req.mediaAssetIds()) {
+                if (assetId != null) {
+                    assetRepository.findById(assetId).ifPresent(assets::add);
+                }
+            }
+        } else if (req.mediaAssetId() != null) {
+            assetRepository.findById(req.mediaAssetId()).ifPresent(assets::add);
+        } else if (post.getMediaAssets() != null && !post.getMediaAssets().isEmpty()) {
+            assets.addAll(post.getMediaAssets());
+        } else if (post.getMediaAsset() != null) {
+            assets.add(post.getMediaAsset());
+        }
 
         post.setUser(user);
         post.setOrganization(organization);
-        post.setMediaAsset(asset);
+        post.setMediaAssets(assets);
+        post.setMediaAsset(assets.isEmpty() ? null : assets.get(0));
         post.setCaption(req.caption());
         post.setHashtags(req.hashtags());
         post.setTone(req.tone());
@@ -307,6 +328,23 @@ public class PostSchedulerService {
     }
 
     private PostController.PostDto toDto(Post post) {
+        java.util.List<String> mediaUrls = new java.util.ArrayList<>();
+        java.util.List<UUID> mediaAssetIds = new java.util.ArrayList<>();
+
+        if (post.getMediaAssets() != null && !post.getMediaAssets().isEmpty()) {
+            for (MediaAsset asset : post.getMediaAssets()) {
+                if (asset != null) {
+                    if (asset.getFileUrl() != null) mediaUrls.add(asset.getFileUrl());
+                    if (asset.getId() != null) mediaAssetIds.add(asset.getId());
+                }
+            }
+        } else if (post.getMediaAsset() != null) {
+            if (post.getMediaAsset().getFileUrl() != null) mediaUrls.add(post.getMediaAsset().getFileUrl());
+            if (post.getMediaAsset().getId() != null) mediaAssetIds.add(post.getMediaAsset().getId());
+        }
+
+        String primaryMediaUrl = !mediaUrls.isEmpty() ? mediaUrls.get(0) : null;
+
         return new PostController.PostDto(
             post.getId(),
             post.getCaption(),
@@ -314,7 +352,9 @@ public class PostSchedulerService {
             post.getTone(),
             post.getStatus().name(),
             post.getScheduledAt() != null ? post.getScheduledAt().toString() : null,
-            post.getMediaAsset() != null ? post.getMediaAsset().getFileUrl() : null,
+            primaryMediaUrl,
+            mediaUrls,
+            mediaAssetIds,
             post.getFbPostId(),
             post.getOrganization() != null ? post.getOrganization().getId() : null,
             post.getUser() != null ? post.getUser().getId() : null,
