@@ -23,25 +23,76 @@ public class FacebookService {
     private final WebClient webClient = WebClient.builder().build();
 
     /**
-     * Publish a post to a Facebook Page feed.
-     * Returns the fb_post_id on success.
+     * Publish a post to a Facebook Page.
+     *
+     * <ul>
+     *   <li>With image: {@code POST /{pageId}/photos} with {@code url}
+     *       and {@code message} — returns {@code post_id}.</li>
+     *   <li>Without image: {@code POST /{pageId}/feed} with
+     *       {@code message} — returns {@code id}.</li>
+     * </ul>
+     *
+     * @return the Facebook post ID on success
      */
-    public String publishPost(String accessToken, String pageId, String message, String imageUrl) {
-        Map<String, Object> body = new java.util.HashMap<>();
+    public String publishPost(
+        String accessToken,
+        String pageId,
+        String message,
+        String imageUrl
+    ) {
+
+        boolean hasImage =
+            imageUrl != null && !imageUrl.isBlank();
+
+        Map<String, Object> body = new HashMap<>();
         body.put("message", message);
         body.put("access_token", accessToken);
-        if (imageUrl != null && !imageUrl.isBlank()) {
-            body.put("link", imageUrl);
+
+        if (hasImage) {
+
+            body.put("url", imageUrl);
+
+            Map<String, Object> response = webClient.post()
+                .uri(fbApiUrl + "/" + pageId + "/photos")
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(
+                    new ParameterizedTypeReference<
+                        Map<String, Object>
+                    >() {}
+                )
+                .block();
+
+            if (response == null) {
+                return null;
+            }
+
+            /*
+             * The /photos endpoint returns { "id", "post_id" }.
+             * "post_id" is the page-scoped post ID used for
+             * engagement queries; prefer it when available.
+             */
+            Object postId = response.get("post_id");
+
+            return postId != null
+                ? String.valueOf(postId)
+                : String.valueOf(response.get("id"));
         }
 
         Map<String, Object> response = webClient.post()
             .uri(fbApiUrl + "/" + pageId + "/feed")
             .bodyValue(body)
             .retrieve()
-            .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+            .bodyToMono(
+                new ParameterizedTypeReference<
+                    Map<String, Object>
+                >() {}
+            )
             .block();
 
-        return response != null ? (String) response.get("id") : null;
+        return response != null
+            ? (String) response.get("id")
+            : null;
     }
 
     /**
