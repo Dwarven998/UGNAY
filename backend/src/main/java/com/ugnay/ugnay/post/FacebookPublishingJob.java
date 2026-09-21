@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.UUID;
 
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
@@ -42,12 +43,10 @@ public class FacebookPublishingJob {
         boolean orgScoped
     ) {}
 
-    @Transactional
     public void publishScheduledPost(UUID postId) {
         publishInternal(postId, false);
     }
 
-    @Transactional
     public void publishImmediately(UUID postId) {
         publishInternal(postId, true);
     }
@@ -82,7 +81,7 @@ public class FacebookPublishingJob {
             return;
         }
 
-        List<String> imageUrls = new java.util.ArrayList<>();
+        List<String> imageUrls = new ArrayList<>();
         if (post.getMediaAssets() != null && !post.getMediaAssets().isEmpty()) {
             for (MediaAsset asset : post.getMediaAssets()) {
                 if (asset != null && asset.getFileUrl() != null && !asset.getFileUrl().isBlank()) {
@@ -113,9 +112,7 @@ public class FacebookPublishingJob {
                 imageUrls
             );
 
-            if (facebookPostId == null
-                || facebookPostId.isBlank()) {
-
+            if (facebookPostId == null || facebookPostId.isBlank()) {
                 throw new IllegalStateException(
                     "Facebook returned an empty post ID"
                 );
@@ -130,9 +127,7 @@ public class FacebookPublishingJob {
             );
 
         } catch (Exception error) {
-
             markFailed(postId, error);
-
         }
     }
 
@@ -164,25 +159,23 @@ public class FacebookPublishingJob {
         String hashtags =
             post.getHashtags() != null
             && post.getHashtags().length > 0
-
             ? "\n\n"
                 + String.join(
                     " ",
                     post.getHashtags()
                 )
-
             : "";
 
         return post.getCaption() + hashtags;
     }
 
-    @Transactional
-    protected void markPublished(
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markPublished(
         UUID postId,
         String facebookPostId
     ) {
 
-        postRepository.findById(postId)
+        postRepository.findDetailedById(postId)
             .ifPresent(post -> {
 
                 post.setStatus(
@@ -194,11 +187,10 @@ public class FacebookPublishingJob {
                 );
 
                 if (facebookPostId != null) {
-
                     post.setFbPostId(facebookPostId);
                 }
 
-                java.util.List<MediaAsset> assetsToRelease = new java.util.ArrayList<>();
+                List<MediaAsset> assetsToRelease = new ArrayList<>();
                 if (post.getMediaAssets() != null && !post.getMediaAssets().isEmpty()) {
                     assetsToRelease.addAll(post.getMediaAssets());
                     post.getMediaAssets().clear();
@@ -208,7 +200,7 @@ public class FacebookPublishingJob {
 
                 post.setMediaAsset(null);
 
-                postRepository.save(post);
+                postRepository.saveAndFlush(post);
 
                 for (MediaAsset asset : assetsToRelease) {
                     try {
@@ -231,8 +223,8 @@ public class FacebookPublishingJob {
             });
     }
 
-    @Transactional
-    protected void markFailed(
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markFailed(
         UUID postId,
         Throwable error
     ) {
@@ -244,7 +236,7 @@ public class FacebookPublishingJob {
                     Post.PostStatus.FAILED
                 );
 
-                postRepository.save(post);
+                postRepository.saveAndFlush(post);
 
                 if (error instanceof WebClientResponseException wce) {
                     log.error(

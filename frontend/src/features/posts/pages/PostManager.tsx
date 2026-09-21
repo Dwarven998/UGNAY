@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { ApiError } from '../../../api/axiosClient';
-import { useAuth } from   '../../../context/useAuth';
+import { useAuth } from '../../../context/useAuth';
 import { useOrganization } from '../../../context/useOrganization';
 import type { Post, PostConflict } from '../../../types';
 import { postApi, type PostUpsertPayload } from '../api/postApi';
@@ -99,25 +99,40 @@ export default function PostManager() {
   // only — members' posts go through the approval queue above instead of direct publish/edit/delete.
   const canManagePosts = !activeOrgId || canModerate;
 
-  const loadPosts = async () => {
-    const data = await postApi.getAll(activeOrgId);
-    setPosts(data);
-  };
+  const loadPosts = useCallback(async () => {
+    try {
+      const data = await postApi.getAll(activeOrgId);
+      setPosts(data);
+    } catch (err) {
+      console.error('Failed to fetch posts:', err);
+    }
+  }, [activeOrgId]);
 
-  const loadPendingPosts = async () => {
+  const loadPendingPosts = useCallback(async () => {
     if (!activeOrgId || !canModerate) {
       setPendingPosts([]);
       return;
     }
-    const data = await postApi.getModerationQueue(activeOrgId);
-    setPendingPosts(data);
-  };
+    try {
+      const data = await postApi.getModerationQueue(activeOrgId);
+      setPendingPosts(data);
+    } catch (err) {
+      console.error('Failed to fetch moderation queue:', err);
+    }
+  }, [activeOrgId, canModerate]);
 
   useEffect(() => {
     loadPosts();
     loadPendingPosts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeOrgId, canModerate]);
+
+    // Auto-refresh post lists every 15 seconds so scheduled posts transition to published smoothly
+    const intervalId = setInterval(() => {
+      loadPosts();
+      loadPendingPosts();
+    }, 15000);
+
+    return () => clearInterval(intervalId);
+  }, [loadPosts, loadPendingPosts]);
 
   useEffect(() => {
     const initialDraft = parseCaptionDraftFromSession();
@@ -755,7 +770,7 @@ export default function PostManager() {
         }
         .upe-info-banner svg { color: #3b82f6; flex-shrink: 0; }
 
-        /* ── Calendar Card (base styles for the calendar wrapper) ── */
+        /* ── Calendar Card ── */
         .upe-calendar-card {
           background: #ffffff;
           border: 1px solid #e2e8f0;
@@ -945,7 +960,7 @@ export default function PostManager() {
           margin: 0;
         }
 
-        /* ── Queue Item (vertical card) ── */
+        /* ── Queue Item ── */
         .upe-queue-item {
           padding: 14px 16px;
           background: #ffffff;
@@ -1170,7 +1185,7 @@ export default function PostManager() {
           cursor: not-allowed;
         }
 
-        /* ── Modal Styles (light theme) ── */
+        /* ── Modal Styles ── */
         .upe-modal-backdrop {
           position: fixed;
           inset: 0;
