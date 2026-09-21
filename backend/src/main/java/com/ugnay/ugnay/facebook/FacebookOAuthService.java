@@ -7,6 +7,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,9 +19,11 @@ import org.springframework.web.util.UriComponentsBuilder;
 import com.ugnay.ugnay.core.JwtUtil;
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.core.UserRepository;
+import com.ugnay.ugnay.media.MediaFolderRepository;
 import com.ugnay.ugnay.org.Organization;
 import com.ugnay.ugnay.org.OrganizationPermissionService;
 import com.ugnay.ugnay.org.OrganizationRepository;
+import com.ugnay.ugnay.post.PostRepository;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -57,6 +60,9 @@ public class FacebookOAuthService {
     private final UserRepository userRepository;
     private final OrganizationRepository organizationRepository;
     private final OrganizationPermissionService organizationPermissionService;
+    private final PostRepository postRepository;
+    private final MediaFolderRepository mediaFolderRepository;
+    private final ApplicationEventPublisher eventPublisher;
     private final WebClient webClient = WebClient.builder().build();
 
     /**
@@ -116,16 +122,23 @@ public class FacebookOAuthService {
                 org.setFbPageId(pageAccount.pageId());
                 org.setFbAccessToken(pageAccount.pageAccessToken());
                 organizationRepository.save(org);
+                // Posts and folders made while no Page was connected belong to the first Page connected afterwards.
+                postRepository.claimUnassignedForOrganization(orgId, pageAccount.pageId());
+                mediaFolderRepository.claimUnassignedForOrganization(orgId, pageAccount.pageId());
             } else {
                 user.setFbPageId(pageAccount.pageId());
                 user.setFbAccessToken(pageAccount.pageAccessToken());
                 userRepository.save(user);
+                postRepository.claimUnassignedForUser(user, pageAccount.pageId());
+                mediaFolderRepository.claimUnassignedForUser(user, pageAccount.pageId());
             }
         } catch (Exception ex) {
             log.error("Facebook OAuth completion failed for user={}, state={}: {}", user.getId(), state,
                     ex.getMessage(), ex);
             throw ex;
         }
+
+        eventPublisher.publishEvent(new FacebookConnectionChangedEvent(user.getId(), orgId));
 
         return new FacebookConnectionDetails(
                 true,
@@ -176,6 +189,7 @@ public class FacebookOAuthService {
             user.setFbAccessToken(null);
             userRepository.save(user);
         }
+        eventPublisher.publishEvent(new FacebookConnectionChangedEvent(user.getId(), orgId));
     }
 
     private String exchangeCodeForUserToken(String code) {

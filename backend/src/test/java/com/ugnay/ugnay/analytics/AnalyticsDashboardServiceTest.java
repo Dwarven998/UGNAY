@@ -6,7 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.io.IOException;
@@ -29,6 +32,7 @@ import com.sun.net.httpserver.HttpServer;
 import com.ugnay.ugnay.analytics.AnalyticsDtos.Dashboard;
 import com.ugnay.ugnay.analytics.AnalyticsDtos.PostDetail;
 import com.ugnay.ugnay.core.User;
+import com.ugnay.ugnay.facebook.FacebookConnectionChangedEvent;
 import com.ugnay.ugnay.facebook.FacebookInsightsClient;
 import com.ugnay.ugnay.org.Organization;
 import com.ugnay.ugnay.org.OrganizationPermissionService;
@@ -45,6 +49,8 @@ class AnalyticsDashboardServiceTest {
 
     private HttpServer server;
     private AnalyticsDashboardService service;
+    private PostRepository postRepository;
+    private Organization org;
     private final UUID orgId = UUID.randomUUID();
     private final User user = User.builder().id(UUID.randomUUID()).build();
 
@@ -138,16 +144,16 @@ class AnalyticsDashboardServiceTest {
         });
         server.start();
 
-        PostRepository postRepository = mock(PostRepository.class);
-        when(postRepository.findByOrganization_IdOrderByCreatedAtDesc(any())).thenReturn(List.of());
+        postRepository = mock(PostRepository.class);
+        when(postRepository.findInScope(any(), any(), any())).thenReturn(List.of());
         PostTotals totals = mock(PostTotals.class);
         when(totals.getTotalPosts()).thenReturn(9L);
         when(totals.getPublishedPosts()).thenReturn(7L);
         when(totals.getTotalEngagement()).thenReturn(15L);
-        when(postRepository.totalsForOrganization(any())).thenReturn(totals);
+        when(postRepository.totalsForOrganization(any(), eq(PAGE))).thenReturn(totals);
         OrganizationRepository organizationRepository = mock(OrganizationRepository.class);
-        when(organizationRepository.findById(orgId)).thenReturn(Optional.of(
-            Organization.builder().id(orgId).name("CCS").fbPageId(PAGE).fbAccessToken("tok").build()));
+        org = Organization.builder().id(orgId).name("CCS").fbPageId(PAGE).fbAccessToken("tok").build();
+        when(organizationRepository.findById(orgId)).thenReturn(Optional.of(org));
 
         service = new AnalyticsDashboardService(
             postRepository, organizationRepository,
@@ -226,5 +232,51 @@ class AnalyticsDashboardServiceTest {
         assertThrows(ResponseStatusException.class, () -> service.getPostDetail(user, orgId, "9999_111"));
         assertThrows(ResponseStatusException.class, () -> service.getPostDetail(user, orgId, "1001_111/../x"));
         assertFalse(service.getPostDetail(user, orgId, "1001_111").id().isEmpty());
+    }
+
+    @Test
+    void summaryCardsAreReadFromTheConnectedPageOnly() {
+        service.getDashboard(user, orgId, 28);
+
+        verify(postRepository).totalsForOrganization(orgId, PAGE);
+        verify(postRepository, never()).totalsForOrganization(eq(orgId), eq("2002"));
+    }
+
+    @Test
+    void switchingPageNeverServesTheOldPagesNumbers() {
+        Dashboard before = service.getDashboard(user, orgId, 28);
+        assertEquals(9, before.kpis().totalPosts());
+        assertEquals(50, before.overview().views().value());
+
+        // The organization is now connected to a different Page, and the connection-changed event fires.
+        PostTotals emptyPage = mock(PostTotals.class);
+        when(postRepository.totalsForOrganization(any(), eq("2002"))).thenReturn(emptyPage);
+        org.setFbPageId("2002");
+        org.setFbAccessToken("tok2");
+        service.onFacebookConnectionChanged(new FacebookConnectionChangedEvent(user.getId(), orgId));
+
+        Dashboard after = service.getDashboard(user, orgId, 28);
+
+        // The new Page's cards are read for the new Page id, and nothing from Page 1001 is reused.
+        verify(postRepository).totalsForOrganization(orgId, "2002");
+        assertEquals(0, after.kpis().totalPosts());
+        assertEquals(0, after.overview().views().value());
+        assertTrue(after.content().isEmpty());
+    }
+
+    @Test
+    void disconnectedWorkspaceShowsNoPageDataAtAll() {
+        service.getDashboard(user, orgId, 28);
+        org.setFbPageId(null);
+        org.setFbAccessToken(null);
+        service.onFacebookConnectionChanged(new FacebookConnectionChangedEvent(user.getId(), orgId));
+
+        Dashboard after = service.getDashboard(user, orgId, 28);
+
+        assertFalse(after.connected());
+        assertEquals(0, after.kpis().totalPosts());
+        assertEquals(0, after.kpis().totalEngagement());
+        assertTrue(after.content().isEmpty());
+        assertThrows(ResponseStatusException.class, () -> service.getPostDetail(user, orgId, "1001_111"));
     }
 }

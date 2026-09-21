@@ -4,19 +4,24 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 
 import org.springframework.context.event.EventListener;
+import org.springframework.http.HttpStatus;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.media.MediaAsset;
 import com.ugnay.ugnay.media.MediaAssetRepository;
+import com.ugnay.ugnay.media.MediaFolder;
+import com.ugnay.ugnay.org.ConnectedPageResolver;
 import com.ugnay.ugnay.org.Organization;
 import com.ugnay.ugnay.org.OrganizationPermissionService;
 import com.ugnay.ugnay.org.OrganizationRepository;
@@ -33,6 +38,7 @@ public class PostSchedulerService {
     private final MediaAssetRepository assetRepository;
     private final OrganizationRepository organizationRepository;
     private final OrganizationPermissionService organizationPermissionService;
+    private final ConnectedPageResolver connectedPageResolver;
     private final ConflictDetectionService conflictDetectionService;
     private final FacebookPublishingJob facebookPublishingJob;
     private final TaskScheduler postTaskScheduler;
@@ -64,6 +70,7 @@ public class PostSchedulerService {
     public PostController.PostDto updatePost(User user, UUID postId, PostController.CreatePostRequest req) {
         Post post = postRepository.findDetailedById(postId)
             .filter(existing -> existing.getUser().getId().equals(user.getId()))
+            .filter(this::isOnConnectedPage)
             .orElseThrow(() -> new NoSuchElementException("Post not found"));
 
         if (isEditLockedForOwner(user, post)) {
@@ -86,6 +93,7 @@ public class PostSchedulerService {
     public void deletePost(User user, UUID postId) {
         postRepository.findDetailedById(postId)
             .filter(existing -> canManage(user, existing))
+            .filter(this::isOnConnectedPage)
             .ifPresent(post -> {
                 boolean isModerator = post.getOrganization() != null
                     && organizationPermissionService.isOfficerOrAdmin(user.getId(), post.getOrganization().getId());
@@ -106,6 +114,7 @@ public class PostSchedulerService {
     public PostController.PostDto requestAppeal(User user, UUID postId, Post.PostAppealType type) {
         Post post = postRepository.findDetailedById(postId)
             .filter(existing -> existing.getUser().getId().equals(user.getId()))
+            .filter(this::isOnConnectedPage)
             .orElseThrow(() -> new NoSuchElementException("Post not found"));
 
         if (!isOrgScopedAndScheduled(post)) {
@@ -127,6 +136,7 @@ public class PostSchedulerService {
     @Transactional
     public void resolveAppeal(User approver, UUID postId, boolean approve) {
         Post post = postRepository.findDetailedById(postId)
+            .filter(this::isOnConnectedPage)
             .orElseThrow(() -> new NoSuchElementException("Post not found"));
         if (post.getOrganization() == null) {
             throw new IllegalStateException("This post is not scoped to an organization");
@@ -163,7 +173,8 @@ public class PostSchedulerService {
 
     public List<PostController.PostDto> listPendingForModeration(User requester, UUID orgId) {
         organizationPermissionService.requireOfficerOrAdmin(requester.getId(), orgId);
-        return postRepository.findByOrganization_IdAndStatusOrderByCreatedAtDesc(orgId, Post.PostStatus.PENDING_REVIEW).stream()
+        String pageId = connectedPageResolver.currentPageId(requester, orgId);
+        return postRepository.findInScopeByStatus(orgId, pageId, Post.PostStatus.PENDING_REVIEW).stream()
             .map(this::toDto)
             .toList();
     }
@@ -171,6 +182,7 @@ public class PostSchedulerService {
     @Transactional
     public PostController.PostDto approvePost(User approver, UUID postId) {
         Post post = postRepository.findDetailedById(postId)
+            .filter(this::isOnConnectedPage)
             .orElseThrow(() -> new NoSuchElementException("Post not found"));
         requireModeratable(approver, post);
 
@@ -183,6 +195,7 @@ public class PostSchedulerService {
     @Transactional
     public PostController.PostDto rejectPost(User approver, UUID postId) {
         Post post = postRepository.findDetailedById(postId)
+            .filter(this::isOnConnectedPage)
             .orElseThrow(() -> new NoSuchElementException("Post not found"));
         requireModeratable(approver, post);
 
@@ -209,12 +222,22 @@ public class PostSchedulerService {
 
     @Transactional
     public void publishNow(User user, UUID postId) {
-        postRepository.findDetailedById(postId)
+        Post post = postRepository.findDetailedById(postId)
             .filter(existing -> existing.getUser().getId().equals(user.getId()))
-            .ifPresent(post -> {
-                cancelScheduledTask(post.getId());
-                facebookPublishingJob.publishImmediately(post.getId());
-            });
+            .filter(this::isOnConnectedPage)
+            .orElseThrow(() -> new NoSuchElementException("Post not found"));
+        cancelScheduledTask(post.getId());
+        facebookPublishingJob.publishImmediately(post.getId());
+    }
+
+    /**
+     * True while the post belongs to the Facebook Page currently connected to its workspace. A post made
+     * under a previously connected Page is out of scope: it can't be read, edited, deleted or published
+     * until that Page is connected again.
+     */
+    private boolean isOnConnectedPage(Post post) {
+        String current = ConnectedPageResolver.pageIdOf(post.getOrganization(), post.getUser());
+        return Objects.equals(ConnectedPageResolver.normalize(post.getFbPageId()), current);
     }
 
     private Post buildPost(User user, PostController.CreatePostRequest req, UUID excludePostId) {
@@ -230,10 +253,12 @@ public class PostSchedulerService {
         boolean requiresApproval = organization != null
             && !organizationPermissionService.isOfficerOrAdmin(user.getId(), organization.getId());
 
+        String pageId = ConnectedPageResolver.pageIdOf(organization, user);
+
         Instant scheduledAt = parseScheduledAt(req.scheduledAt());
         if (scheduledAt != null) {
             requireFacebookConnection(user, organization);
-            conflictDetectionService.findConflict(user.getOrgName(), scheduledAt, excludePostId)
+            conflictDetectionService.findConflict(user, organization, pageId, scheduledAt, excludePostId)
                 .ifPresent(conflict -> { throw new SchedulingConflictException(conflict); });
         }
 
@@ -252,8 +277,15 @@ public class PostSchedulerService {
             assets.add(post.getMediaAsset());
         }
 
+        // Media may only come from this workspace's Media Repository on this same Page.
+        assets.stream()
+            .filter(asset -> post.getMediaAssets() == null
+                || post.getMediaAssets().stream().noneMatch(existing -> existing.getId().equals(asset.getId())))
+            .forEach(asset -> requireAssetOnPage(asset, user, organization, pageId));
+
         post.setUser(user);
         post.setOrganization(organization);
+        post.setFbPageId(pageId);
         post.setMediaAssets(assets);
         post.setMediaAsset(assets.isEmpty() ? null : assets.get(0));
         post.setCaption(req.caption());
@@ -266,6 +298,22 @@ public class PostSchedulerService {
         if (scheduledAt == null) {
             post.setPublishedAt(null);
             post.setFbPostId(null);
+        }
+    }
+
+    /** Rejects media from another workspace, or from a folder that belongs to a different Facebook Page. */
+    private void requireAssetOnPage(MediaAsset asset, User user, Organization organization, String pageId) {
+        MediaFolder folder = asset.getFolder();
+        if (folder == null) {
+            return;
+        }
+        UUID folderOrgId = folder.getOrganization() != null ? folder.getOrganization().getId() : null;
+        UUID postOrgId = organization != null ? organization.getId() : null;
+        boolean sameWorkspace = Objects.equals(folderOrgId, postOrgId)
+            && (postOrgId != null || (folder.getUser() != null && folder.getUser().getId().equals(user.getId())));
+        boolean samePage = Objects.equals(ConnectedPageResolver.normalize(folder.getFbPageId()), pageId);
+        if (!sameWorkspace || !samePage) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Media asset not found");
         }
     }
 

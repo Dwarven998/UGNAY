@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.core.UserRepository;
+import com.ugnay.ugnay.org.ConnectedPageResolver;
 import com.ugnay.ugnay.org.Organization;
 import com.ugnay.ugnay.org.OrganizationRepository;
 
@@ -17,7 +18,8 @@ import lombok.extern.slf4j.Slf4j;
  * Background heartbeat that keeps every organization's and every legacy personal account's
  * engagement counts fresh from Facebook, so the Analytics panel stays in sync even when nobody
  * currently has it open. Each organization and each user is synced strictly against its own
- * Page token and its own posts, so nothing crosses between them.
+ * Page token and only the posts of the Page that token belongs to, so nothing crosses between
+ * organizations, users or Pages.
  */
 @Component
 @RequiredArgsConstructor
@@ -32,14 +34,16 @@ public class EngagementSyncScheduler {
     @Scheduled(fixedRateString = "${analytics.engagement-sync.interval-ms:180000}")
     public void syncAllEngagement() {
         for (Organization org : organizationRepository.findAll()) {
-            if (org.getFbAccessToken() == null || org.getFbAccessToken().isBlank()) continue;
-            List<Post> posts = postRepository.findByOrganization_IdOrderByCreatedAtDesc(org.getId());
+            String pageId = ConnectedPageResolver.normalize(org.getFbPageId());
+            if (pageId == null || org.getFbAccessToken() == null || org.getFbAccessToken().isBlank()) continue;
+            List<Post> posts = postRepository.findInScope(org.getId(), null, pageId);
             engagementSyncService.syncPosts(posts, org.getFbAccessToken());
         }
 
         for (User user : userRepository.findAll()) {
-            if (user.getFbAccessToken() == null || user.getFbAccessToken().isBlank()) continue;
-            List<Post> posts = postRepository.findByUserAndOrganizationIsNullOrderByCreatedAtDesc(user);
+            String pageId = ConnectedPageResolver.normalize(user.getFbPageId());
+            if (pageId == null || user.getFbAccessToken() == null || user.getFbAccessToken().isBlank()) continue;
+            List<Post> posts = postRepository.findInScope(null, user, pageId);
             engagementSyncService.syncPosts(posts, user.getFbAccessToken());
         }
     }

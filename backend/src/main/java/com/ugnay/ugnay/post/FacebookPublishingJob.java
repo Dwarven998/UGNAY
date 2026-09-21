@@ -15,6 +15,7 @@ import com.ugnay.ugnay.core.UserRepository;
 import com.ugnay.ugnay.facebook.FacebookService;
 import com.ugnay.ugnay.media.MediaAsset;
 import com.ugnay.ugnay.media.MediaService;
+import com.ugnay.ugnay.org.ConnectedPageResolver;
 import com.ugnay.ugnay.org.Organization;
 import com.ugnay.ugnay.org.OrganizationRepository;
 
@@ -75,6 +76,20 @@ public class FacebookPublishingJob {
                 postId,
                 new IllegalStateException(
                     "Facebook Page connection is missing"
+                )
+            );
+
+            return;
+        }
+
+        // A post belongs to the Page it was created under. If the workspace has since been switched to a
+        // different Page, publishing with the new Page's credentials would put this post on the wrong Page.
+        String postPage = ConnectedPageResolver.normalize(post.getFbPageId());
+        if (postPage != null && !postPage.equals(ConnectedPageResolver.normalize(credentials.pageId()))) {
+            markFailed(
+                postId,
+                new IllegalStateException(
+                    "Post belongs to a different Facebook Page than the one currently connected"
                 )
             );
 

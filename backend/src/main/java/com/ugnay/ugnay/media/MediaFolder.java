@@ -24,6 +24,10 @@ public class MediaFolder {
     @JoinColumn(name = "organization_id")
     private Organization organization;
 
+    /** The Facebook Page connected when this folder was created; the folder is only visible while that Page is connected. Null until a Page is connected. */
+    @Column(name = "fb_page_id")
+    private String fbPageId;
+
     @Column(nullable = false)
     private String name;
 

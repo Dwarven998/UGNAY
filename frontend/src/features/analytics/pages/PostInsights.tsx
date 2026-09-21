@@ -2,6 +2,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { analyticsApi } from '../api/analyticsApi.ts';
 import type { PostComment, PostDetail } from '../api/analyticsApi.ts';
 import { useOrganization } from '../../../context/useOrganization';
+import { useFacebookConnection } from '../../posts/hooks/useFacebookConnection';
 import { usePolling } from '../usePolling.ts';
 import TimeChart from '../components/TimeChart.tsx';
 import { Icon } from '../components/icons.tsx';
@@ -209,10 +210,11 @@ export default function PostInsights() {
   const navigate = useNavigate();
   const { activeOrgId, activeOrg, loading: orgLoading, memberships } = useOrganization();
   const isResolvingOrg = orgLoading || (memberships.length > 0 && !activeOrgId);
+  const { scopeKey, resolved: pageResolved } = useFacebookConnection();
 
   const { data, error, syncedAt, syncing } = usePolling(
-    `${activeOrgId ?? 'personal'}|post|${postId}`,
-    !isResolvingOrg && postId !== '',
+    `${scopeKey}|post|${postId}`,
+    !isResolvingOrg && pageResolved && postId !== '',
     () => analyticsApi.getPostDetail(activeOrgId, postId),
   );
 

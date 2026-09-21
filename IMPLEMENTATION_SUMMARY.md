@@ -163,3 +163,19 @@ The delete-asset API existed but had no UI. Added a **Delete** button to each as
 ## 9. Known Test Data (needs cleanup)
 
 Testing this session created throwaway accounts/orgs directly in the shared Supabase database (emails like `orgtest*@example.com`, `posttest*@example.com`, orgs named "Test University...", "Draft Test Org..."). These weren't deleted since that's destructive — someone with DB access should clean them up before/during team testing to avoid confusion.
+
+---
+
+## 10. Per-Facebook-Page Data Isolation (Analytics, Post Manager, Media Repository)
+
+**Bug:** posts, Media Repository folders and the Analytics summary cards were scoped by *organization* only. Disconnecting an organization's Facebook Page and connecting a different one made the new Page inherit the old Page's calendar, folders and Total Posts / Published / Engagement cards.
+
+**Fix:** every post and media folder now carries the Facebook Page it was created under (`posts.fb_page_id`, `media_folders.fb_page_id`). All reads and writes are scoped to the Page *currently connected* to the workspace. The Page is always resolved server-side (`ConnectedPageResolver`), never taken from the client.
+
+- **Analytics:** summary cards, engagement sync, cache keys and the background sync are per Page; caches are dropped the moment a Page is connected/switched/disconnected.
+- **Post Manager:** calendar, moderation queue, scheduling-conflict detection, edit/delete/publish/approve/appeal all only see the connected Page's posts. A post can never be published to a Page other than the one it was created for (it fails instead).
+- **Media Repository:** folders/assets are per Page; attaching media from another Page's folder to a post is rejected.
+- **Reconnecting a Page** brings its data back. Posts/folders made while *no* Page was connected are claimed by the first Page connected afterwards.
+- **Frontend:** one shared connection state (`FacebookConnectionContext`) drives all screens; data is keyed by workspace + Page so nothing stale is ever shown.
+
+**Migration:** `backend/src/main/resources/db/2026-09-21_facebook_page_scoped_data.sql` (adds the columns and backfills existing rows: published posts from the Page id in their Facebook post id, everything else from the Page currently connected). It is idempotent and is also run automatically at backend startup (`spring.sql.init`), before Hibernate validates the schema, so nobody has to run it by hand — but it can also be pasted into the Supabase SQL editor.

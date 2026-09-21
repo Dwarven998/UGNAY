@@ -22,6 +22,11 @@ final class TtlCache<T> {
         this.ttlNanos = ttl.toNanos();
     }
 
+    /** Drops every cached value; loads already in flight still complete for their own callers. */
+    void clear() {
+        entries.clear();
+    }
+
     T get(String key, Supplier<T> loader) {
         long now = System.nanoTime();
         CompletableFuture<T> mine = new CompletableFuture<>();

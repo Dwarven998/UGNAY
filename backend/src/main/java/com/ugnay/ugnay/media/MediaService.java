@@ -3,6 +3,7 @@ package com.ugnay.ugnay.media;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -13,6 +14,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import com.ugnay.ugnay.caption.GeminiClient;
 import com.ugnay.ugnay.core.User;
+import com.ugnay.ugnay.org.ConnectedPageResolver;
 import com.ugnay.ugnay.org.Organization;
 import com.ugnay.ugnay.org.OrganizationPermissionService;
 import com.ugnay.ugnay.org.OrganizationRepository;
@@ -31,19 +33,19 @@ public class MediaService {
     private final MediaAssetRepository assetRepository;
     private final OrganizationRepository organizationRepository;
     private final OrganizationPermissionService organizationPermissionService;
+    private final ConnectedPageResolver connectedPageResolver;
     private final GeminiClient geminiClient;
     private final SupabaseStorageService supabaseStorageService;
     private final PostRepository postRepository;
 
-    /** Personal folders (orgId == null) list the caller's own; org folders list that org's, visible to approved members only. */
+    /**
+     * Personal folders (orgId == null) list the caller's own; org folders list that org's, visible to approved
+     * members only. Either way only the folders of the Facebook Page currently connected to that workspace are
+     * returned, so switching Pages never carries the previous Page's media over.
+     */
     public List<MediaController.FolderDto> getFolders(User user, UUID orgId) {
-        List<MediaFolder> folders;
-        if (orgId != null) {
-            organizationPermissionService.requireApprovedMember(user.getId(), orgId);
-            folders = folderRepository.findByOrganization_Id(orgId);
-        } else {
-            folders = folderRepository.findByUser(user);
-        }
+        String pageId = connectedPageResolver.currentPageId(user, orgId);
+        List<MediaFolder> folders = folderRepository.findInScope(orgId, user, pageId);
         return folders.stream()
             .map(f -> new MediaController.FolderDto(f.getId(), f.getName(), f.getAssets().size()))
             .collect(Collectors.toList());
@@ -52,12 +54,13 @@ public class MediaService {
     /** Personal folders can be created by anyone; org folders (org-wide directories) are officer/admin only. */
     @Transactional
     public MediaController.FolderDto createFolder(User user, String name, UUID orgId) {
-        MediaFolder.MediaFolderBuilder builder = MediaFolder.builder().name(name).user(user);
+        MediaFolder.MediaFolderBuilder builder = MediaFolder.builder().name(name).user(user)
+            .fbPageId(ConnectedPageResolver.normalize(user.getFbPageId()));
         if (orgId != null) {
             organizationPermissionService.requireOfficerOrAdmin(user.getId(), orgId);
             Organization org = organizationRepository.findById(orgId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Organization not found"));
-            builder.organization(org);
+            builder.organization(org).fbPageId(ConnectedPageResolver.normalize(org.getFbPageId()));
         }
         MediaFolder folder = builder.build();
         folderRepository.save(folder);
@@ -102,6 +105,9 @@ public class MediaService {
         MediaAsset asset = assetRepository.findById(assetId).orElse(null);
         if (asset == null) return;
         boolean isUploader = asset.getUser() != null && asset.getUser().getId().equals(user.getId());
+        if (asset.getFolder() != null) {
+            requireOnConnectedPage(asset.getFolder());
+        }
         if (!isUploader) {
             requireManageAccess(user, asset.getFolder());
         }
@@ -200,7 +206,19 @@ public class MediaService {
         } else if (folder.getUser() == null || !folder.getUser().getId().equals(user.getId())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Folder not found");
         }
+        requireOnConnectedPage(folder);
         return folder;
+    }
+
+    /**
+     * A folder belongs to the Facebook Page it was created under and is only reachable while that Page is the
+     * one connected to its workspace. Folders of a previously connected Page look exactly like missing ones.
+     */
+    private void requireOnConnectedPage(MediaFolder folder) {
+        String current = ConnectedPageResolver.pageIdOf(folder.getOrganization(), folder.getUser());
+        if (!Objects.equals(ConnectedPageResolver.normalize(folder.getFbPageId()), current)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Folder not found");
+        }
     }
 
     /** Org folders: officer/admin of the owning org. Personal folders: the owner. */
@@ -210,5 +228,6 @@ public class MediaService {
         } else if (folder.getUser() == null || !folder.getUser().getId().equals(user.getId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not allowed");
         }
+        requireOnConnectedPage(folder);
     }
 }

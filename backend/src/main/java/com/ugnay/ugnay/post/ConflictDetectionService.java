@@ -1,10 +1,14 @@
 package com.ugnay.ugnay.post;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
+
+import com.ugnay.ugnay.core.User;
+import com.ugnay.ugnay.org.Organization;
 
 import lombok.RequiredArgsConstructor;
 
@@ -16,12 +20,23 @@ public class ConflictDetectionService {
 
     private final PostRepository postRepository;
 
-    public Optional<PostConflictDto> findConflict(String orgName, Instant proposedScheduledAt, UUID excludePostId) {
+    /**
+     * Finds a post already scheduled close to the proposed time in the SAME workspace on the SAME Facebook
+     * Page. Posts of other Pages (or other organizations) are never considered, so a conflict can't reveal them.
+     */
+    public Optional<PostConflictDto> findConflict(User user, Organization organization, String pageId,
+                                                  Instant proposedScheduledAt, UUID excludePostId) {
+        if (pageId == null) {
+            return Optional.empty();
+        }
         Instant windowStart = proposedScheduledAt.minusSeconds(WINDOW_SECONDS);
         Instant windowEnd = proposedScheduledAt.plusSeconds(WINDOW_SECONDS);
 
-        return postRepository.findConflictingScheduledPosts(orgName, windowStart, windowEnd, excludePostId)
-            .stream()
+        List<Post> conflicts = organization != null
+            ? postRepository.findConflictingScheduledPostsForOrganization(organization.getId(), pageId, windowStart, windowEnd, excludePostId)
+            : postRepository.findConflictingScheduledPostsForUser(user, pageId, windowStart, windowEnd, excludePostId);
+
+        return conflicts.stream()
             .findFirst()
             .map(post -> new PostConflictDto(
                 post.getId(),

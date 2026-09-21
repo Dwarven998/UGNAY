@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { analyticsApi } from '../api/analyticsApi.ts';
 import type { ContentItem, DayPoint, Dashboard, FormatStat, Trend } from '../api/analyticsApi.ts';
 import { useOrganization } from '../../../context/useOrganization';
+import { useFacebookConnection } from '../../posts/hooks/useFacebookConnection';
 import { usePolling } from '../usePolling.ts';
 import TimeChart from '../components/TimeChart.tsx';
 import { Icon } from '../components/icons.tsx';
@@ -212,6 +213,9 @@ function OverviewCard({ data }: Readonly<{ data: Dashboard }>) {
 
 export default function Analytics() {
   const { activeOrgId, activeOrg, loading: orgLoading, memberships } = useOrganization();
+  // Insights belong to one Facebook Page: the key carries the Page, so switching Pages never shows (or
+  // reuses) another Page's numbers, and nothing is requested until the workspace's Page is known.
+  const { scopeKey, resolved: pageResolved } = useFacebookConnection();
   const [days, setDays] = useState(28);
   const [showAll, setShowAll] = useState(false);
 
@@ -219,8 +223,8 @@ export default function Analytics() {
   const isResolvingOrg = orgLoading || (memberships.length > 0 && !activeOrgId);
 
   const { data, error, syncedAt, syncing } = usePolling(
-    `${activeOrgId ?? 'personal'}|${days}`,
-    !isResolvingOrg,
+    `${scopeKey}|${days}`,
+    !isResolvingOrg && pageResolved,
     () => analyticsApi.getDashboard(activeOrgId, days),
   );
 
