@@ -9,7 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.media.MediaAsset;
-import com.ugnay.ugnay.org.OrganizationPermissionService;
+import com.ugnay.ugnay.org.ConnectedPageResolver;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,15 +21,16 @@ public class PostService {
 
     private final PostRepository postRepository;
     private final PostSchedulerService postSchedulerService;
-    private final OrganizationPermissionService organizationPermissionService;
+    private final ConnectedPageResolver connectedPageResolver;
 
+    /**
+     * Lists only the posts of the Facebook Page currently connected to this workspace (membership-checked).
+     * Posts made under a previously connected Page are not returned, so switching Pages never carries the
+     * old Page's calendar over to the new one.
+     */
     public List<PostController.PostDto> getPostsByUser(User user, UUID orgId) {
-        if (orgId != null) {
-            organizationPermissionService.requireApprovedMember(user.getId(), orgId);
-        }
-        List<Post> posts = orgId != null
-            ? postRepository.findByOrganization_IdOrderByCreatedAtDesc(orgId)
-            : postRepository.findByUserAndOrganizationIsNullOrderByCreatedAtDesc(user);
+        String pageId = connectedPageResolver.currentPageId(user, orgId);
+        List<Post> posts = postRepository.findInScope(orgId, user, pageId);
         return posts.stream()
             .map(this::toDto)
             .collect(Collectors.toList());

@@ -21,6 +21,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -36,8 +37,10 @@ import com.ugnay.ugnay.analytics.AnalyticsDtos.PostDetail;
 import com.ugnay.ugnay.analytics.AnalyticsDtos.SeriesPoint;
 import com.ugnay.ugnay.analytics.AnalyticsDtos.Trend;
 import com.ugnay.ugnay.core.User;
+import com.ugnay.ugnay.facebook.FacebookConnectionChangedEvent;
 import com.ugnay.ugnay.facebook.FacebookInsightsClient;
 import com.ugnay.ugnay.facebook.FacebookInsightsClient.GraphException;
+import com.ugnay.ugnay.org.ConnectedPageResolver;
 import com.ugnay.ugnay.org.Organization;
 import com.ugnay.ugnay.org.OrganizationPermissionService;
 import com.ugnay.ugnay.org.OrganizationRepository;
@@ -54,8 +57,10 @@ import lombok.extern.slf4j.Slf4j;
  *
  * Isolation: every request first resolves a {@link Scope} — either an organization the caller is an
  * approved member of, or the caller's own personal Page — and only ever talks to Facebook with THAT
- * scope's Page token, filtered to THAT Page's id. Cache keys include the scope, so one organization's
- * numbers can never be served to another.
+ * scope's Page token, filtered to THAT Page's id. The stored posts and engagement behind the summary cards
+ * are filtered to that same Page. Cache keys include the Page id, and every cache is dropped when a
+ * workspace's Page is connected, switched or disconnected, so one Page's numbers can never be served for
+ * another, not even for the few seconds a cached value would otherwise live.
  *
  * Consistency: the headline numbers, charts, top content and format breakdown of one response are all
  * derived from the same Graph snapshot, and the stored engagement rows are updated from it, so no two
@@ -114,6 +119,7 @@ public class AnalyticsDashboardService {
 
     // ───────────────────────── scope ─────────────────────────
 
+    /** {@code pageId} is null when no Page is connected; the key always embeds it, so each Page gets its own cache entries. */
     private record Scope(String key, UUID orgId, User user, String pageId, String token) {
         boolean connected() {
             return pageId != null && !pageId.isBlank() && token != null && !token.isBlank();
@@ -133,15 +139,28 @@ public class AnalyticsDashboardService {
             permissionService.requireApprovedMember(user.getId(), orgId);
             Organization org = organizationRepository.findById(orgId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Organization not found"));
-            return new Scope("org:" + orgId, orgId, user, org.getFbPageId(), org.getFbAccessToken());
+            String pageId = ConnectedPageResolver.normalize(org.getFbPageId());
+            return new Scope("org:" + orgId + "|page:" + pageId, orgId, user, pageId, org.getFbAccessToken());
         }
-        return new Scope("user:" + user.getId(), null, user, user.getFbPageId(), user.getFbAccessToken());
+        String pageId = ConnectedPageResolver.normalize(user.getFbPageId());
+        return new Scope("user:" + user.getId() + "|page:" + pageId, null, user, pageId, user.getFbAccessToken());
     }
 
+    /** Only the posts of this scope's connected Page, never those of a previously connected one. */
     private List<Post> scopedPosts(Scope scope) {
-        return scope.orgId() != null
-            ? postRepository.findByOrganization_IdOrderByCreatedAtDesc(scope.orgId())
-            : postRepository.findByUserAndOrganizationIsNullOrderByCreatedAtDesc(scope.user());
+        return postRepository.findInScope(scope.orgId(), scope.user(), scope.pageId());
+    }
+
+    /**
+     * A workspace's Page was connected, switched or disconnected: forget everything cached for it. Runs after the
+     * change is committed so a request can't re-cache the old Page between the eviction and the commit.
+     */
+    @TransactionalEventListener(fallbackExecution = true)
+    public void onFacebookConnectionChanged(FacebookConnectionChangedEvent event) {
+        scopeCache.clear();
+        liveCache.clear();
+        baselineCache.clear();
+        detailCache.clear();
     }
 
     // ───────────────────────── live Graph snapshot ─────────────────────────
@@ -491,9 +510,12 @@ public class AnalyticsDashboardService {
     }
 
     private Kpis kpis(Scope scope) {
+        if (scope.pageId() == null) {
+            return new Kpis(0, 0, 0, 0);
+        }
         PostTotals totals = scope.orgId() != null
-            ? postRepository.totalsForOrganization(scope.orgId())
-            : postRepository.totalsForPersonal(scope.user());
+            ? postRepository.totalsForOrganization(scope.orgId(), scope.pageId())
+            : postRepository.totalsForPersonal(scope.user(), scope.pageId());
         long published = totals.getPublishedPosts();
         long engagement = totals.getTotalEngagement();
         return new Kpis(totals.getTotalPosts(), published, engagement, published > 0 ? (double) engagement / published : 0);

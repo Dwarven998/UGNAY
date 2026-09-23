@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { ApiError } from '../../../api/axiosClient';
@@ -73,14 +73,35 @@ function getDefaultDraft(date?: Date | null, initial?: Partial<PostEditorDraft> 
   };
 }
 
+interface ScopedPosts { scopeKey: string; items: Post[] }
+const NO_POSTS: Post[] = [];
+
 export default function PostManager() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const { activeOrgId, activeOrg } = useOrganization();
-  const { connected: facebookConnected, refresh: refreshFacebookConnection } = useFacebookConnection();
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [pendingPosts, setPendingPosts] = useState<Post[]>([]);
+  const {
+    connected: facebookConnected,
+    refresh: refreshFacebookConnection,
+    resolved: facebookResolved,
+    scopeKey,
+  } = useFacebookConnection();
+  /* Every list is tagged with the workspace + Facebook Page it was loaded for and only shown while that
+     Page is still the connected one, so switching or disconnecting a Page instantly empties the calendar
+     instead of leaving the previous Page's posts on screen until the next fetch lands. */
+  const [postsState, setPostsState] = useState<ScopedPosts>({ scopeKey: '', items: [] });
+  const [pendingState, setPendingState] = useState<ScopedPosts>({ scopeKey: '', items: [] });
+  const posts = postsState.scopeKey === scopeKey ? postsState.items : NO_POSTS;
+  const pendingPosts = pendingState.scopeKey === scopeKey ? pendingState.items : NO_POSTS;
+  const scopeKeyRef = useRef(scopeKey);
+  useEffect(() => { scopeKeyRef.current = scopeKey; }, [scopeKey]);
+  const setPosts = useCallback((update: Post[] | ((current: Post[]) => Post[])) => {
+    setPostsState(prev => {
+      const base = prev.scopeKey === scopeKey ? prev.items : NO_POSTS;
+      return { scopeKey, items: typeof update === 'function' ? update(base) : update };
+    });
+  }, [scopeKey]);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [conflict, setConflict] = useState<PostConflict | null>(null);
   const [loading, setLoading] = useState(false);
@@ -92,6 +113,15 @@ export default function PostManager() {
   const [appealBusy, setAppealBusy] = useState(false);
   const [appealError, setAppealError] = useState('');
 
+  // Anything opened for a post of the previous Page must not stay open once the Page changes
+  // (adjusted during render, so the old Page's post is never painted for the new one).
+  const [openedForScope, setOpenedForScope] = useState(scopeKey);
+  if (openedForScope !== scopeKey) {
+    setOpenedForScope(scopeKey);
+    setPreviewPost(null);
+    setEditor(current => (current?.mode === 'edit' ? null : current));
+  }
+
   const canModerate = activeOrg?.role === 'ADMIN' || activeOrg?.role === 'OFFICER';
   // Personal workspace: the user manages their own connection. Inside an org: officer/admin only.
   const canManageFacebook = !activeOrgId || canModerate;
@@ -100,26 +130,31 @@ export default function PostManager() {
   const canManagePosts = !activeOrgId || canModerate;
 
   const loadPosts = useCallback(async () => {
+    if (!facebookResolved) return;
+    const requestedScope = scopeKey;
     try {
       const data = await postApi.getAll(activeOrgId);
-      setPosts(data);
+      // A slow response for a Page that has since been switched away from must not land on the new Page.
+      if (scopeKeyRef.current === requestedScope) setPostsState({ scopeKey: requestedScope, items: data });
     } catch (err) {
       console.error('Failed to fetch posts:', err);
     }
-  }, [activeOrgId]);
+  }, [activeOrgId, facebookResolved, scopeKey]);
 
   const loadPendingPosts = useCallback(async () => {
+    if (!facebookResolved) return;
+    const requestedScope = scopeKey;
     if (!activeOrgId || !canModerate) {
-      setPendingPosts([]);
+      setPendingState({ scopeKey: requestedScope, items: NO_POSTS });
       return;
     }
     try {
       const data = await postApi.getModerationQueue(activeOrgId);
-      setPendingPosts(data);
+      if (scopeKeyRef.current === requestedScope) setPendingState({ scopeKey: requestedScope, items: data });
     } catch (err) {
       console.error('Failed to fetch moderation queue:', err);
     }
-  }, [activeOrgId, canModerate]);
+  }, [activeOrgId, canModerate, facebookResolved, scopeKey]);
 
   useEffect(() => {
     loadPosts();

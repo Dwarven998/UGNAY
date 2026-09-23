@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import {useAuth } from './context/useAuth';
 import { AuthProvider } from './context/AuthContext';
 import { OrganizationProvider } from './context/OrganizationContext';
+import { FacebookConnectionProvider } from './context/FacebookConnectionContext';
 import Dashboard from './features/dashboard/UnifiedManagementDashboard.tsx';
 import LoginPage from './features/loginform/pages/LoginPage.tsx';
 import RegistrationForm from './features/registrationform/pages/RegisterPage.tsx';
@@ -25,6 +26,7 @@ export default function App() {
   return (
     <AuthProvider>
       <OrganizationProvider>
+      <FacebookConnectionProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
@@ -42,6 +44,7 @@ export default function App() {
           </Route>
         </Routes>
       </BrowserRouter>
+      </FacebookConnectionProvider>
       </OrganizationProvider>
     </AuthProvider>
   );

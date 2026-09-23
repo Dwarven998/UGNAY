@@ -9,8 +9,8 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 
 import com.ugnay.ugnay.core.User;
+import com.ugnay.ugnay.org.ConnectedPageResolver;
 import com.ugnay.ugnay.org.Organization;
-import com.ugnay.ugnay.org.OrganizationPermissionService;
 import com.ugnay.ugnay.org.OrganizationRepository;
 import com.ugnay.ugnay.post.EngagementSyncService;
 import com.ugnay.ugnay.post.Post;
@@ -27,7 +27,7 @@ public class AnalyticsService {
     private final PostRepository postRepository;
     private final PostEngagementRepository engagementRepository;
     private final OrganizationRepository organizationRepository;
-    private final OrganizationPermissionService organizationPermissionService;
+    private final ConnectedPageResolver connectedPageResolver;
     private final EngagementSyncService engagementSyncService;
 
     /** Answers from stored engagement right away; a fresh Facebook sync runs in the background for the next poll. */
@@ -96,15 +96,16 @@ public class AnalyticsService {
     /**
      * Resolves the posts visible for this analytics request: either a specific organization
      * (requires the caller to be an approved member of THAT organization) or the caller's own
-     * personal, non-org posts. This is the sole gate keeping one organization's analytics from
-     * ever being computed from another organization's — or another user's — posts.
+     * personal, non-org posts, limited to the Facebook Page currently connected to that workspace.
+     * This is the sole gate keeping one organization's or Page's analytics from ever being computed
+     * from another organization's, another Page's, or another user's posts.
      */
     private List<Post> resolveScopedPosts(User user, UUID orgId) {
-        if (orgId != null) {
-            organizationPermissionService.requireApprovedMember(user.getId(), orgId);
-            return postRepository.findByOrganization_IdOrderByCreatedAtDesc(orgId);
+        String pageId = connectedPageResolver.currentPageId(user, orgId);
+        if (pageId == null) {
+            return List.of();
         }
-        return postRepository.findByUserAndOrganizationIsNullOrderByCreatedAtDesc(user);
+        return postRepository.findInScope(orgId, user, pageId);
     }
 
     private List<PostEngagement> engagementsFor(List<Post> posts) {
@@ -121,7 +122,10 @@ public class AnalyticsService {
         String accessToken = orgId != null
             ? organizationRepository.findById(orgId).map(Organization::getFbAccessToken).orElse(null)
             : user.getFbAccessToken();
-        String scopeKey = orgId != null ? "org:" + orgId : "user:" + user.getId();
+        String pageId = ConnectedPageResolver.normalize(orgId != null
+            ? organizationRepository.findById(orgId).map(Organization::getFbPageId).orElse(null)
+            : user.getFbPageId());
+        String scopeKey = (orgId != null ? "org:" + orgId : "user:" + user.getId()) + "|page:" + pageId;
         engagementSyncService.syncPostsInBackground(scopeKey, posts, accessToken);
     }
 

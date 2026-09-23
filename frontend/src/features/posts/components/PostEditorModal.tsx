@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Post, PostConflict, MediaAsset, MediaFolder } from '../../../types';
 import ConflictAlertBanner from './ConflictAlertBanner';
 import DateTimePickerPanel from './DateTimePickerPanel';
 import { mediaApi } from '../../media/api/mediaApi';
+import { useOrganization } from '../../../context/useOrganization';
+import { useFacebookConnection } from '../hooks/useFacebookConnection';
 
 export interface PostEditorDraft {
   caption: string;
@@ -50,6 +52,10 @@ export default function PostEditorModal({
   onClearConflict,
 }: PostEditorModalProps) {
   const suggestedTime = useMemo(() => getDefaultSuggestedTime(), []);
+  const { activeOrgId } = useOrganization();
+  const { scopeKey, resolved: pageResolved } = useFacebookConnection();
+  const scopeKeyRef = useRef(scopeKey);
+  useEffect(() => { scopeKeyRef.current = scopeKey; }, [scopeKey]);
   const [caption, setCaption] = useState('');
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [tone, setTone] = useState('FORMAL');
@@ -106,19 +112,37 @@ export default function PostEditorModal({
     setPickerOpen(false);
   }, [initialDraft, initialPost, open, suggestedTime]);
 
+  // The picker only ever offers the active workspace's Media Repository for the connected Facebook Page.
+  // When the Page changes, whatever the picker was showing belongs to the previous Page and is dropped
+  // (adjusted during render, so the old Page's folders are never painted for the new one).
+  const [pickerScope, setPickerScope] = useState(scopeKey);
+  if (pickerScope !== scopeKey) {
+    setPickerScope(scopeKey);
+    setFolders([]);
+    setSelectedFolder(null);
+    setAssets([]);
+  }
+
   // Load folders when picker opens
   useEffect(() => {
-    if (!pickerOpen) return;
-    mediaApi.getFolders().then(setFolders).catch(console.error);
-  }, [pickerOpen]);
+    if (!pickerOpen || !pageResolved) return;
+    let cancelled = false;
+    mediaApi.getFolders(activeOrgId)
+      .then(data => { if (!cancelled) setFolders(data); })
+      .catch(console.error);
+    return () => { cancelled = true; };
+  }, [pickerOpen, pageResolved, activeOrgId, scopeKey]);
 
   // Load assets when a folder is selected in picker
   const loadPickerAssets = async (folder: MediaFolder) => {
+    const requestedScope = scopeKey;
     setSelectedFolder(folder);
     setLoadingAssets(true);
     try {
       const data = await mediaApi.getAssets(folder.id);
-      setAssets(data);
+      if (scopeKeyRef.current === requestedScope) setAssets(data);
+    } catch (err) {
+      console.error('Failed to load folder assets:', err);
     } finally {
       setLoadingAssets(false);
     }

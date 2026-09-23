@@ -39,6 +39,14 @@ public class Post {
     @JoinColumn(name = "organization_id")
     private Organization organization;
 
+    /**
+     * The Facebook Page this post was created under. Every read and write is scoped to the Page currently
+     * connected for the post's organization (or author), so a post never surfaces under a different Page.
+     * Null only for posts made while no Page was connected; the first Page connected claims them.
+     */
+    @Column(name = "fb_page_id")
+    private String fbPageId;
+
     @Column(nullable = false, length = 2000)
     private String caption;
 

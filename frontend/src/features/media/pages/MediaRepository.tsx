@@ -1,17 +1,28 @@
 // features/media/pages/MediaRepository.tsx
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ChangeEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { mediaApi } from '../api/mediaApi.ts';
 import { useOrganization } from '../../../context/useOrganization';
+import { useFacebookConnection } from '../../posts/hooks/useFacebookConnection';
 import type { MediaFolder, MediaAsset, MediaRecommendation } from '../../../types';
 
 const MAX_CAPTION_IMAGES = 6; // mirror GeminiClient.MAX_CAPTION_IMAGES
 
+/**
+ * The Media Repository belongs to one Facebook Page. Keying the screen by workspace + Page remounts it whenever the
+ * Page changes, which discards every folder, asset, selection and in-flight result of the previous Page at once.
+ */
 export default function MediaRepository() {
+  const { scopeKey } = useFacebookConnection();
+  return <MediaRepositoryContent key={scopeKey} />;
+}
+
+function MediaRepositoryContent() {
   const navigate = useNavigate();
   const { activeOrgId, activeOrg } = useOrganization();
+  const { resolved: pageResolved } = useFacebookConnection();
   const [folders, setFolders] = useState<MediaFolder[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<MediaFolder | null>(null);
   const [assets, setAssets] = useState<MediaAsset[]>([]);
@@ -34,19 +45,20 @@ export default function MediaRepository() {
   // Only officers/admins may create directories inside an org's shared Media Repository.
   const canCreateFolder = !activeOrgId || activeOrg?.role === 'ADMIN' || activeOrg?.role === 'OFFICER';
 
-  const loadFolders = async () => {
-    const data = await mediaApi.getFolders(activeOrgId);
-    setFolders(data);
-  };
+  // This screen is remounted per workspace + Facebook Page (see MediaRepository above), so a folder list
+  // loaded here can only ever belong to the Page that is currently connected.
+  const loadFolders = useCallback(async () => {
+    try {
+      setFolders(await mediaApi.getFolders(activeOrgId));
+    } catch (err) {
+      console.error('Failed to load folders:', err);
+    }
+  }, [activeOrgId]);
 
   useEffect(() => {
-    setSelectedFolder(null);
-    setAssets([]);
-    setSelectMode(false);
-    setSelectedIds(new Set());
-    loadFolders();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeOrgId]);
+    if (!pageResolved) return;
+    void loadFolders();
+  }, [pageResolved, loadFolders]);
 
   const loadAssets = async (folder: MediaFolder) => {
     setSelectedFolder(folder);
