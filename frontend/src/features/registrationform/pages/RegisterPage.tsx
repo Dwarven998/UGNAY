@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from   '../../../context/useAuth';
+import { AuthFeatureIcon, AuthProductPreview, AuthenticationBackground } from '../../loginform/components/AuthVisuals';
 
 function RegistrationFormContent() {
   const [email, setEmail] = useState('');
@@ -54,11 +55,9 @@ function RegistrationFormContent() {
           {/* Logo - Anchored absolute top left */}
           <div className="logo-section">
             <div className="logo-icon">
-              <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="white" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
-              </svg>
+              <img className="brand-mark" src="/ugnay_logo_ui.png" alt="" aria-hidden="true" />
             </div>
-            <span className="logo-text">UGNAY</span>
+            <span className="logo-text">Ugnay</span>
           </div>
 
           {/* Animated Background Mesh/Glows */}
@@ -66,6 +65,7 @@ function RegistrationFormContent() {
           <div className="glow-orb orb-2"></div>
           <div className="glow-orb orb-3"></div>
           <div className="noise-overlay"></div>
+          <AuthProductPreview />
 
           {/* Content Glass Card */}
           <div className="glass-card">
@@ -76,7 +76,7 @@ function RegistrationFormContent() {
               </div>
 
               <h2 className="hero-title">
-                Automate your <br />social presence today.
+                Automate your <br /><span className="hero-accent">social presence</span> today.
               </h2>
               <p className="hero-subtitle">
                 Set up your organization's workspace to generate captions, schedule posts, and unlock insights instantly.
@@ -90,9 +90,7 @@ function RegistrationFormContent() {
                 ].map((label, index) => (
                   <div key={label} className="feature-item" style={{ animationDelay: `${index * 0.15}s` }}>
                     <div className="feature-check">
-                      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
+                      <AuthFeatureIcon index={index} />
                     </div>
                     <span>{label}</span>
                   </div>
@@ -106,11 +104,13 @@ function RegistrationFormContent() {
         {/* ── RIGHT PANEL ──────────────────────── */}
         <div className="right-panel">
           {/* Ambient Right Background Effects */}
-          <div className="right-bg-pattern"></div>
-          <div className="right-glow-orb right-orb-1"></div>
-          <div className="right-glow-orb right-orb-2"></div>
+          <AuthenticationBackground />
 
           <div className="form-container">
+            <div className="auth-card-brand">
+              <img src="/ugnay_logo_ui.png" alt="" aria-hidden="true" />
+              <span>Ugnay</span>
+            </div>
             <div className="form-header stagger-1">
               <h1 className="form-title">Create an Account</h1>
               <p className="form-subtitle">Register your organization to get started</p>
@@ -342,7 +342,8 @@ function RegistrationFormContent() {
           align-items: center; 
           gap: 12px; 
         }
-        .logo-icon { width: 44px; height: 44px; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3); }
+        .logo-icon { width: 44px; height: 44px; background: transparent; border-radius: 0; display: flex; align-items: center; justify-content: center; }
+        .brand-mark { width: 100%; height: 100%; object-fit: contain; }
         .logo-text { color: #fff; font-size: 22px; font-weight: 700; letter-spacing: 0.05em; }
 
         .ai-badge { display: inline-flex; align-items: center; gap: 8px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.15); padding: 8px 16px; border-radius: 30px; color: #e2e8f0; font-size: 13px; font-weight: 500; margin-bottom: 1.5rem; }
@@ -368,25 +369,6 @@ function RegistrationFormContent() {
           overflow-y: auto;
           overflow-x: hidden;
         }
-
-        .right-bg-pattern {
-          position: absolute;
-          inset: 0;
-          background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
-          background-size: 32px 32px;
-          opacity: 0.35;
-          pointer-events: none;
-        }
-        .right-glow-orb {
-          position: absolute;
-          border-radius: 50%;
-          filter: blur(100px);
-          opacity: 0.6;
-          pointer-events: none;
-          animation: float 12s ease-in-out infinite;
-        }
-        .right-orb-1 { width: 450px; height: 450px; background: rgba(59, 130, 246, 0.08); top: -10%; right: -10%; }
-        .right-orb-2 { width: 500px; height: 500px; background: rgba(14, 165, 233, 0.06); bottom: -20%; left: -10%; animation-delay: -5s; }
 
         .form-container { 
           position: relative;

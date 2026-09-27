@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../../context/useAuth';
+import { AuthFeatureIcon, AuthProductPreview, AuthenticationBackground } from './AuthVisuals';
 
 function LoginFormContent() {
   const [email, setEmail] = useState('');
@@ -47,11 +48,9 @@ function LoginFormContent() {
           {/* Logo - Moved to absolute top left */}
           <div className="logo-section">
             <div className="logo-icon">
-              <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="white" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
-              </svg>
+              <img className="brand-mark" src="/ugnay_logo_ui.png" alt="" aria-hidden="true" />
             </div>
-            <span className="logo-text">UGNAY</span>
+            <span className="logo-text">Ugnay</span>
           </div>
 
           {/* Animated Background Mesh/Glows */}
@@ -59,6 +58,7 @@ function LoginFormContent() {
           <div className="glow-orb orb-2"></div>
           <div className="glow-orb orb-3"></div>
           <div className="noise-overlay"></div>
+          <AuthProductPreview />
 
           {/* Content Glass Card */}
           <div className="glass-card">
@@ -70,7 +70,7 @@ function LoginFormContent() {
               </div>
 
               <h2 className="hero-title">
-                Your organization's social media,<br />on autopilot.
+                Your organization's<br /><span className="hero-accent">social media,</span><br />on autopilot.
               </h2>
               <p className="hero-subtitle">
                 Generate intelligent captions, automate your Facebook scheduling, and unlock engagement insights from one unified dashboard.
@@ -84,9 +84,7 @@ function LoginFormContent() {
                 ].map((label, index) => (
                   <div key={label} className="feature-item" style={{ animationDelay: `${index * 0.15}s` }}>
                     <div className="feature-check">
-                      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
+                        <AuthFeatureIcon index={index} />
                     </div>
                     <span>{label}</span>
                   </div>
@@ -99,11 +97,13 @@ function LoginFormContent() {
         {/* ── RIGHT PANEL ──────────────────────── */}
         <div className="right-panel">
           {/* Ambient Right Background Effects */}
-          <div className="right-bg-pattern"></div>
-          <div className="right-glow-orb right-orb-1"></div>
-          <div className="right-glow-orb right-orb-2"></div>
+          <AuthenticationBackground />
 
           <div className="form-container">
+            <div className="auth-card-brand">
+              <img src="/ugnay_logo_ui.png" alt="" aria-hidden="true" />
+              <span>Ugnay</span>
+            </div>
             <div className="form-header stagger-1">
               <h1 className="form-title">Welcome back</h1>
               <p className="form-subtitle">Sign in to your organization account to continue</p>

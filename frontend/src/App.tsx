@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import {useAuth } from './context/useAuth';
 import { AuthProvider } from './context/AuthContext';
@@ -23,11 +24,36 @@ function ProtectedRoute({ children }: Readonly<{ children: ReactNode }>) {
 }
 
 export default function App() {
+  const [splashStage, setSplashStage] = useState<'visible' | 'leaving' | 'hidden'>('visible');
+
+  useEffect(() => {
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const fadeTimer = window.setTimeout(() => setSplashStage('leaving'), reducedMotion ? 100 : 560);
+    const removeTimer = window.setTimeout(() => setSplashStage('hidden'), reducedMotion ? 130 : 820);
+
+    return () => {
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(removeTimer);
+    };
+  }, []);
+
   return (
     <AuthProvider>
       <OrganizationProvider>
       <FacebookConnectionProvider>
       <BrowserRouter>
+        {splashStage !== 'hidden' && (
+          <div
+            className={`app-splash${splashStage === 'leaving' ? ' app-splash--leaving' : ''}`}
+            role="status"
+            aria-label="Loading Ugnay"
+          >
+            <div className="app-splash__brand">
+              <img src="/ugnay_logo_ui.png" alt="" aria-hidden="true" />
+            </div>
+            <div className="app-splash__loader" aria-hidden="true"><span /></div>
+          </div>
+        )}
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegistrationForm />} />

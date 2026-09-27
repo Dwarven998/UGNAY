@@ -70,7 +70,8 @@ export default function LoginPage() {
           align-items: center; 
           gap: 12px; 
         }
-        .logo-icon { width: 44px; height: 44px; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3); }
+        .logo-icon { width: 44px; height: 44px; background: transparent; border-radius: 0; display: flex; align-items: center; justify-content: center; }
+        .brand-mark { width: 100%; height: 100%; object-fit: contain; }
         .logo-text { color: #fff; font-size: 22px; font-weight: 700; letter-spacing: 0.05em; }
 
         .ai-badge { display: inline-flex; align-items: center; gap: 8px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.15); padding: 8px 16px; border-radius: 30px; color: #e2e8f0; font-size: 13px; font-weight: 500; margin-bottom: 1.5rem; }
@@ -96,26 +97,6 @@ export default function LoginPage() {
           overflow-y: auto;
           overflow-x: hidden;
         }
-
-        /* Ambient effects */
-        .right-bg-pattern {
-          position: absolute;
-          inset: 0;
-          background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
-          background-size: 32px 32px;
-          opacity: 0.35;
-          pointer-events: none;
-        }
-        .right-glow-orb {
-          position: absolute;
-          border-radius: 50%;
-          filter: blur(100px);
-          opacity: 0.6;
-          pointer-events: none;
-          animation: float 12s ease-in-out infinite;
-        }
-        .right-orb-1 { width: 450px; height: 450px; background: rgba(59, 130, 246, 0.08); top: -10%; right: -10%; }
-        .right-orb-2 { width: 500px; height: 500px; background: rgba(14, 165, 233, 0.06); bottom: -20%; left: -10%; animation-delay: -5s; }
 
         .form-container { 
           position: relative;
