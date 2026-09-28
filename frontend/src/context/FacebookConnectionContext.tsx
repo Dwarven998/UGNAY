@@ -42,6 +42,35 @@ const EMPTY_STATE: FacebookConnectionState = { connected: false, pageId: null, p
 
 interface OrgConnection { orgId: string; state: FacebookConnectionState }
 
+/*
+ * The last status seen for each organization is remembered, so on a reload the screens can start loading
+ * that Page's data at once instead of waiting for the status request first. The status is still refreshed
+ * every time, and a changed Page changes the scopeKey, which makes every screen reload for the new Page.
+ */
+const STATUS_CACHE_KEY = 'ugnay_fb_status_cache';
+
+function readStatusCache(orgId: string): FacebookConnectionState | null {
+  try {
+    const raw = localStorage.getItem(STATUS_CACHE_KEY);
+    const all = raw ? (JSON.parse(raw) as Record<string, FacebookConnectionState>) : null;
+    const state = all?.[orgId];
+    return state && typeof state.connected === 'boolean' ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStatusCache(orgId: string, state: FacebookConnectionState) {
+  try {
+    const raw = localStorage.getItem(STATUS_CACHE_KEY);
+    const all = raw ? (JSON.parse(raw) as Record<string, FacebookConnectionState>) : {};
+    all[orgId] = state;
+    localStorage.setItem(STATUS_CACHE_KEY, JSON.stringify(all));
+  } catch {
+    // ignore: only a start-up shortcut
+  }
+}
+
 /**
  * The one place that knows which Facebook Page the active workspace is connected to: the active
  * organization's Page when one is selected, otherwise the legacy per-user personal Page.
@@ -52,7 +81,7 @@ interface OrgConnection { orgId: string; state: FacebookConnectionState }
  */
 export function FacebookConnectionProvider({ children }: Readonly<{ children: ReactNode }>) {
   const { user, refreshUserProfile } = useAuth();
-  const { activeOrgId } = useOrganization();
+  const { activeOrgId, loading: orgLoading } = useOrganization();
   const [orgConnection, setOrgConnection] = useState<OrgConnection | null>(null);
   const [loading, setLoading] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
@@ -63,19 +92,18 @@ export function FacebookConnectionProvider({ children }: Readonly<{ children: Re
     setLoading(true);
     try {
       const { data } = await axiosClient.get<FacebookStatusResponse>(`/api/auth/facebook/status?orgId=${requestedOrgId}`);
-      setOrgConnection({
-        orgId: requestedOrgId,
-        state: {
-          connected: data.facebookConnected,
-          pageId: data.facebookPageId,
-          pageName: data.facebookPageName,
-          pagePictureUrl: data.facebookPagePictureUrl,
-        },
-      });
+      const state: FacebookConnectionState = {
+        connected: data.facebookConnected,
+        pageId: data.facebookPageId,
+        pageName: data.facebookPageName,
+        pagePictureUrl: data.facebookPagePictureUrl,
+      };
+      writeStatusCache(requestedOrgId, state);
+      setOrgConnection({ orgId: requestedOrgId, state });
     } catch (err) {
       console.error('Failed to load Facebook connection status:', err);
-      // Better "not connected" for this organization than the previous organization's Page.
-      setOrgConnection({ orgId: requestedOrgId, state: EMPTY_STATE });
+      // The last status known for this organization, else "not connected" — never the previous organization's Page.
+      setOrgConnection({ orgId: requestedOrgId, state: readStatusCache(requestedOrgId) ?? EMPTY_STATE });
     } finally {
       setLoading(false);
     }
@@ -83,11 +111,15 @@ export function FacebookConnectionProvider({ children }: Readonly<{ children: Re
 
   useEffect(() => { void loadOrgStatus(); }, [loadOrgStatus]);
 
-  const orgResolved = !activeOrgId || orgConnection?.orgId === activeOrgId;
+  const cachedStatus = useMemo(() => (activeOrgId ? readStatusCache(activeOrgId) : null), [activeOrgId]);
+  const liveStatus = activeOrgId && orgConnection?.orgId === activeOrgId ? orgConnection.state : null;
+  // Nothing Page-scoped may load until the active workspace itself is settled, or it would briefly load
+  // (and discard) the personal workspace's data on every start-up.
+  const orgResolved = !orgLoading && (!activeOrgId || liveStatus !== null || cachedStatus !== null);
 
   const state: FacebookConnectionState = useMemo(() => {
     if (activeOrgId) {
-      return orgConnection?.orgId === activeOrgId ? orgConnection.state : EMPTY_STATE;
+      return liveStatus ?? cachedStatus ?? EMPTY_STATE;
     }
     return {
       connected: user?.facebookConnected ?? false,
@@ -95,7 +127,7 @@ export function FacebookConnectionProvider({ children }: Readonly<{ children: Re
       pageName: user?.facebookPageName ?? null,
       pagePictureUrl: user?.facebookPagePictureUrl ?? null,
     };
-  }, [activeOrgId, orgConnection, user]);
+  }, [activeOrgId, liveStatus, cachedStatus, user]);
 
   const refresh = useCallback(async () => {
     if (activeOrgId) await loadOrgStatus();
@@ -119,7 +151,10 @@ export function FacebookConnectionProvider({ children }: Readonly<{ children: Re
       const path = activeOrgId ? `/api/auth/facebook?orgId=${activeOrgId}` : '/api/auth/facebook';
       await axiosClient.delete(path);
       // Everything Page-scoped goes blank right away; the refresh then confirms the new state.
-      if (activeOrgId) setOrgConnection({ orgId: activeOrgId, state: EMPTY_STATE });
+      if (activeOrgId) {
+        writeStatusCache(activeOrgId, EMPTY_STATE);
+        setOrgConnection({ orgId: activeOrgId, state: EMPTY_STATE });
+      }
       await refresh();
     } finally {
       setIsBusy(false);

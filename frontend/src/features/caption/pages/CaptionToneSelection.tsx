@@ -19,6 +19,9 @@ export default function CaptionToneSelection() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isRewriting, setIsRewriting] = useState(false);
   const [isGeneratingHashtags, setIsGeneratingHashtags] = useState(false);
+  const [generateError, setGenerateError] = useState('');
+  const [refineError, setRefineError] = useState('');
+  const [hashtagError, setHashtagError] = useState('');
 
   const isMulti = imageUrls.length > 1;
 
@@ -67,6 +70,7 @@ export default function CaptionToneSelection() {
   const handleGenerate = async () => {
     if (imageUrls.length === 0) return;
     setIsGenerating(true);
+    setGenerateError('');
     try {
       const result = isMulti
         ? await mediaApi.generateCaptionFromAssets(assetIds, selectedTone)
@@ -74,8 +78,8 @@ export default function CaptionToneSelection() {
       setCaptions(result);
       setSelectedCaption('');
       setHashtags([]);
-    } catch (err: any) {
-      alert(err.message || 'Caption generation failed. Check your Gemini API key.');
+    } catch (err) {
+      setGenerateError(err instanceof Error && err.message ? err.message : 'Caption generation failed. Check your Gemini API key.');
     } finally {
       setIsGenerating(false);
     }
@@ -84,12 +88,13 @@ export default function CaptionToneSelection() {
   const handleRewrite = async (tone: Tone) => {
     if (!selectedCaption) return;
     setIsRewriting(true);
+    setRefineError('');
     setSelectedTone(tone);
     try {
       const rewritten = await captionApi.rewrite(selectedCaption, tone);
       setSelectedCaption(rewritten);
-    } catch (err: any) {
-      alert(err.message || 'Failed to rewrite caption.');
+    } catch (err) {
+      setRefineError(err instanceof Error && err.message ? err.message : 'Failed to rewrite caption.');
     } finally {
       setIsRewriting(false);
     }
@@ -98,20 +103,20 @@ export default function CaptionToneSelection() {
   const handleHashtags = async () => {
     if (!selectedCaption) return;
     setIsGeneratingHashtags(true);
+    setHashtagError('');
     try {
       const tags = await captionApi.hashtags(selectedCaption);
       setHashtags(tags);
-    } catch (err: any) {
-      alert(err.message || 'Failed to generate hashtags.');
+    } catch (err) {
+      setHashtagError(err instanceof Error && err.message ? err.message : 'Failed to generate hashtags.');
     } finally {
       setIsGeneratingHashtags(false);
     }
   };
 
   const handleSendToScheduler = () => {
-    // NOTE: Post Scheduler currently posts a single image. For a multi-image caption,
-    // we carry the full set through but default the schedulable image to the first one —
-    // revisit this once/if the scheduler supports carousel posts.
+    // Hands the caption, hashtags and every selected image to the post composer, which
+    // opens on its Preview step (see composerHandoff.readComposerPrefill).
     sessionStorage.setItem('caption_draft', JSON.stringify({
       caption: selectedCaption,
       hashtags,
@@ -121,7 +126,7 @@ export default function CaptionToneSelection() {
       assetIds,
       tone: selectedTone,
     }));
-    navigate('/posts');
+    navigate('/create');
   };
 
   if (imageUrls.length === 0) {
@@ -229,6 +234,7 @@ export default function CaptionToneSelection() {
                   </>
                 )}
               </button>
+              {generateError && <p className="cts-inline-error" role="alert">{generateError}</p>}
             </div>
           </div>
         </section>
@@ -258,7 +264,7 @@ export default function CaptionToneSelection() {
               {selectedCaption && (
                 <div className="cts-refine" style={{ animation: 'fadeUp 0.3s cubic-bezier(0.16,1,0.3,1)' }}>
                   <div className="cts-refine-header">
-                    <label className="cts-refine-label">
+                    <label className="cts-refine-label" htmlFor="cts-caption-editor">
                       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                       </svg>
@@ -282,6 +288,7 @@ export default function CaptionToneSelection() {
 
                   <div className="cts-textarea-wrap">
                     <textarea
+                      id="cts-caption-editor"
                       value={selectedCaption}
                       onChange={e => setSelectedCaption(e.target.value)}
                       rows={5}
@@ -297,6 +304,7 @@ export default function CaptionToneSelection() {
                       </div>
                     )}
                   </div>
+                  {refineError && <p className="cts-inline-error" role="alert">{refineError}</p>}
                 </div>
               )}
             </div>
@@ -329,6 +337,7 @@ export default function CaptionToneSelection() {
               </button>
             </div>
             <div className="cts-section-body">
+              {hashtagError && <p className="cts-inline-error" role="alert">{hashtagError}</p>}
               {hashtags.length > 0 ? (
                 <div className="cts-hashtag-pills">
                   {hashtags.map((tag, index) => (
@@ -346,7 +355,7 @@ export default function CaptionToneSelection() {
                   <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
-                  Send to Post Scheduler
+                  Continue to Create Post
                 </button>
               </div>
             </div>
@@ -742,6 +751,19 @@ const ctsStyles = `
     transform: translateY(-1px);
     box-shadow: 0 8px 24px rgba(12,68,124,0.3);
   }
+
+  .cts-inline-error {
+    margin: 12px 0 0;
+    padding: 10px 14px;
+    border: 1px solid #fecaca;
+    border-radius: 10px;
+    background: #fef2f2;
+    color: #991b1b;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.5;
+  }
+  .cts-section-body > .cts-inline-error { margin: 0 0 16px; }
 
   /* Missing state */
   .cts-missing {

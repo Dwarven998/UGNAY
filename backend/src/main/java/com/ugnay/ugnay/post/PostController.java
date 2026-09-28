@@ -2,6 +2,7 @@ package com.ugnay.ugnay.post;
 
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.http.ResponseEntity;
@@ -26,11 +27,19 @@ import lombok.RequiredArgsConstructor;
 public class PostController {
 
     private final PostService postService;
+    private final PublishedPictureService publishedPictureService;
 
     @GetMapping
     public ResponseEntity<List<PostDto>> getPosts(@AuthenticationPrincipal User user,
                                                   @RequestParam(required = false) UUID orgId) {
         return ResponseEntity.ok(postService.getPostsByUser(user, orgId));
+    }
+
+    /** Facebook's picture for published posts whose own media was released after publishing (post id → URL). */
+    @GetMapping("/pictures")
+    public ResponseEntity<Map<UUID, String>> getPublishedPictures(@AuthenticationPrincipal User user,
+                                                                  @RequestParam(required = false) UUID orgId) {
+        return ResponseEntity.ok(publishedPictureService.picturesFor(user, orgId));
     }
 
     @PostMapping

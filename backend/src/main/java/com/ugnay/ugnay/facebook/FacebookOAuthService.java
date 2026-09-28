@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -17,6 +18,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import org.springframework.web.util.UriComponentsBuilder;
 
 import com.ugnay.ugnay.core.JwtUtil;
+import com.ugnay.ugnay.core.PooledHttpConnector;
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.core.UserRepository;
 import com.ugnay.ugnay.media.MediaFolderRepository;
@@ -63,7 +65,22 @@ public class FacebookOAuthService {
     private final PostRepository postRepository;
     private final MediaFolderRepository mediaFolderRepository;
     private final ApplicationEventPublisher eventPublisher;
-    private final WebClient webClient = WebClient.builder().build();
+    private final WebClient webClient = WebClient.builder()
+            .clientConnector(PooledHttpConnector.create("facebook-oauth", GRAPH_REQUEST_TIMEOUT))
+            .build();
+
+    /*
+     * The connection status (asked by every screen before it loads Page-scoped data, and by /api/auth/me) only
+     * needs the Page's name and picture, which rarely change. They are cached per Page and looked up with a short
+     * timeout; a failed lookup falls back to the last known details, so a slow Graph response never holds up a page.
+     */
+    private static final long PAGE_DETAILS_TTL_MS = 10L * 60 * 1000;
+    private static final Duration PAGE_DETAILS_TIMEOUT = Duration.ofSeconds(4);
+
+    private record CachedPageDetails(FacebookPageDetails details, long fetchedAt) {
+    }
+
+    private final Map<String, CachedPageDetails> pageDetailsCache = new ConcurrentHashMap<>();
 
     /**
      * Builds the Facebook OAuth URL. When orgId is present, the resulting Page
@@ -166,12 +183,26 @@ public class FacebookOAuthService {
         if (pageId == null || pageId.isBlank() || accessToken == null || accessToken.isBlank()) {
             return new FacebookConnectionDetails(false, null, null, null);
         }
+        long now = System.currentTimeMillis();
+        CachedPageDetails cached = pageDetailsCache.get(pageId);
+        if (cached != null && now - cached.fetchedAt() < PAGE_DETAILS_TTL_MS) {
+            return toConnectionDetails(pageId, cached.details());
+        }
         try {
             FacebookPageDetails page = fetchPageDetails(pageId, accessToken);
-            return new FacebookConnectionDetails(true, page.pageId(), page.pageName(), page.pagePictureUrl());
+            pageDetailsCache.put(pageId, new CachedPageDetails(page, now));
+            return toConnectionDetails(pageId, page);
         } catch (RuntimeException ex) {
-            return new FacebookConnectionDetails(true, pageId, null, null);
+            log.warn("Could not refresh Facebook Page details for {}: {}", pageId, ex.getMessage());
+            return cached != null
+                    ? toConnectionDetails(pageId, cached.details())
+                    : new FacebookConnectionDetails(true, pageId, null, null);
         }
+    }
+
+    private FacebookConnectionDetails toConnectionDetails(String pageId, FacebookPageDetails page) {
+        String id = page.pageId() != null ? page.pageId() : pageId;
+        return new FacebookConnectionDetails(true, id, page.pageName(), page.pagePictureUrl());
     }
 
     /** Disconnects the org's Page connection (officer/admin only) when orgId is present, else the caller's personal one. */
@@ -248,7 +279,8 @@ public class FacebookOAuthService {
                 .build(false) // false = don't re-encode, prevents %7B%7D double-encoding of { }
                 .toUriString();
 
-        Map<String, Object> response = executeGraphGet(uri);
+        // Cosmetic lookup: one quick retry at most, never the long OAuth back-off.
+        Map<String, Object> response = executeGraphGet(uri, PAGE_DETAILS_TIMEOUT, 1, Duration.ofMillis(300));
 
         if (response == null) {
             throw new IllegalStateException("Failed to load Facebook Page details");
@@ -301,14 +333,18 @@ public class FacebookOAuthService {
     }
 
     private Map<String, Object> executeGraphGet(String uri) {
+        return executeGraphGet(uri, GRAPH_REQUEST_TIMEOUT, GRAPH_REQUEST_RETRIES, GRAPH_REQUEST_BACKOFF);
+    }
+
+    private Map<String, Object> executeGraphGet(String uri, Duration timeout, int retries, Duration backoff) {
         return webClient.get()
                 .uri(uri)
                 .retrieve()
                 .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {
                 })
-                .timeout(GRAPH_REQUEST_TIMEOUT)
+                .timeout(timeout)
                 .retryWhen(
-                        Retry.backoff(GRAPH_REQUEST_RETRIES, GRAPH_REQUEST_BACKOFF)
+                        Retry.backoff(retries, backoff)
                                 .filter(this::isRetryableGraphError)
                                 .doBeforeRetry(signal -> log.warn(
                                 "Retrying Facebook Graph request attempt {} for {}",

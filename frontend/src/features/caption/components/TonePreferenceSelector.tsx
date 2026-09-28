@@ -1,38 +1,5 @@
 import type { Tone } from '../../../types';
-
-type ToneOption = {
-  tone: Tone;
-  icon: string;
-  label: string;
-  description: string;
-};
-
-const TONE_OPTIONS: ToneOption[] = [
-  {
-    tone: 'FORMAL',
-    icon: '🎓',
-    label: 'Formal',
-    description: 'Professional, polished, and suitable for brand-safe communication.',
-  },
-  {
-    tone: 'ENERGETIC',
-    icon: '⚡',
-    label: 'Energetic',
-    description: 'Upbeat and lively, ideal for campaigns that need momentum.',
-  },
-  {
-    tone: 'CELEBRATORY',
-    icon: '🎉',
-    label: 'Celebratory',
-    description: 'Warm and joyful for milestones, wins, and community moments.',
-  },
-  {
-    tone: 'URGENT',
-    icon: '🚨',
-    label: 'Urgent',
-    description: 'Direct and action-oriented when the message needs immediate attention.',
-  },
-];
+import { TONE_OPTIONS } from '../toneOptions';
 
 type TonePreferenceSelectorProps = {
   value: Tone;
@@ -53,6 +20,7 @@ export default function TonePreferenceSelector({ value, onChange, disabled = fal
               type="button"
               onClick={() => onChange(option.tone)}
               disabled={disabled}
+              aria-pressed={isSelected}
               className={`tps-card ${isSelected ? 'tps-card-active' : ''} ${disabled ? 'tps-card-disabled' : ''}`}
             >
               {/* Active indicator */}

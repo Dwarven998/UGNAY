@@ -1,5 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useId } from 'react';
+import { createPortal } from 'react-dom';
 import type { Post } from '../../../types';
+import { useDialog } from '../../../components/ui/useDialog';
+import '../posts.css';
 
 export interface PostPreviewModalProps {
   open: boolean;
@@ -34,6 +37,8 @@ export default function PostPreviewModal({
   onEditNow,
 }: PostPreviewModalProps) {
   const [activeImageIdx, setActiveImageIdx] = useState(0);
+  const titleId = useId();
+  const dialogRef = useDialog<HTMLDivElement>({ open: open && Boolean(post), onClose, canClose: !loading });
 
   useEffect(() => {
     setActiveImageIdx(0);
@@ -44,27 +49,40 @@ export default function PostPreviewModal({
   const isOwner = Boolean(currentUserId) && post.ownerId === currentUserId;
   const hasPendingAppeal = Boolean(post.appealType);
 
-  return (
-    <div className="upe-modal-backdrop" role="presentation" onClick={onClose}>
-      <div className="upe-modal-card" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+  return createPortal(
+    <div className="upe-modal-backdrop" role="presentation" onClick={() => !loading && onClose()}>
+      <div
+        ref={dialogRef}
+        className="upe-modal-card upe-modal-card-sm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-busy={loading || undefined}
+        tabIndex={-1}
+        onClick={e => e.stopPropagation()}
+      >
         <div className="upe-modal-header">
           <div>
             <div className="upe-modal-kicker">Post Scheduler</div>
-            <h2>Scheduled Post</h2>
+            <h2 id={titleId}>Scheduled Post</h2>
           </div>
-          <button type="button" className="upe-modal-close" onClick={onClose}>×</button>
+          <button type="button" className="upe-modal-close" onClick={onClose} disabled={loading} aria-label="Close dialog">
+            <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
 
-        {error && (
-          <div className="upe-modal-error-banner">
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span>{error}</span>
-          </div>
-        )}
-
         <div className="upe-modal-body">
+          {error && (
+            <div className="upe-modal-error-banner" role="alert">
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>{error}</span>
+            </div>
+          )}
+
           {post.mediaUrls && post.mediaUrls.length > 1 ? (
             <div className="upe-preview-multi-wrap">
               <div className="upe-preview-media">
@@ -72,7 +90,7 @@ export default function PostPreviewModal({
                   src={post.mediaUrls[activeImageIdx] || post.mediaUrls[0]}
                   alt={`Post media ${activeImageIdx + 1}`}
                 />
-                <span className="upe-preview-counter">
+                <span className="upe-preview-counter" aria-live="polite">
                   📷 {activeImageIdx + 1} / {post.mediaUrls.length}
                 </span>
               </div>
@@ -83,8 +101,10 @@ export default function PostPreviewModal({
                     type="button"
                     className={`upe-preview-thumb-btn${idx === activeImageIdx ? ' is-active' : ''}`}
                     onClick={() => setActiveImageIdx(idx)}
+                    aria-label={`Show image ${idx + 1}`}
+                    aria-pressed={idx === activeImageIdx}
                   >
-                    <img src={url} alt={`Thumbnail ${idx + 1}`} />
+                    <img src={url} alt="" />
                   </button>
                 ))}
               </div>
@@ -184,6 +204,7 @@ export default function PostPreviewModal({
                       onClick={() => onRequestAppeal('EDIT')}
                       disabled={loading}
                     >
+                      {loading && <span className="upe-btn-spinner" aria-hidden="true" />}
                       {loading ? 'Working…' : 'Request to Edit'}
                     </button>
                     <button
@@ -202,7 +223,7 @@ export default function PostPreviewModal({
         </div>
 
         <div className="upe-modal-footer">
-          <button type="button" className="upe-secondary-btn" onClick={onClose}>Close</button>
+          <button type="button" className="upe-secondary-btn" onClick={onClose} disabled={loading}>Close</button>
         </div>
       </div>
 
@@ -262,6 +283,10 @@ export default function PostPreviewModal({
         }
         .upe-preview-thumb-btn:hover {
           border-color: #94a3b8;
+        }
+        .upe-preview-thumb-btn:focus-visible {
+          outline: none;
+          box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.45);
         }
         .upe-preview-thumb-btn.is-active {
           border-color: #0C447C;
@@ -328,13 +353,26 @@ export default function PostPreviewModal({
         }
         .upe-appeal-actions {
           display: flex;
+          flex-wrap: wrap;
           gap: 8px;
           margin-top: 12px;
+        }
+        .upe-appeal-actions .upe-queue-btn {
+          flex: 0 0 auto;
+          min-width: 96px;
+          height: 34px;
+          padding: 0 14px;
         }
         .upe-appeal-cancel-btn {
           color: #dc2626;
         }
+        @media (max-width: 640px) {
+          .upe-preview-media { height: 200px; }
+          .upe-appeal-banner { padding: 14px; }
+          .upe-appeal-actions > button { flex: 1 1 auto; }
+        }
       `}</style>
-    </div>
+    </div>,
+    document.body,
   );
 }

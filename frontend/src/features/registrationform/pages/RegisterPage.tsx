@@ -38,7 +38,7 @@ function RegistrationFormContent() {
 
     try {
       await register(email, password, orgName);
-      navigate('/posts');
+      navigate('/setup');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Registration failed. Please try again.');
     } finally {

@@ -1,6 +1,6 @@
 // features/caption/pages/CaptionStudio.tsx
 import { useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 export default function CaptionStudio() {
   const navigate = useNavigate();
@@ -32,6 +32,10 @@ export default function CaptionStudio() {
           </div>
           <h1 className="cs-title">Caption Studio</h1>
           <p className="cs-subtitle">Generate highly engaging, brand-aligned captions powered by AI in seconds.</p>
+          <p className="cs-composer-hint">
+            Writing a post? The same AI caption assistant is built into{' '}
+            <Link to="/create" className="cs-composer-link">Create Post</Link>.
+          </p>
         </div>
 
         {/* Step card */}
@@ -51,7 +55,7 @@ export default function CaptionStudio() {
           <div className="cs-card-body">
             {/* URL input */}
             <div className="cs-field">
-              <label className="cs-label">
+              <label className="cs-label" htmlFor="cs-media-url">
                 <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                 </svg>
@@ -59,6 +63,7 @@ export default function CaptionStudio() {
               </label>
               <div className="cs-input-wrapper">
                 <input
+                  id="cs-media-url"
                   type="url"
                   placeholder="https://your-supabase-url/storage/v1/..."
                   value={imageUrl}
@@ -156,6 +161,17 @@ export default function CaptionStudio() {
           color: #64748b;
           margin: 0;
           line-height: 1.5;
+        }
+
+        .cs-composer-hint {
+          margin-top: 10px;
+          font-size: 13px;
+          color: #64748b;
+        }
+        .cs-composer-link {
+          color: #0C447C;
+          font-weight: 600;
+          text-underline-offset: 2px;
         }
 
         /* Card */

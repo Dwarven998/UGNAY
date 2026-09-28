@@ -6,6 +6,9 @@ import { AuthProvider } from './context/AuthContext';
 import { OrganizationProvider } from './context/OrganizationContext';
 import { FacebookConnectionProvider } from './context/FacebookConnectionContext';
 import Dashboard from './features/dashboard/UnifiedManagementDashboard.tsx';
+import HomeDashboard from './features/dashboard/pages/HomeDashboard.tsx';
+import CreatePost from './features/posts/pages/CreatePost.tsx';
+import FirstTimeSetup from './features/setup/FirstTimeSetup.tsx';
 import LoginPage from './features/loginform/pages/LoginPage.tsx';
 import RegistrationForm from './features/registrationform/pages/RegisterPage.tsx';
 import PostManager from './features/posts/pages/PostManager.tsx';
@@ -19,7 +22,7 @@ import OrganizationAdminPage from './features/organizations/admin/pages/Organiza
 
 function ProtectedRoute({ children }: Readonly<{ children: ReactNode }>) {
   const { user, isLoading } = useAuth();
-  if (isLoading) return <div className="flex h-screen items-center justify-center">Loading...</div>;
+  if (isLoading) return <div className="flex h-screen items-center justify-center" role="status">Loading…</div>;
   return user ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
@@ -57,9 +60,12 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegistrationForm />} />
+          <Route path="/setup" element={<ProtectedRoute><FirstTimeSetup /></ProtectedRoute>} />
           <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>}>
-            <Route index element={<Navigate to="/posts" replace />} />
+            <Route index element={<HomeDashboard />} />
+            <Route path="create" element={<CreatePost />} />
             <Route path="posts" element={<PostManager />} />
+            <Route path="calendar" element={<PostManager />} />
             <Route path="media" element={<MediaRepository />} />
             <Route path="caption" element={<CaptionStudio />} />
             <Route path="caption/select-tone" element={<CaptionToneSelection />} />
@@ -68,6 +74,7 @@ export default function App() {
             <Route path="organizations" element={<OrganizationsPage />} />
             <Route path="organizations/:orgId/manage" element={<OrganizationAdminPage />} />
           </Route>
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
       </FacebookConnectionProvider>
