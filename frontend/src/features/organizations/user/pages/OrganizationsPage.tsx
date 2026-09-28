@@ -1,8 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { organizationApi, organizationAdminApi } from '../../api/organizationApi';
-import type { MyMembership, OrgType } from '../../../../types';
+import type { MyMembership, OrgMember, OrgType } from '../../../../types';
 import { ApiError } from '../../../../api/axiosClient';
+import { useAuth } from '../../../../context/useAuth';
+import { useOrganization } from '../../../../context/useOrganization';
+
+/** Users only have an email, so derive a readable name from its local part. */
+function displayNameFromEmail(email: string): string {
+  const local = email.split('@')[0] ?? email;
+  const words = local.split(/[._-]+/).filter(Boolean);
+  if (words.length === 0) return email;
+  return words.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
 
 const STATUS_STYLES: Record<string, string> = {
   APPROVED: 'org-badge-approved',
@@ -25,6 +35,78 @@ export default function OrganizationsPage() {
   const [newParentOrgId, setNewParentOrgId] = useState('');
   const [newOpenJoin, setNewOpenJoin] = useState(false);
   const [creating, setCreating] = useState(false);
+
+  const { user } = useAuth();
+  const { refreshMemberships } = useOrganization();
+
+  // Member-only row menu: view members / leave organization.
+  const [menuOrgId, setMenuOrgId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [membersOf, setMembersOf] = useState<MyMembership | null>(null);
+  const [members, setMembers] = useState<OrgMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
+  const [leaveTarget, setLeaveTarget] = useState<MyMembership | null>(null);
+  const [leaving, setLeaving] = useState(false);
+
+  useEffect(() => {
+    if (!menuOrgId) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOrgId(null);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOrgId(null); };
+    document.addEventListener('mousedown', onClickOutside);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClickOutside);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOrgId]);
+
+  // Escape closes whichever dialog is open (unless a leave request is in flight).
+  useEffect(() => {
+    if (!membersOf && !leaveTarget) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setMembersOf(null);
+      if (!leaving) setLeaveTarget(null);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [membersOf, leaveTarget, leaving]);
+
+  const openMembers = async (m: MyMembership) => {
+    setMenuOrgId(null);
+    setMembersOf(m);
+    setMembers([]);
+    setMembersError(null);
+    setMembersLoading(true);
+    try {
+      setMembers(await organizationApi.listMembers(m.orgId));
+    } catch (e) {
+      setMembersError(e instanceof ApiError ? e.message : 'Could not load members.');
+    } finally {
+      setMembersLoading(false);
+    }
+  };
+
+  const handleLeave = async () => {
+    if (!leaveTarget) return;
+    setLeaving(true);
+    setError(null);
+    setInfo(null);
+    try {
+      await organizationApi.leave(leaveTarget.orgId);
+      setInfo(`You left ${leaveTarget.orgName}.`);
+      setLeaveTarget(null);
+      await Promise.all([load(), refreshMemberships()]);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not leave the organization.');
+      setLeaveTarget(null);
+    } finally {
+      setLeaving(false);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -115,46 +197,57 @@ export default function OrganizationsPage() {
             </div>
           </div>
 
+          {!showCreate ? (
+            <button type="button" className="org-card org-create-trigger" onClick={() => setShowCreate(true)}>
+              <span className="org-create-trigger-text">
+                <span className="org-card-title">Create an organization</span>
+                <span className="org-create-trigger-sub">Start a university, department, or program</span>
+              </span>
+              <span className="org-create-plus" aria-hidden="true">
+                <i className="fi fi-rr-plus"></i>
+              </span>
+            </button>
+          ) : (
           <div className="org-card">
             <div className="org-card-title-row">
               <h3 className="org-card-title">Create an organization</h3>
-              <button onClick={() => setShowCreate(v => !v)} className="org-btn-link">
-                {showCreate ? 'Cancel' : 'New'}
+              <button onClick={() => setShowCreate(false)} className="org-btn-link">
+                Cancel
               </button>
             </div>
-            {showCreate && (
-              <div className="org-create-form">
+            {/* Create form */}
+            <div className="org-create-form">
+              <input
+                type="text"
+                placeholder="Organization name"
+                value={newName}
+                onChange={e => setNewName(e.target.value)}
+                className="org-input"
+              />
+              <select value={newType} onChange={e => setNewType(e.target.value as OrgType)} className="org-input">
+                <option value="UNIVERSITY">University (top-level)</option>
+                <option value="DEPARTMENT">Department</option>
+                <option value="PROGRAM">Program</option>
+              </select>
+              {newType !== 'UNIVERSITY' && (
                 <input
                   type="text"
-                  placeholder="Organization name"
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
+                  placeholder="Parent organization ID"
+                  value={newParentOrgId}
+                  onChange={e => setNewParentOrgId(e.target.value)}
                   className="org-input"
                 />
-                <select value={newType} onChange={e => setNewType(e.target.value as OrgType)} className="org-input">
-                  <option value="UNIVERSITY">University (top-level)</option>
-                  <option value="DEPARTMENT">Department</option>
-                  <option value="PROGRAM">Program</option>
-                </select>
-                {newType !== 'UNIVERSITY' && (
-                  <input
-                    type="text"
-                    placeholder="Parent organization ID"
-                    value={newParentOrgId}
-                    onChange={e => setNewParentOrgId(e.target.value)}
-                    className="org-input"
-                  />
-                )}
-                <label className="org-checkbox-row">
-                  <input type="checkbox" checked={newOpenJoin} onChange={e => setNewOpenJoin(e.target.checked)} />
-                  <span>Open join (skip officer approval)</span>
-                </label>
-                <button onClick={handleCreate} disabled={creating || !newName.trim()} className="org-btn-primary">
-                  {creating ? 'Creating…' : 'Create organization'}
-                </button>
-              </div>
-            )}
+              )}
+              <label className="org-checkbox-row">
+                <input type="checkbox" checked={newOpenJoin} onChange={e => setNewOpenJoin(e.target.checked)} />
+                <span>Open join (skip officer approval)</span>
+              </label>
+              <button onClick={handleCreate} disabled={creating || !newName.trim()} className="org-btn-primary">
+                {creating ? 'Creating…' : 'Create organization'}
+              </button>
+            </div>
           </div>
+          )}
         </div>
 
         <div className="org-list-section">
@@ -177,6 +270,41 @@ export default function OrganizationsPage() {
                     {m.status === 'APPROVED' && (m.role === 'ADMIN' || m.role === 'OFFICER') && (
                       <Link to={`/organizations/${m.orgId}/manage`} className="org-btn-manage">Manage</Link>
                     )}
+                    {m.role === 'MEMBER' && (
+                      <div className="org-menu" ref={menuOrgId === m.orgId ? menuRef : undefined}>
+                        <button
+                          type="button"
+                          className={`org-menu-trigger ${menuOrgId === m.orgId ? 'is-open' : ''}`}
+                          onClick={() => setMenuOrgId(id => (id === m.orgId ? null : m.orgId))}
+                          aria-label={`More options for ${m.orgName}`}
+                          aria-haspopup="menu"
+                          aria-expanded={menuOrgId === m.orgId}
+                        >
+                          <i className="fi fi-rr-menu-dots-vertical" aria-hidden="true"></i>
+                        </button>
+                        {menuOrgId === m.orgId && (
+                          <div className="org-menu-list" role="menu">
+                            {m.status === 'APPROVED' && (
+                              <button type="button" role="menuitem" className="org-menu-item" onClick={() => void openMembers(m)}>
+                                <i className="fi fi-rr-users" aria-hidden="true"></i>
+                                <span>View Members</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="org-menu-item org-menu-item-danger"
+                              onClick={() => { setMenuOrgId(null); setLeaveTarget(m); }}
+                            >
+                              <i className="fi fi-rr-exit" aria-hidden="true"></i>
+                              <span>
+                                {m.status === 'APPROVED' ? `Leave Organization ${m.orgName}` : `Withdraw request to ${m.orgName}`}
+                              </span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -184,6 +312,92 @@ export default function OrganizationsPage() {
           )}
         </div>
       </div>
+
+      {/* ── View Members dialog ── */}
+      {membersOf && (
+        <div className="org-modal-backdrop" onClick={() => setMembersOf(null)}>
+          <div
+            className="org-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="org-members-title"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="org-modal-header">
+              <div>
+                <h3 id="org-members-title" className="org-modal-title">Members of {membersOf.orgName}</h3>
+                <p className="org-modal-sub">
+                  {membersLoading
+                    ? 'Loading members…'
+                    : membersError
+                      ? '—'
+                      : `${members.length} ${members.length === 1 ? 'member' : 'members'}`}
+                </p>
+              </div>
+              <button type="button" className="org-modal-close" onClick={() => setMembersOf(null)} aria-label="Close">
+                <i className="fi fi-rr-cross-small" aria-hidden="true"></i>
+              </button>
+            </div>
+            <div className="org-modal-body">
+              {membersLoading ? (
+                <div className="org-empty">Loading…</div>
+              ) : membersError ? (
+                <div className="org-alert org-alert-error">{membersError}</div>
+              ) : members.length === 0 ? (
+                <div className="org-empty">No members yet.</div>
+              ) : (
+                <ul className="org-member-list">
+                  {members.map(mem => (
+                    <li key={mem.userId} className="org-member-row">
+                      <span className="org-member-avatar" aria-hidden="true">
+                        {displayNameFromEmail(mem.email).charAt(0).toUpperCase()}
+                      </span>
+                      <span className="org-member-info">
+                        <span className="org-member-name">
+                          {displayNameFromEmail(mem.email)}
+                          {mem.userId === user?.userId && <span className="org-member-you"> (You)</span>}
+                        </span>
+                        <span className="org-member-email">{mem.email}</span>
+                      </span>
+                      <span className="org-badge">{mem.role}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Leave confirmation dialog ── */}
+      {leaveTarget && (
+        <div className="org-modal-backdrop" onClick={() => !leaving && setLeaveTarget(null)}>
+          <div
+            className="org-modal org-modal-sm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="org-leave-title"
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 id="org-leave-title" className="org-modal-title">
+              {leaveTarget.status === 'APPROVED' ? `Leave ${leaveTarget.orgName}?` : `Withdraw request to ${leaveTarget.orgName}?`}
+            </h3>
+            <p className="org-modal-text">
+              {leaveTarget.status === 'APPROVED'
+                ? "You'll lose access to this organization's posts and media. You can rejoin later with a join code."
+                : 'Your pending request will be removed. You can request again later with a join code.'}
+            </p>
+            <div className="org-modal-actions">
+              <button type="button" className="org-btn-secondary" onClick={() => setLeaveTarget(null)} disabled={leaving}>
+                Cancel
+              </button>
+              <button type="button" className="org-btn-danger" onClick={() => void handleLeave()} disabled={leaving}>
+                {leaving ? 'Leaving…' : leaveTarget.status === 'APPROVED' ? 'Leave organization' : 'Withdraw request'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         .org-page { padding: 28px 32px; max-width: 900px; }
@@ -240,8 +454,119 @@ export default function OrganizationsPage() {
           padding: 6px 12px; border-radius: 8px; text-decoration: none;
         }
 
+        /* Create-organization card (whole card is the button) */
+        .org-create-trigger {
+          width: 100%;
+          display: flex; align-items: center; justify-content: space-between; gap: 16px;
+          text-align: left; font-family: inherit; cursor: pointer;
+          transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+        }
+        .org-create-trigger .org-card-title { display: block; margin: 0 0 4px; }
+        .org-create-trigger-text { display: flex; flex-direction: column; min-width: 0; }
+        .org-create-trigger-sub { font-size: 12.5px; color: #64748b; }
+        .org-create-plus {
+          width: 44px; height: 44px; flex-shrink: 0;
+          display: flex; align-items: center; justify-content: center;
+          border-radius: 12px; background: #eff6ff; color: #0C447C; font-size: 18px;
+          transition: background 0.15s, color 0.15s, transform 0.15s;
+        }
+        .org-create-plus i { display: flex; line-height: 1; }
+        .org-create-trigger:hover,
+        .org-create-trigger:focus-visible {
+          border-color: #93c5fd; background: #f8fbff;
+          box-shadow: 0 4px 14px rgba(12,68,124,0.08); outline: none;
+        }
+        .org-create-trigger:hover .org-create-plus,
+        .org-create-trigger:focus-visible .org-create-plus { background: #0C447C; color: #fff; transform: rotate(90deg); }
+
+        /* Member row menu */
+        .org-menu { position: relative; }
+        .org-menu-trigger {
+          width: 30px; height: 30px;
+          display: flex; align-items: center; justify-content: center;
+          border: 1px solid transparent; border-radius: 8px; background: transparent;
+          color: #64748b; font-size: 15px; cursor: pointer;
+          transition: background 0.15s, color 0.15s;
+        }
+        .org-menu-trigger i { display: flex; line-height: 1; }
+        .org-menu-trigger:hover,
+        .org-menu-trigger:focus-visible,
+        .org-menu-trigger.is-open { background: #f1f5f9; color: #0f172a; outline: none; }
+        .org-menu-list {
+          position: absolute; top: calc(100% + 6px); right: 0; z-index: 50;
+          min-width: 220px; max-width: 300px;
+          background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+          padding: 6px; box-shadow: 0 12px 32px rgba(15,23,42,0.14);
+        }
+        .org-menu-item {
+          width: 100%;
+          display: flex; align-items: center; gap: 10px;
+          padding: 9px 10px; border: none; border-radius: 8px; background: none;
+          color: #334155; font-size: 13px; font-weight: 500; font-family: inherit;
+          text-align: left; cursor: pointer; transition: background 0.15s;
+        }
+        .org-menu-item i { display: flex; line-height: 1; font-size: 14px; flex-shrink: 0; }
+        .org-menu-item span { overflow-wrap: anywhere; }
+        .org-menu-item:hover,
+        .org-menu-item:focus-visible { background: #f1f5f9; outline: none; }
+        .org-menu-item-danger { color: #b91c1c; }
+        .org-menu-item-danger:hover,
+        .org-menu-item-danger:focus-visible { background: #fef2f2; }
+
+        /* Dialogs */
+        .org-modal-backdrop {
+          position: fixed; inset: 0; z-index: 900;
+          background: rgba(2,6,23,0.55); backdrop-filter: blur(3px);
+          display: flex; align-items: center; justify-content: center; padding: 16px;
+        }
+        .org-modal {
+          width: 100%; max-width: 460px; max-height: min(640px, calc(100vh - 32px));
+          display: flex; flex-direction: column;
+          background: #fff; border-radius: 16px; padding: 20px;
+          box-shadow: 0 24px 60px rgba(2,6,23,0.3);
+        }
+        .org-modal-sm { max-width: 400px; }
+        .org-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+        .org-modal-title { font-size: 16px; font-weight: 700; color: #0f172a; margin: 0; overflow-wrap: anywhere; }
+        .org-modal-sub { font-size: 12.5px; color: #64748b; margin: 4px 0 0; }
+        .org-modal-text { font-size: 13px; color: #475569; line-height: 1.5; margin: 8px 0 18px; }
+        .org-modal-close {
+          width: 32px; height: 32px; flex-shrink: 0;
+          display: flex; align-items: center; justify-content: center;
+          border: none; border-radius: 8px; background: transparent; color: #64748b; font-size: 18px; cursor: pointer;
+        }
+        .org-modal-close i { display: flex; line-height: 1; }
+        .org-modal-close:hover { background: #f1f5f9; color: #0f172a; }
+        .org-modal-body { overflow-y: auto; min-height: 0; }
+        .org-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+        .org-btn-secondary {
+          height: 38px; padding: 0 16px; background: #fff; color: #334155; border: 1px solid #e2e8f0;
+          border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+        }
+        .org-btn-secondary:hover:not(:disabled) { background: #f8fafc; }
+        .org-btn-danger {
+          height: 38px; padding: 0 16px; background: #dc2626; color: #fff; border: none;
+          border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+        }
+        .org-btn-danger:hover:not(:disabled) { background: #b91c1c; }
+        .org-btn-secondary:disabled, .org-btn-danger:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .org-member-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+        .org-member-row { display: flex; align-items: center; gap: 12px; padding: 10px 8px; border-radius: 10px; }
+        .org-member-row:hover { background: #f8fafc; }
+        .org-member-avatar {
+          width: 36px; height: 36px; flex-shrink: 0; border-radius: 10px;
+          display: flex; align-items: center; justify-content: center;
+          background: linear-gradient(135deg, #0C447C, #3b82f6); color: #fff; font-weight: 700; font-size: 14px;
+        }
+        .org-member-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+        .org-member-name { font-size: 13.5px; font-weight: 600; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .org-member-you { font-weight: 500; color: #64748b; }
+        .org-member-email { font-size: 12px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
         @media (max-width: 700px) {
           .org-actions-row { grid-template-columns: 1fr; }
+          .org-row { flex-wrap: wrap; gap: 10px; }
         }
       `}</style>
     </>

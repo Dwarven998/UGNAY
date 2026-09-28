@@ -41,11 +41,26 @@ public class OrganizationController {
         return ResponseEntity.ok(service.getOrgIfMember(user, orgId));
     }
 
+    /** Approved members of an org, visible to any approved member of that org. */
+    @GetMapping("/{orgId}/members")
+    public ResponseEntity<List<OrgMemberDto>> members(@AuthenticationPrincipal User user, @PathVariable UUID orgId) {
+        return ResponseEntity.ok(service.listMembersIfMember(user, orgId));
+    }
+
+    /** Leave an organization (MEMBER role only; privileged roles are managed by admins). */
+    @DeleteMapping("/{orgId}/membership")
+    public ResponseEntity<Void> leave(@AuthenticationPrincipal User user, @PathVariable UUID orgId) {
+        service.leave(user, orgId);
+        return ResponseEntity.noContent().build();
+    }
+
     public record JoinRequest(@NotBlank String joinCode) {}
 
     public record MyMembershipDto(UUID orgId, String orgName, Organization.OrgType orgType,
                                    OrganizationMembership.OrgRole role,
                                    OrganizationMembership.MembershipStatus status) {}
+
+    public record OrgMemberDto(UUID userId, String email, OrganizationMembership.OrgRole role) {}
 
     public record OrgSummaryDto(UUID id, String name, Organization.OrgType type, UUID parentOrgId) {}
 }

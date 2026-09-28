@@ -68,4 +68,29 @@ public class OrganizationUserService {
         UUID parentId = org.getParentOrganization() != null ? org.getParentOrganization().getId() : null;
         return new OrganizationController.OrgSummaryDto(org.getId(), org.getName(), org.getType(), parentId);
     }
+
+    @Transactional(readOnly = true)
+    public List<OrganizationController.OrgMemberDto> listMembersIfMember(User user, UUID orgId) {
+        membershipRepository.findByUserIdAndOrganizationId(user.getId(), orgId)
+            .filter(m -> m.getStatus() == OrganizationMembership.MembershipStatus.APPROVED)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Not a member of this organization"));
+
+        return membershipRepository.findByOrganizationId(orgId).stream()
+            .filter(m -> m.getStatus() == OrganizationMembership.MembershipStatus.APPROVED)
+            .map(m -> new OrganizationController.OrgMemberDto(m.getUser().getId(), m.getUser().getEmail(), m.getRole()))
+            .toList();
+    }
+
+    @Transactional
+    public void leave(User user, UUID orgId) {
+        OrganizationMembership membership = membershipRepository.findByUserIdAndOrganizationId(user.getId(), orgId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "You are not a member of this organization"));
+
+        // Privileged roles (admin/officer/contributor) keep their existing admin-managed flow.
+        if (membership.getRole() != OrganizationMembership.OrgRole.MEMBER) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Only members can leave directly. Ask an admin to change your role first.");
+        }
+        membershipRepository.delete(membership);
+    }
 }
