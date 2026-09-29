@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuth } from   '../../../context/useAuth';
-import { AuthFeatureIcon, AuthProductPreview, AuthenticationBackground } from '../../loginform/components/AuthVisuals';
+import { useAuth } from '../../../context/useAuth';
+import { RegistrationParticles, RegistrationShowcase, AuthenticationBackground } from '../../loginform/components/AuthVisuals';
 import { useTurnstile } from '../../loginform/hooks/useTurnstile';
 
 function RegistrationFormContent() {
@@ -12,7 +12,7 @@ function RegistrationFormContent() {
   const [orgName, setOrgName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  
+
   // Added UI state for toggling password visibility
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -63,9 +63,9 @@ function RegistrationFormContent() {
   return (
     <>
       <div className="auth-layout">
-        
+
         {/* ── LEFT PANEL ───────────────────────── */}
-        <div className="left-panel">
+        <div className="left-panel reg-left-panel">
           {/* Logo - Anchored absolute top left */}
           <div className="logo-section">
             <div className="logo-icon">
@@ -79,7 +79,7 @@ function RegistrationFormContent() {
           <div className="glow-orb orb-2"></div>
           <div className="glow-orb orb-3"></div>
           <div className="noise-overlay"></div>
-          <AuthProductPreview />
+          <RegistrationParticles />
 
           {/* Content Glass Card */}
           <div className="glass-card">
@@ -96,25 +96,12 @@ function RegistrationFormContent() {
                 Set up your organization's workspace to generate captions, schedule posts, and unlock insights instantly.
               </p>
 
-              <div className="feature-list">
-                {[
-                  'Unified workspace for your team',
-                  'AI-driven caption suggestions',
-                  'Seamless Facebook integration',
-                ].map((label, index) => (
-                  <div key={label} className="feature-item" style={{ animationDelay: `${index * 0.15}s` }}>
-                    <div className="feature-check">
-                      <AuthFeatureIcon index={index} />
-                    </div>
-                    <span>{label}</span>
-                  </div>
-                ))}
-              </div>
+              <RegistrationShowcase />
             </div>
           </div>
         </div>
 
-        {}
+        { }
         {/* ── RIGHT PANEL ──────────────────────── */}
         <div className="right-panel">
           {/* Ambient Right Background Effects */}
@@ -131,7 +118,7 @@ function RegistrationFormContent() {
             </div>
 
             <form onSubmit={handleSubmit} className="auth-form">
-              
+
               {/* Organization Name */}
               <div className="input-group stagger-2">
                 <label>Organization Name</label>
@@ -220,7 +207,7 @@ function RegistrationFormContent() {
                     required
                     className="modern-input"
                   />
-                   <button
+                  <button
                     type="button"
                     onClick={() => setShowConfirmPassword(v => !v)}
                     className="toggle-password"
