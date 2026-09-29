@@ -26,6 +26,7 @@ public class AuthController {
     private final LoginRateLimiterService rateLimiterService;
     private final GoogleAuthService googleAuthService;
     private final TurnstileService turnstileService;
+    private final PasswordResetService passwordResetService;
 
     @PostMapping("/register")
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest req,
@@ -161,7 +162,50 @@ public class AuthController {
         ));
     }
 
+    // --- Forgot Password / Reset Password ---
+
+    /**
+     * Accepts an email and (if the account exists) sends a password-reset link.
+     * Always returns the same generic response to prevent user-enumeration.
+     */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<?> forgotPassword(@Valid @RequestBody ForgotPasswordRequest req) {
+        passwordResetService.requestPasswordReset(req.email());
+        return ResponseEntity.ok(Map.of(
+            "message", "If an account exists for that email, a password reset link has been sent."
+        ));
+    }
+
+    /**
+     * Validates the reset token and updates the user's password.
+     */
+    @PostMapping("/reset-password")
+    public ResponseEntity<?> resetPassword(@Valid @RequestBody ResetPasswordRequest req) {
+        try {
+            passwordResetService.resetPassword(req.token(), req.newPassword());
+            return ResponseEntity.ok(Map.of("message", "Password successfully reset. You can now log in."));
+        } catch (PasswordResetService.PasswordResetException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "Reset Failed",
+                "message", e.getMessage()
+            ));
+        }
+    }
+
     // --- DTOs (inner records) ---
+    public record ForgotPasswordRequest(
+        @jakarta.validation.constraints.Email
+        @jakarta.validation.constraints.NotBlank
+        String email
+    ) {}
+
+    public record ResetPasswordRequest(
+        @jakarta.validation.constraints.NotBlank String token,
+        @jakarta.validation.constraints.NotBlank
+        @jakarta.validation.constraints.Size(min = 6, message = "Password must be at least 6 characters.")
+        String newPassword
+    ) {}
+
     public record RegisterRequest(
         @jakarta.validation.constraints.Email String email,
         @jakarta.validation.constraints.NotBlank String password,
