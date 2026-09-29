@@ -4,7 +4,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../../context/useAuth';
 import { ApiError } from '../../../api/axiosClient';
 import { preloadGoogleIdentity, requestGoogleAccessToken } from '../api/googleIdentity';
-import { AuthFeatureIcon, AuthProductPreview, AuthenticationBackground } from './AuthVisuals';
+import { FloatingParticles, FeatureShowcase, AuthenticationBackground } from './AuthVisuals';
 import { useTurnstile } from '../hooks/useTurnstile';
 
 function LoginFormContent() {
@@ -127,7 +127,7 @@ function LoginFormContent() {
           <div className="glow-orb orb-2"></div>
           <div className="glow-orb orb-3"></div>
           <div className="noise-overlay"></div>
-          <AuthProductPreview />
+          <FloatingParticles />
 
           {/* Content Glass Card */}
           <div className="glass-card">
@@ -145,20 +145,7 @@ function LoginFormContent() {
                 Generate intelligent captions, automate your Facebook scheduling, and unlock engagement insights from one unified dashboard.
               </p>
 
-              <div className="feature-list">
-                {[
-                  'AI caption generation from photos',
-                  'Automated Facebook scheduling',
-                  'Engagement insights and analytics',
-                ].map((label, index) => (
-                  <div key={label} className="feature-item" style={{ animationDelay: `${index * 0.15}s` }}>
-                    <div className="feature-check">
-                        <AuthFeatureIcon index={index} />
-                    </div>
-                    <span>{label}</span>
-                  </div>
-                ))}
-              </div>
+              <FeatureShowcase />
             </div>
           </div>
         </div>
