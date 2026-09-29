@@ -43,7 +43,7 @@ export default function FirstTimeSetup() {
 
   const [orgName, setOrgName] = useState('');
   const [orgType, setOrgType] = useState<OrgType>('UNIVERSITY');
-  const [parentOrgId, setParentOrgId] = useState('');
+  const [parentJoinId, setParentJoinId] = useState('');
   const [openJoin, setOpenJoin] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -81,10 +81,12 @@ export default function FirstTimeSetup() {
     setBusy(true);
     setError('');
     try {
-      const org = await organizationAdminApi.create(orgName.trim(), orgType, parentOrgId.trim() || null, openJoin);
+      const org = await organizationAdminApi.create(orgName.trim(), orgType, orgType !== 'UNIVERSITY' && parentJoinId.trim() ? parentJoinId.trim().toUpperCase() : null, openJoin);
       await refreshMemberships();
       setActiveOrgId(org.id);
-      setInfo(`${org.name} is ready. Share join code ${org.joinCode} with your team.`);
+      setInfo(org.joinId
+        ? `${org.name} is ready. Share join code ${org.joinCode} with your team, and Join ID ${org.joinId} with departments and programs.`
+        : `${org.name} is ready. Share join code ${org.joinCode} with your team.`);
       goTo('facebook');
     } catch (err) {
       setError(errorText(err, 'Could not create the organization.'));
@@ -214,9 +216,9 @@ export default function FirstTimeSetup() {
                 </div>
                 {orgType !== 'UNIVERSITY' && (
                   <div className="su-field">
-                    <label htmlFor="su-org-parent">Parent organization ID</label>
-                    <input id="su-org-parent" type="text" value={parentOrgId} onChange={e => setParentOrgId(e.target.value)} aria-describedby="su-org-parent-hint" />
-                    <p id="su-org-parent-hint" className="su-hint">You must be an admin of the parent organization.</p>
+                    <label htmlFor="su-org-parent">Join ID (optional)</label>
+                    <input id="su-org-parent" type="text" value={parentJoinId} onChange={e => setParentJoinId(e.target.value.toUpperCase())} placeholder="e.g. UNI-7KQ2M9" maxLength={32} autoComplete="off" spellCheck={false} aria-describedby="su-org-parent-hint" />
+                    <p id="su-org-parent-hint" className="su-hint">Enter a university's Join ID to list this under it. Leave blank to create it on its own.</p>
                   </div>
                 )}
                 <label className="su-check">

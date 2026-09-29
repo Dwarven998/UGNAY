@@ -3,19 +3,14 @@ import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import ConfirmDialog from '../../../../components/ui/ConfirmDialog';
 import { useDialog } from '../../../../components/ui/useDialog';
-import { organizationApi, organizationAdminApi } from '../../api/organizationApi';
-import type { MyMembership, OrgMember, OrgType } from '../../../../types';
+import { organizationApi } from '../../api/organizationApi';
+import CreateOrganizationCard from '../components/CreateOrganizationCard';
+import { ORG_TYPE_LABEL } from '../../shared/orgTypes';
+import { displayNameFromEmail } from '../../shared/displayName';
+import type { MyMembership, OrgMember } from '../../../../types';
 import { ApiError } from '../../../../api/axiosClient';
 import { useAuth } from '../../../../context/useAuth';
 import { useOrganization } from '../../../../context/useOrganization';
-
-/** Users only have an email, so derive a readable name from its local part. */
-function displayNameFromEmail(email: string): string {
-  const local = email.split('@')[0] ?? email;
-  const words = local.split(/[._-]+/).filter(Boolean);
-  if (words.length === 0) return email;
-  return words.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-}
 
 const STATUS_STYLES: Record<string, string> = {
   APPROVED: 'org-badge-approved',
@@ -33,11 +28,6 @@ export default function OrganizationsPage() {
   const [joining, setJoining] = useState(false);
 
   const [showCreate, setShowCreate] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newType, setNewType] = useState<OrgType>('UNIVERSITY');
-  const [newParentOrgId, setNewParentOrgId] = useState('');
-  const [newOpenJoin, setNewOpenJoin] = useState(false);
-  const [creating, setCreating] = useState(false);
 
   const { user } = useAuth();
   const { refreshMemberships } = useOrganization();
@@ -135,29 +125,10 @@ export default function OrganizationsPage() {
     }
   };
 
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    setCreating(true);
+  const handleCreated = async () => {
     setError(null);
     setInfo(null);
-    try {
-      const org = await organizationAdminApi.create(
-        newName.trim(),
-        newType,
-        newParentOrgId.trim() || null,
-        newOpenJoin,
-      );
-      setInfo(`Created ${org.name}. Join code: ${org.joinCode}`);
-      setNewName('');
-      setNewParentOrgId('');
-      setNewOpenJoin(false);
-      setShowCreate(false);
-      await load();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Could not create organization.');
-    } finally {
-      setCreating(false);
-    }
+    await Promise.all([load(), refreshMemberships()]);
   };
 
   return (
@@ -202,45 +173,7 @@ export default function OrganizationsPage() {
               </span>
             </button>
           ) : (
-          <div className="org-card">
-            <div className="org-card-title-row">
-              <h3 className="org-card-title">Create an organization</h3>
-              <button onClick={() => setShowCreate(false)} className="org-btn-link">
-                Cancel
-              </button>
-            </div>
-            {/* Create form */}
-            <div className="org-create-form">
-              <input
-                type="text"
-                placeholder="Organization name"
-                value={newName}
-                onChange={e => setNewName(e.target.value)}
-                className="org-input"
-              />
-              <select value={newType} onChange={e => setNewType(e.target.value as OrgType)} className="org-input">
-                <option value="UNIVERSITY">University (top-level)</option>
-                <option value="DEPARTMENT">Department</option>
-                <option value="PROGRAM">Program</option>
-              </select>
-              {newType !== 'UNIVERSITY' && (
-                <input
-                  type="text"
-                  placeholder="Parent organization ID"
-                  value={newParentOrgId}
-                  onChange={e => setNewParentOrgId(e.target.value)}
-                  className="org-input"
-                />
-              )}
-              <label className="org-checkbox-row">
-                <input type="checkbox" checked={newOpenJoin} onChange={e => setNewOpenJoin(e.target.checked)} />
-                <span>Open join (skip officer approval)</span>
-              </label>
-              <button onClick={handleCreate} disabled={creating || !newName.trim()} className="org-btn-primary">
-                {creating ? 'Creating…' : 'Create organization'}
-              </button>
-            </div>
-          </div>
+            <CreateOrganizationCard onClose={() => setShowCreate(false)} onCreated={handleCreated} />
           )}
         </div>
 
@@ -256,7 +189,7 @@ export default function OrganizationsPage() {
                 <div key={m.orgId} className="org-row">
                   <div className="org-row-main">
                     <span className="org-row-name">{m.orgName}</span>
-                    <span className="org-row-type">{m.orgType}</span>
+                    <span className="org-row-type">{ORG_TYPE_LABEL[m.orgType]}</span>
                   </div>
                   <div className="org-row-badges">
                     <span className="org-badge">{m.role}</span>
@@ -395,21 +328,19 @@ export default function OrganizationsPage() {
         .org-alert-error { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
         .org-alert-info { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
 
-        .org-actions-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 28px; }
+        .org-actions-row { display: grid; grid-template-columns: 1fr 1fr; align-items: start; gap: 16px; margin-bottom: 28px; }
         .org-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 18px; }
         .org-card-title { font-size: 14px; font-weight: 700; color: #0f172a; margin: 0 0 12px; }
         .org-card-title-row { display: flex; align-items: center; justify-content: space-between; }
         .org-card-title-row .org-card-title { margin: 0; }
 
         .org-inline-form { display: flex; gap: 8px; }
-        .org-create-form { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
         .org-input {
           flex: 1; height: 38px; border: 2px solid #e2e8f0; border-radius: 10px;
           padding: 0 12px; font-size: 13px; color: #0f172a; outline: none;
           background: #f8fafc; font-family: inherit;
         }
         .org-input:focus { border-color: #3b82f6; background: #fff; }
-        .org-checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #475569; }
 
         .org-btn-primary {
           height: 38px; padding: 0 18px; background: #0C447C; color: #fff; border: none;

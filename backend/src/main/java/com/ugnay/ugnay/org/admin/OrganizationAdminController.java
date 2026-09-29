@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -34,10 +35,38 @@ public class OrganizationAdminController {
         return ResponseEntity.ok(service.createOrganization(user, req));
     }
 
+    /** Everything the Manage screen needs: codes, parent university, and what the viewer may change. */
+    @GetMapping("/{orgId}")
+    public ResponseEntity<OrgManageDto> get(@AuthenticationPrincipal User user, @PathVariable UUID orgId) {
+        return ResponseEntity.ok(service.getManageDetails(user, orgId));
+    }
+
     @PostMapping("/{orgId}/join-code/regenerate")
     public ResponseEntity<JoinCodeDto> regenerateJoinCode(@AuthenticationPrincipal User user,
                                                            @PathVariable UUID orgId) {
         return ResponseEntity.ok(service.regenerateJoinCode(user, orgId));
+    }
+
+    @PostMapping("/{orgId}/join-id/regenerate")
+    public ResponseEntity<JoinIdDto> regenerateJoinId(@AuthenticationPrincipal User user,
+                                                       @PathVariable UUID orgId) {
+        return ResponseEntity.ok(service.regenerateJoinId(user, orgId));
+    }
+
+    /** Departments and programs linked under a university. */
+    @GetMapping("/{orgId}/sub-orgs")
+    public ResponseEntity<List<SubOrgDto>> listSubOrgs(@AuthenticationPrincipal User user,
+                                                        @PathVariable UUID orgId) {
+        return ResponseEntity.ok(service.listSubOrgs(user, orgId));
+    }
+
+    /** Unlinks a sub-organization from the university; the sub-org itself and its members are kept. */
+    @DeleteMapping("/{orgId}/sub-orgs/{subOrgId}")
+    public ResponseEntity<Void> unlinkSubOrg(@AuthenticationPrincipal User user,
+                                             @PathVariable UUID orgId,
+                                             @PathVariable UUID subOrgId) {
+        service.unlinkSubOrg(user, orgId, subOrgId);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/{orgId}/members")
@@ -107,17 +136,31 @@ public class OrganizationAdminController {
 
     // --- DTOs ---
 
+    /**
+     * {@code parentJoinId} is optional and only read for a DEPARTMENT or PROGRAM: a university's Join ID
+     * that lists the new org as a sub-organization of that university.
+     */
     public record CreateOrgRequest(
-        @NotBlank String name,
+        @NotBlank @Size(max = 255) String name,
         @NotNull Organization.OrgType type,
-        UUID parentOrgId,
+        @Size(max = 32) String parentJoinId,
         boolean openJoin
     ) {}
 
-    public record OrgDto(UUID id, String name, Organization.OrgType type, UUID parentOrgId,
-                          String joinCode, boolean openJoin) {}
+    public record OrgDto(UUID id, String name, Organization.OrgType type, UUID parentOrgId, String parentOrgName,
+                          String joinCode, String joinId, boolean openJoin) {}
+
+    public record OrgManageDto(UUID id, String name, Organization.OrgType type,
+                                UUID parentOrgId, String parentOrgName,
+                                String joinCode, String joinId, boolean openJoin,
+                                boolean canAdminister, boolean canManageParent) {}
 
     public record JoinCodeDto(String joinCode) {}
+
+    public record JoinIdDto(String joinId) {}
+
+    public record SubOrgDto(UUID id, String name, Organization.OrgType type,
+                             long memberCount, long pendingCount, Instant createdAt) {}
 
     public record MembershipDto(UUID membershipId, UUID userId, String email,
                                  OrganizationMembership.OrgRole role,
