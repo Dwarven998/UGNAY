@@ -1,18 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { organizationApi, organizationAdminApi } from '../../api/organizationApi';
-import type { MyMembership, OrgMember, OrgType } from '../../../../types';
+import ConfirmDialog from '../../../../components/ui/ConfirmDialog';
+import { useDialog } from '../../../../components/ui/useDialog';
+import { organizationApi } from '../../api/organizationApi';
+import CreateOrganizationCard from '../components/CreateOrganizationCard';
+import { ORG_TYPE_LABEL } from '../../shared/orgTypes';
+import { displayNameFromEmail } from '../../shared/displayName';
+import type { MyMembership, OrgMember } from '../../../../types';
 import { ApiError } from '../../../../api/axiosClient';
 import { useAuth } from '../../../../context/useAuth';
 import { useOrganization } from '../../../../context/useOrganization';
-
-/** Users only have an email, so derive a readable name from its local part. */
-function displayNameFromEmail(email: string): string {
-  const local = email.split('@')[0] ?? email;
-  const words = local.split(/[._-]+/).filter(Boolean);
-  if (words.length === 0) return email;
-  return words.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-}
 
 const STATUS_STYLES: Record<string, string> = {
   APPROVED: 'org-badge-approved',
@@ -30,11 +28,6 @@ export default function OrganizationsPage() {
   const [joining, setJoining] = useState(false);
 
   const [showCreate, setShowCreate] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newType, setNewType] = useState<OrgType>('UNIVERSITY');
-  const [newParentOrgId, setNewParentOrgId] = useState('');
-  const [newOpenJoin, setNewOpenJoin] = useState(false);
-  const [creating, setCreating] = useState(false);
 
   const { user } = useAuth();
   const { refreshMemberships } = useOrganization();
@@ -63,17 +56,8 @@ export default function OrganizationsPage() {
     };
   }, [menuOrgId]);
 
-  // Escape closes whichever dialog is open (unless a leave request is in flight).
-  useEffect(() => {
-    if (!membersOf && !leaveTarget) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      setMembersOf(null);
-      if (!leaving) setLeaveTarget(null);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [membersOf, leaveTarget, leaving]);
+  // Focus, Escape and scroll lock for the Members dialog (the Leave dialog gets the same from ConfirmDialog).
+  const membersDialogRef = useDialog<HTMLDivElement>({ open: Boolean(membersOf), onClose: () => setMembersOf(null) });
 
   const openMembers = async (m: MyMembership) => {
     setMenuOrgId(null);
@@ -141,29 +125,10 @@ export default function OrganizationsPage() {
     }
   };
 
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    setCreating(true);
+  const handleCreated = async () => {
     setError(null);
     setInfo(null);
-    try {
-      const org = await organizationAdminApi.create(
-        newName.trim(),
-        newType,
-        newParentOrgId.trim() || null,
-        newOpenJoin,
-      );
-      setInfo(`Created ${org.name}. Join code: ${org.joinCode}`);
-      setNewName('');
-      setNewParentOrgId('');
-      setNewOpenJoin(false);
-      setShowCreate(false);
-      await load();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Could not create organization.');
-    } finally {
-      setCreating(false);
-    }
+    await Promise.all([load(), refreshMemberships()]);
   };
 
   return (
@@ -208,45 +173,7 @@ export default function OrganizationsPage() {
               </span>
             </button>
           ) : (
-          <div className="org-card">
-            <div className="org-card-title-row">
-              <h3 className="org-card-title">Create an organization</h3>
-              <button onClick={() => setShowCreate(false)} className="org-btn-link">
-                Cancel
-              </button>
-            </div>
-            {/* Create form */}
-            <div className="org-create-form">
-              <input
-                type="text"
-                placeholder="Organization name"
-                value={newName}
-                onChange={e => setNewName(e.target.value)}
-                className="org-input"
-              />
-              <select value={newType} onChange={e => setNewType(e.target.value as OrgType)} className="org-input">
-                <option value="UNIVERSITY">University (top-level)</option>
-                <option value="DEPARTMENT">Department</option>
-                <option value="PROGRAM">Program</option>
-              </select>
-              {newType !== 'UNIVERSITY' && (
-                <input
-                  type="text"
-                  placeholder="Parent organization ID"
-                  value={newParentOrgId}
-                  onChange={e => setNewParentOrgId(e.target.value)}
-                  className="org-input"
-                />
-              )}
-              <label className="org-checkbox-row">
-                <input type="checkbox" checked={newOpenJoin} onChange={e => setNewOpenJoin(e.target.checked)} />
-                <span>Open join (skip officer approval)</span>
-              </label>
-              <button onClick={handleCreate} disabled={creating || !newName.trim()} className="org-btn-primary">
-                {creating ? 'Creating…' : 'Create organization'}
-              </button>
-            </div>
-          </div>
+            <CreateOrganizationCard onClose={() => setShowCreate(false)} onCreated={handleCreated} />
           )}
         </div>
 
@@ -262,7 +189,7 @@ export default function OrganizationsPage() {
                 <div key={m.orgId} className="org-row">
                   <div className="org-row-main">
                     <span className="org-row-name">{m.orgName}</span>
-                    <span className="org-row-type">{m.orgType}</span>
+                    <span className="org-row-type">{ORG_TYPE_LABEL[m.orgType]}</span>
                   </div>
                   <div className="org-row-badges">
                     <span className="org-badge">{m.role}</span>
@@ -314,13 +241,16 @@ export default function OrganizationsPage() {
       </div>
 
       {/* ── View Members dialog ── */}
-      {membersOf && (
+      {membersOf && createPortal(
         <div className="org-modal-backdrop" onClick={() => setMembersOf(null)}>
           <div
+            ref={membersDialogRef}
             className="org-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="org-members-title"
+            aria-busy={membersLoading || undefined}
+            tabIndex={-1}
             onClick={e => e.stopPropagation()}
           >
             <div className="org-modal-header">
@@ -334,15 +264,15 @@ export default function OrganizationsPage() {
                       : `${members.length} ${members.length === 1 ? 'member' : 'members'}`}
                 </p>
               </div>
-              <button type="button" className="org-modal-close" onClick={() => setMembersOf(null)} aria-label="Close">
+              <button type="button" className="org-modal-close" onClick={() => setMembersOf(null)} aria-label="Close dialog">
                 <i className="fi fi-rr-cross-small" aria-hidden="true"></i>
               </button>
             </div>
             <div className="org-modal-body">
               {membersLoading ? (
-                <div className="org-empty">Loading…</div>
+                <div className="org-empty" role="status">Loading…</div>
               ) : membersError ? (
-                <div className="org-alert org-alert-error">{membersError}</div>
+                <div className="org-alert org-alert-error" role="alert">{membersError}</div>
               ) : members.length === 0 ? (
                 <div className="org-empty">No members yet.</div>
               ) : (
@@ -365,39 +295,28 @@ export default function OrganizationsPage() {
                 </ul>
               )}
             </div>
+            <div className="org-modal-footer">
+              <button type="button" className="org-btn-secondary" onClick={() => setMembersOf(null)}>Close</button>
+            </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* ── Leave confirmation dialog ── */}
-      {leaveTarget && (
-        <div className="org-modal-backdrop" onClick={() => !leaving && setLeaveTarget(null)}>
-          <div
-            className="org-modal org-modal-sm"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="org-leave-title"
-            onClick={e => e.stopPropagation()}
-          >
-            <h3 id="org-leave-title" className="org-modal-title">
-              {leaveTarget.status === 'APPROVED' ? `Leave ${leaveTarget.orgName}?` : `Withdraw request to ${leaveTarget.orgName}?`}
-            </h3>
-            <p className="org-modal-text">
-              {leaveTarget.status === 'APPROVED'
-                ? "You'll lose access to this organization's posts and media. You can rejoin later with a join code."
-                : 'Your pending request will be removed. You can request again later with a join code.'}
-            </p>
-            <div className="org-modal-actions">
-              <button type="button" className="org-btn-secondary" onClick={() => setLeaveTarget(null)} disabled={leaving}>
-                Cancel
-              </button>
-              <button type="button" className="org-btn-danger" onClick={() => void handleLeave()} disabled={leaving}>
-                {leaving ? 'Leaving…' : leaveTarget.status === 'APPROVED' ? 'Leave organization' : 'Withdraw request'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={leaveTarget !== null}
+        tone="danger"
+        title={leaveTarget?.status === 'APPROVED' ? `Leave ${leaveTarget.orgName}?` : `Withdraw request to ${leaveTarget?.orgName ?? ''}?`}
+        description={leaveTarget?.status === 'APPROVED'
+          ? "You'll lose access to this organization's posts and media. You can rejoin later with a join code."
+          : 'Your pending request will be removed. You can request again later with a join code.'}
+        confirmLabel={leaveTarget?.status === 'APPROVED' ? 'Leave organization' : 'Withdraw request'}
+        busyLabel="Leaving…"
+        busy={leaving}
+        onCancel={() => { if (!leaving) setLeaveTarget(null); }}
+        onConfirm={() => void handleLeave()}
+      />
 
       <style>{`
         .org-page { padding: 28px 32px; max-width: 900px; }
@@ -409,21 +328,19 @@ export default function OrganizationsPage() {
         .org-alert-error { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
         .org-alert-info { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
 
-        .org-actions-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 28px; }
+        .org-actions-row { display: grid; grid-template-columns: 1fr 1fr; align-items: start; gap: 16px; margin-bottom: 28px; }
         .org-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 18px; }
         .org-card-title { font-size: 14px; font-weight: 700; color: #0f172a; margin: 0 0 12px; }
         .org-card-title-row { display: flex; align-items: center; justify-content: space-between; }
         .org-card-title-row .org-card-title { margin: 0; }
 
         .org-inline-form { display: flex; gap: 8px; }
-        .org-create-form { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
         .org-input {
           flex: 1; height: 38px; border: 2px solid #e2e8f0; border-radius: 10px;
           padding: 0 12px; font-size: 13px; color: #0f172a; outline: none;
           background: #f8fafc; font-family: inherit;
         }
         .org-input:focus { border-color: #3b82f6; background: #fff; }
-        .org-checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #475569; }
 
         .org-btn-primary {
           height: 38px; padding: 0 18px; background: #0C447C; color: #fff; border: none;
@@ -518,32 +435,56 @@ export default function OrganizationsPage() {
           position: fixed; inset: 0; z-index: 900;
           background: rgba(2,6,23,0.55); backdrop-filter: blur(3px);
           display: flex; align-items: center; justify-content: center; padding: 16px;
+          animation: ugDialogFade 0.18s ease-out;
         }
         .org-modal {
           width: 100%; max-width: 460px; max-height: min(640px, calc(100vh - 32px));
-          display: flex; flex-direction: column;
-          background: #fff; border-radius: 16px; padding: 20px;
-          box-shadow: 0 24px 60px rgba(2,6,23,0.3);
+          display: flex; flex-direction: column; overflow: hidden;
+          background: #fff; border: 1px solid #e2e8f0; border-radius: 16px;
+          box-shadow: 0 24px 60px rgba(2,6,23,0.22), 0 4px 12px rgba(2,6,23,0.06);
+          animation: ugDialogIn 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+          outline: none;
         }
         .org-modal-sm { max-width: 400px; }
-        .org-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-        .org-modal-title { font-size: 16px; font-weight: 700; color: #0f172a; margin: 0; overflow-wrap: anywhere; }
+        .org-modal-header {
+          display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+          padding: 20px 16px 14px 22px; border-bottom: 1px solid #f1f5f9; flex-shrink: 0;
+        }
+        .org-modal-title { font-size: 16px; font-weight: 700; line-height: 1.35; color: #0f172a; margin: 0; overflow-wrap: anywhere; }
         .org-modal-sub { font-size: 12.5px; color: #64748b; margin: 4px 0 0; }
         .org-modal-text { font-size: 13px; color: #475569; line-height: 1.5; margin: 8px 0 18px; }
         .org-modal-close {
-          width: 32px; height: 32px; flex-shrink: 0;
+          width: 34px; height: 34px; flex-shrink: 0; margin-top: -4px;
           display: flex; align-items: center; justify-content: center;
-          border: none; border-radius: 8px; background: transparent; color: #64748b; font-size: 18px; cursor: pointer;
+          border: none; border-radius: 9px; background: transparent; color: #64748b; font-size: 18px; cursor: pointer;
+          transition: background-color 0.15s, color 0.15s, box-shadow 0.15s;
         }
         .org-modal-close i { display: flex; line-height: 1; }
         .org-modal-close:hover { background: #f1f5f9; color: #0f172a; }
-        .org-modal-body { overflow-y: auto; min-height: 0; }
+        .org-modal-close:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,0.35); }
+        .org-modal-body { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 10px 14px 12px; }
+        .org-modal-body > .org-empty, .org-modal-body > .org-alert { margin: 8px; }
+        .org-modal-footer {
+          display: flex; justify-content: flex-end; gap: 8px; flex-shrink: 0;
+          padding: 12px 16px; border-top: 1px solid #f1f5f9; background: #fbfcfe;
+        }
         .org-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
         .org-btn-secondary {
           height: 38px; padding: 0 16px; background: #fff; color: #334155; border: 1px solid #e2e8f0;
           border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+          transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
         }
-        .org-btn-secondary:hover:not(:disabled) { background: #f8fafc; }
+        .org-btn-secondary:hover:not(:disabled) { background: #f8fafc; border-color: #cbd5e1; }
+        .org-btn-secondary:focus-visible, .org-btn-danger:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,0.35); }
+        @media (max-width: 480px) {
+          .org-modal-backdrop { align-items: flex-end; padding: 0; }
+          .org-modal { max-width: none; max-height: 88vh; border-radius: 18px 18px 0 0; border-bottom: none; }
+          .org-modal-footer { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+          .org-modal-footer .org-btn-secondary { flex: 1; height: 44px; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .org-modal-backdrop, .org-modal { animation: none; }
+        }
         .org-btn-danger {
           height: 38px; padding: 0 16px; background: #dc2626; color: #fff; border: none;
           border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;

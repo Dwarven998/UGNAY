@@ -1,9 +1,11 @@
 // features/media/pages/MediaRepository.tsx
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { ChangeEvent } from 'react';
+import type { ChangeEvent, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { mediaApi } from '../api/mediaApi.ts';
+import ConfirmDialog from '../../../components/ui/ConfirmDialog';
+import { writeComposerPrefill } from '../../posts/composerHandoff';
 import { useOrganization } from '../../../context/useOrganization';
 import { useFacebookConnection } from '../../posts/hooks/useFacebookConnection';
 import type { MediaFolder, MediaAsset, MediaRecommendation } from '../../../types';
@@ -31,6 +33,10 @@ function MediaRepositoryContent() {
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
   const [folderError, setFolderError] = useState('');
   const [folderToDelete, setFolderToDelete] = useState<MediaFolder | null>(null);
+  const [assetError, setAssetError] = useState('');
+  const [assetToDelete, setAssetToDelete] = useState<MediaAsset | null>(null);
+  const [deletingAsset, setDeletingAsset] = useState(false);
+  const [assetsLoading, setAssetsLoading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [aiDescription, setAiDescription] = useState('');
@@ -67,8 +73,17 @@ function MediaRepositoryContent() {
     setAiError('');
     setSelectMode(false);
     setSelectedIds(new Set());
-    const data = await mediaApi.getAssets(folder.id);
-    setAssets(data);
+    setAssetError('');
+    setAssets([]);
+    setAssetsLoading(true);
+    try {
+      const data = await mediaApi.getAssets(folder.id);
+      setAssets(data);
+    } catch (err) {
+      setAssetError(err instanceof Error && err.message ? `Couldn't load this folder: ${err.message}` : "Couldn't load this folder.");
+    } finally {
+      setAssetsLoading(false);
+    }
   };
 
   const runRecommendation = async () => {
@@ -144,31 +159,59 @@ function MediaRepositoryContent() {
     });
   };
 
-  const handleDeleteAsset = async (assetId: string) => {
-    await mediaApi.deleteAsset(assetId);
-    setAssets(prev => prev.filter(a => a.id !== assetId));
-    setAiResults(prev => prev ? prev.filter(r => r.id !== assetId) : prev);
-    setSelectedIds(prev => {
-      if (!prev.has(assetId)) return prev;
-      const next = new Set(prev);
-      next.delete(assetId);
-      return next;
-    });
-    loadFolders(); // refresh asset count
+  const handleDeleteAsset = async () => {
+    const asset = assetToDelete;
+    if (!asset || deletingAsset) return;
+    const assetId = asset.id;
+    setDeletingAsset(true);
+    setAssetError('');
+    try {
+      await mediaApi.deleteAsset(assetId);
+      setAssets(prev => prev.filter(a => a.id !== assetId));
+      setAiResults(prev => prev ? prev.filter(r => r.id !== assetId) : prev);
+      setSelectedIds(prev => {
+        if (!prev.has(assetId)) return prev;
+        const next = new Set(prev);
+        next.delete(assetId);
+        return next;
+      });
+      setAssetToDelete(null);
+      loadFolders(); // refresh asset count
+    } catch (err) {
+      setAssetError(err instanceof Error && err.message ? err.message : 'Could not delete the file.');
+      setAssetToDelete(null);
+    } finally {
+      setDeletingAsset(false);
+    }
   };
 
   const handleUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     if (!selectedFolder || !e.target.files?.length) return;
+    const files = Array.from(e.target.files);
+    e.target.value = '';
     setIsUploading(true);
+    setAssetError('');
+    let uploaded = 0;
     try {
-      for (const file of Array.from(e.target.files)) {
+      for (const file of files) {
         const asset = await mediaApi.uploadAsset(selectedFolder.id, file);
         setAssets(prev => [...prev, asset]);
+        uploaded += 1;
       }
-      loadFolders(); // refresh asset count
+    } catch (err) {
+      const reason = err instanceof Error && err.message ? err.message : 'Upload failed.';
+      setAssetError(uploaded > 0 ? `${uploaded} of ${files.length} files uploaded. ${reason}` : reason);
     } finally {
       setIsUploading(false);
+      if (uploaded > 0) loadFolders(); // refresh asset count
     }
+  };
+
+  /** Opens the post composer with these images already attached. */
+  const startPostWith = (items: { id: string; fileUrl: string }[]) => {
+    if (items.length === 0) return;
+    writeComposerPrefill({ media: items.map(a => ({ id: a.id, url: a.fileUrl })), step: 1, source: 'media' });
+    navigate('/create');
   };
 
   const toggleSelectMode = () => {
@@ -367,6 +410,13 @@ function MediaRepositoryContent() {
                 </div>
               )}
 
+              {assetError && (
+                <div className="mr-asset-error" role="alert">
+                  <span>{assetError}</span>
+                  <button type="button" onClick={() => setAssetError('')} aria-label="Dismiss error">×</button>
+                </div>
+              )}
+
               {aiResults ? (
                 <div className="mr-assets-grid">
                   {aiResults.map((result, i) => (
@@ -393,6 +443,16 @@ function MediaRepositoryContent() {
                             </svg>
                             Caption Studio
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => startPostWith([result])}
+                            className="mr-overlay-btn mr-overlay-btn-primary"
+                          >
+                            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                            </svg>
+                            Use in Post
+                          </button>
                         </div>
                       </div>
                       <div className="mr-asset-info mr-asset-info-reason">
@@ -413,6 +473,18 @@ function MediaRepositoryContent() {
                       className={`mr-asset-card ${selectMode ? 'mr-asset-card-selectable' : ''} ${selectMode && isSelected ? 'mr-asset-card-selected' : ''} ${selectMode && !isImage ? 'mr-asset-card-disabled' : ''}`}
                       style={{ animationDelay: `${i * 0.04}s` }}
                       onClick={() => selectMode && toggleAssetSelected(asset)}
+                      {...(selectMode && isImage ? {
+                        role: 'checkbox',
+                        tabIndex: 0,
+                        'aria-checked': isSelected,
+                        'aria-label': asset.fileName,
+                        onKeyDown: (e: ReactKeyboardEvent<HTMLDivElement>) => {
+                          if (e.key === ' ' || e.key === 'Enter') {
+                            e.preventDefault();
+                            toggleAssetSelected(asset);
+                          }
+                        },
+                      } : {})}
                     >
                       <div className="mr-asset-preview">
                         {isImage ? (
@@ -453,8 +525,21 @@ function MediaRepositoryContent() {
                               </svg>
                               Caption Studio
                             </button>
+                            {isImage && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); startPostWith([asset]); }}
+                                className="mr-overlay-btn mr-overlay-btn-primary"
+                              >
+                                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                                </svg>
+                                Use in Post
+                              </button>
+                            )}
                             <button
-                              onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset.id); }}
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setAssetToDelete(asset); }}
                               className="mr-overlay-btn mr-overlay-btn-danger"
                             >
                               <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -472,7 +557,12 @@ function MediaRepositoryContent() {
                     </div>
                   );
                 })}
-                {assets.length === 0 && (
+                {assetsLoading && (
+                  <div className="mr-assets-empty" role="status">
+                    <p className="mr-assets-empty-text">Loading media…</p>
+                  </div>
+                )}
+                {!assetsLoading && assets.length === 0 && (
                   <div className="mr-assets-empty">
                     <div className="mr-assets-empty-icon">
                       <svg width="32" height="32" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.2}>
@@ -492,9 +582,18 @@ function MediaRepositoryContent() {
                     {selectedIds.size} image{selectedIds.size !== 1 ? 's' : ''} selected
                     {selectedIds.size >= MAX_CAPTION_IMAGES ? ` (max ${MAX_CAPTION_IMAGES})` : ''}
                   </span>
-                  <button onClick={proceedToCaptionStudio} className="mr-btn-continue-caption">
-                    Continue to Caption Studio →
-                  </button>
+                  <div className="mr-selection-actions">
+                    <button
+                      type="button"
+                      onClick={() => startPostWith(assets.filter(a => selectedIds.has(a.id)))}
+                      className="mr-btn-create-post"
+                    >
+                      Create Post
+                    </button>
+                    <button type="button" onClick={proceedToCaptionStudio} className="mr-btn-continue-caption">
+                      Continue to Caption Studio →
+                    </button>
+                  </div>
                 </div>
               )}
             </>
@@ -515,30 +614,6 @@ function MediaRepositoryContent() {
       {/* Portaled to <body> so they sit above the dashboard sidebar's own stacking context */}
       {createPortal(
         <>
-        {/* Delete-folder confirmation */}
-        {folderToDelete && (
-          <div className="mr-modal-backdrop" onClick={() => setFolderToDelete(null)}>
-            <div
-              className="mr-modal"
-              role="alertdialog"
-              aria-modal="true"
-              aria-labelledby="mr-delete-title"
-              onClick={e => e.stopPropagation()}
-            >
-              <h3 id="mr-delete-title" className="mr-modal-title">Delete “{folderToDelete.name}”?</h3>
-              <p className="mr-modal-text">
-                {folderToDelete.assetCount > 0
-                  ? `This permanently deletes the folder and its ${folderToDelete.assetCount} file${folderToDelete.assetCount !== 1 ? 's' : ''}. This can't be undone.`
-                  : "This folder is empty. This can't be undone."}
-              </p>
-              <div className="mr-modal-actions">
-                <button onClick={() => setFolderToDelete(null)} className="mr-modal-cancel">Cancel</button>
-                <button onClick={deleteFolder} className="mr-modal-confirm">Delete Folder</button>
-              </div>
-            </div>
-          </div>
-        )}
-  
         {/* Blocking loader: keeps the page unclickable while a folder is being created/deleted */}
         {busyMessage && (
           <div className="mr-busy-overlay" role="status" aria-live="polite">
@@ -554,6 +629,31 @@ function MediaRepositoryContent() {
         </>,
         document.body
       )}
+
+      {/* Delete-folder confirmation */}
+      <ConfirmDialog
+        open={folderToDelete !== null}
+        tone="danger"
+        title={`Delete “${folderToDelete?.name ?? ''}”?`}
+        description={folderToDelete && folderToDelete.assetCount > 0
+          ? `This permanently deletes the folder and its ${folderToDelete.assetCount} file${folderToDelete.assetCount !== 1 ? 's' : ''}. This can't be undone.`
+          : "This folder is empty. This can't be undone."}
+        confirmLabel="Delete Folder"
+        onCancel={() => setFolderToDelete(null)}
+        onConfirm={() => void deleteFolder()}
+      />
+
+      <ConfirmDialog
+        open={assetToDelete !== null}
+        tone="danger"
+        title={`Delete “${assetToDelete?.fileName ?? 'this file'}”?`}
+        description="The file is removed from your Media Repository. Scheduled posts that use it may no longer be able to attach it. This can’t be undone."
+        confirmLabel="Delete File"
+        busyLabel="Deleting…"
+        busy={deletingAsset}
+        onCancel={() => { if (!deletingAsset) setAssetToDelete(null); }}
+        onConfirm={() => void handleDeleteAsset()}
+      />
 
       <style>{`
         .mr-layout {
@@ -655,46 +755,6 @@ function MediaRepositoryContent() {
         }
         .mr-btn-delete-folder:hover:not(:disabled) { background: #fef2f2; border-color: #fca5a5; }
         .mr-btn-delete-folder:disabled { opacity: 0.6; cursor: not-allowed; }
-
-        /* Confirmation modal */
-        .mr-modal-backdrop {
-          position: fixed;
-          inset: 0;
-          z-index: 900;
-          background: rgba(2,6,23,0.55);
-          backdrop-filter: blur(3px);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 20px;
-        }
-        .mr-modal {
-          width: 100%;
-          max-width: 400px;
-          background: #ffffff;
-          border-radius: 16px;
-          padding: 24px;
-          box-shadow: 0 20px 50px rgba(0,0,0,0.25);
-          animation: fadeUp 0.25s cubic-bezier(0.16,1,0.3,1);
-        }
-        .mr-modal-title { margin: 0 0 8px; font-size: 17px; font-weight: 700; color: #0f172a; word-break: break-word; }
-        .mr-modal-text { margin: 0 0 20px; font-size: 13px; line-height: 1.6; color: #64748b; }
-        .mr-modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-        .mr-modal-cancel,
-        .mr-modal-confirm {
-          height: 38px;
-          padding: 0 18px;
-          border-radius: 10px;
-          font-size: 13px;
-          font-weight: 600;
-          cursor: pointer;
-          font-family: inherit;
-          border: 1px solid transparent;
-        }
-        .mr-modal-cancel { background: #f1f5f9; color: #475569; }
-        .mr-modal-cancel:hover { background: #e2e8f0; }
-        .mr-modal-confirm { background: #dc2626; color: #ffffff; }
-        .mr-modal-confirm:hover { background: #b91c1c; }
 
         /* Blocking loader */
         .mr-busy-overlay {
@@ -921,6 +981,52 @@ function MediaRepositoryContent() {
           font-family: inherit;
         }
         .mr-btn-continue-caption:hover { background: #f1f5f9; }
+        .mr-selection-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+        .mr-btn-create-post {
+          background: transparent;
+          color: #ffffff;
+          border: 1px solid rgba(255,255,255,0.35);
+          padding: 10px 18px;
+          border-radius: 10px;
+          font-weight: 700;
+          font-size: 13px;
+          cursor: pointer;
+          font-family: inherit;
+        }
+        .mr-btn-create-post:hover { background: rgba(255,255,255,0.1); }
+        .mr-btn-create-post:focus-visible,
+        .mr-btn-continue-caption:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+        .mr-asset-card-selectable:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,0.45); }
+        .mr-asset-error {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 16px;
+          padding: 12px 16px;
+          border: 1px solid #fecaca;
+          border-left: 4px solid #ef4444;
+          border-radius: 12px;
+          background: #fef2f2;
+          color: #991b1b;
+          font-size: 13px;
+          font-weight: 500;
+        }
+        .mr-asset-error button {
+          width: 28px; height: 28px;
+          flex-shrink: 0;
+          border: none;
+          border-radius: 8px;
+          background: transparent;
+          color: inherit;
+          font-size: 18px;
+          cursor: pointer;
+        }
+        .mr-asset-error button:hover { background: rgba(239,68,68,0.1); }
+        @media (max-width: 640px) {
+          .mr-selection-bar { flex-direction: column; align-items: stretch; gap: 10px; }
+          .mr-selection-actions button { flex: 1; }
+        }
 
         /* ── AI recommendation panel ── */
         .mr-ai-panel {

@@ -16,8 +16,12 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -26,6 +30,8 @@ public class OrganizationAdminService {
     // Excludes visually ambiguous characters (0/O, 1/I) from generated join codes.
     private static final String CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     private static final int CODE_LENGTH = 8;
+    private static final String JOIN_ID_PREFIX = "UNI-";
+    private static final int JOIN_ID_LENGTH = 6;
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final OrganizationRepository organizationRepository;
@@ -38,19 +44,23 @@ public class OrganizationAdminService {
 
     @Transactional
     public OrganizationAdminController.OrgDto createOrganization(User creator, OrganizationAdminController.CreateOrgRequest req) {
+        // A Department or Program may optionally be linked under a university by entering that university's
+        // Join ID. The Join ID itself is the credential (like a join code), so no role on the university is needed.
         Organization parent = null;
-        if (req.parentOrgId() != null) {
-            parent = getOrgOrThrow(req.parentOrgId());
-            // Creating a child org requires admin rights on the parent org.
-            permissionService.requireOrgAdmin(creator.getId(), parent.getId());
+        String parentJoinId = normalizeJoinId(req.parentJoinId());
+        if (req.type() != OrgType.UNIVERSITY && parentJoinId != null) {
+            parent = organizationRepository.findByJoinId(parentJoinId)
+                .filter(o -> o.getType() == OrgType.UNIVERSITY)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                    "No university matches that Join ID. Check it with the university's admin, or leave it blank."));
         }
-        validateHierarchy(req.type(), parent);
 
         Organization org = Organization.builder()
-            .name(req.name())
+            .name(req.name().trim())
             .type(req.type())
             .parentOrganization(parent)
             .joinCode(generateUniqueJoinCode())
+            .joinId(req.type() == OrgType.UNIVERSITY ? generateUniqueJoinId() : null)
             .openJoin(req.openJoin())
             .createdBy(creator)
             .build();
@@ -76,16 +86,79 @@ public class OrganizationAdminService {
     }
 
     @Transactional
+    public OrganizationAdminController.OrgManageDto getManageDetails(User requester, UUID orgId) {
+        permissionService.requireManageOrg(requester.getId(), orgId);
+        Organization org = getOrgOrThrow(orgId);
+        // Universities created before Join IDs existed get one the first time their Manage screen opens.
+        if (org.getType() == OrgType.UNIVERSITY && org.getJoinId() == null) {
+            org.setJoinId(generateUniqueJoinId());
+            organizationRepository.save(org);
+        }
+        Organization parent = org.getParentOrganization();
+        return new OrganizationAdminController.OrgManageDto(
+            org.getId(), org.getName(), org.getType(),
+            parent != null ? parent.getId() : null,
+            parent != null ? parent.getName() : null,
+            org.getJoinCode(), org.getJoinId(), org.isOpenJoin(),
+            permissionService.canAdministerOrg(requester.getId(), orgId),
+            parent != null && permissionService.isOfficerOrAdmin(requester.getId(), parent.getId()));
+    }
+
+    @Transactional
     public OrganizationAdminController.JoinCodeDto regenerateJoinCode(User requester, UUID orgId) {
-        permissionService.requireOrgAdmin(requester.getId(), orgId);
+        permissionService.requireAdministerOrg(requester.getId(), orgId);
         Organization org = getOrgOrThrow(orgId);
         org.setJoinCode(generateUniqueJoinCode());
         organizationRepository.save(org);
         return new OrganizationAdminController.JoinCodeDto(org.getJoinCode());
     }
 
-    public List<OrganizationAdminController.MembershipDto> listMembers(User requester, UUID orgId) {
+    @Transactional
+    public OrganizationAdminController.JoinIdDto regenerateJoinId(User requester, UUID orgId) {
+        permissionService.requireOrgAdmin(requester.getId(), orgId);
+        Organization org = requireUniversity(orgId);
+        org.setJoinId(generateUniqueJoinId());
+        organizationRepository.save(org);
+        return new OrganizationAdminController.JoinIdDto(org.getJoinId());
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrganizationAdminController.SubOrgDto> listSubOrgs(User requester, UUID orgId) {
         permissionService.requireOfficerOrAdmin(requester.getId(), orgId);
+        requireUniversity(orgId);
+        List<Organization> subOrgs = organizationRepository.findByParentOrganizationId(orgId);
+        if (subOrgs.isEmpty()) return List.of();
+
+        Map<UUID, Map<MembershipStatus, Long>> counts = membershipRepository
+            .findByOrganizationIdIn(subOrgs.stream().map(Organization::getId).toList()).stream()
+            .collect(Collectors.groupingBy(m -> m.getOrganization().getId(),
+                Collectors.groupingBy(OrganizationMembership::getStatus, Collectors.counting())));
+
+        return subOrgs.stream()
+            .sorted(Comparator.comparing(Organization::getType).thenComparing(o -> o.getName().toLowerCase()))
+            .map(o -> {
+                Map<MembershipStatus, Long> c = counts.getOrDefault(o.getId(), Map.of());
+                return new OrganizationAdminController.SubOrgDto(o.getId(), o.getName(), o.getType(),
+                    c.getOrDefault(MembershipStatus.APPROVED, 0L),
+                    c.getOrDefault(MembershipStatus.PENDING, 0L),
+                    o.getCreatedAt());
+            })
+            .toList();
+    }
+
+    @Transactional
+    public void unlinkSubOrg(User requester, UUID orgId, UUID subOrgId) {
+        permissionService.requireOrgAdmin(requester.getId(), orgId);
+        Organization subOrg = getOrgOrThrow(subOrgId);
+        if (subOrg.getParentOrganization() == null || !subOrg.getParentOrganization().getId().equals(orgId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Sub-organization not found");
+        }
+        subOrg.setParentOrganization(null);
+        organizationRepository.save(subOrg);
+    }
+
+    public List<OrganizationAdminController.MembershipDto> listMembers(User requester, UUID orgId) {
+        permissionService.requireManageOrg(requester.getId(), orgId);
         return membershipRepository.findByOrganizationId(orgId).stream()
             .map(this::toMembershipDto)
             .toList();
@@ -93,7 +166,7 @@ public class OrganizationAdminService {
 
     @Transactional
     public OrganizationAdminController.MembershipDto approveMembership(User requester, UUID orgId, UUID membershipId) {
-        permissionService.requireOfficerOrAdmin(requester.getId(), orgId);
+        permissionService.requireManageOrg(requester.getId(), orgId);
         OrganizationMembership membership = getMembershipInOrg(orgId, membershipId);
         membership.setStatus(MembershipStatus.APPROVED);
         membership.setJoinedAt(Instant.now());
@@ -103,7 +176,7 @@ public class OrganizationAdminService {
 
     @Transactional
     public OrganizationAdminController.MembershipDto rejectMembership(User requester, UUID orgId, UUID membershipId) {
-        permissionService.requireOfficerOrAdmin(requester.getId(), orgId);
+        permissionService.requireManageOrg(requester.getId(), orgId);
         OrganizationMembership membership = getMembershipInOrg(orgId, membershipId);
         membership.setStatus(MembershipStatus.REJECTED);
         membershipRepository.save(membership);
@@ -113,7 +186,7 @@ public class OrganizationAdminService {
     @Transactional
     public OrganizationAdminController.MembershipDto changeRole(User requester, UUID orgId, UUID membershipId, OrgRole newRole) {
         // Role assignment is admin-only, distinct from approve/reject which officers may also do.
-        permissionService.requireOrgAdmin(requester.getId(), orgId);
+        permissionService.requireAdministerOrg(requester.getId(), orgId);
         OrganizationMembership membership = getMembershipInOrg(orgId, membershipId);
         membership.setRole(newRole);
         membershipRepository.save(membership);
@@ -184,36 +257,45 @@ public class OrganizationAdminService {
 
     // --- helpers ---
 
-    private void validateHierarchy(OrgType type, Organization parent) {
-        switch (type) {
-            case UNIVERSITY -> {
-                if (parent != null) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A university-level organization cannot have a parent");
-                }
-            }
-            case DEPARTMENT -> {
-                if (parent == null || parent.getType() != OrgType.UNIVERSITY) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A department must have a university-level parent");
-                }
-            }
-            case PROGRAM -> {
-                if (parent == null || parent.getType() != OrgType.DEPARTMENT) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A program must have a department-level parent");
-                }
-            }
-        }
-    }
-
     private String generateUniqueJoinCode() {
         String code;
         do {
-            StringBuilder sb = new StringBuilder(CODE_LENGTH);
-            for (int i = 0; i < CODE_LENGTH; i++) {
-                sb.append(CODE_ALPHABET.charAt(RANDOM.nextInt(CODE_ALPHABET.length())));
-            }
-            code = sb.toString();
+            code = randomCode(CODE_LENGTH);
         } while (organizationRepository.existsByJoinCode(code));
         return code;
+    }
+
+    /** University Join IDs carry a fixed prefix so they are never mistaken for a member join code. */
+    private String generateUniqueJoinId() {
+        String joinId;
+        do {
+            joinId = JOIN_ID_PREFIX + randomCode(JOIN_ID_LENGTH);
+        } while (organizationRepository.existsByJoinId(joinId));
+        return joinId;
+    }
+
+    private static String randomCode(int length) {
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            sb.append(CODE_ALPHABET.charAt(RANDOM.nextInt(CODE_ALPHABET.length())));
+        }
+        return sb.toString();
+    }
+
+    /** Accepts "uni-abc123", " UNI-ABC123 " or just "ABC123"; returns null for a blank value. */
+    private static String normalizeJoinId(String raw) {
+        if (raw == null) return null;
+        String value = raw.replaceAll("\\s+", "").toUpperCase(Locale.ROOT);
+        if (value.isEmpty()) return null;
+        return value.startsWith(JOIN_ID_PREFIX) ? value : JOIN_ID_PREFIX + value;
+    }
+
+    private Organization requireUniversity(UUID orgId) {
+        Organization org = getOrgOrThrow(orgId);
+        if (org.getType() != OrgType.UNIVERSITY) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only a university can have sub-organizations");
+        }
+        return org;
     }
 
     private Organization getOrgOrThrow(UUID orgId) {
@@ -240,8 +322,10 @@ public class OrganizationAdminService {
     }
 
     private OrganizationAdminController.OrgDto toDto(Organization org) {
-        UUID parentId = org.getParentOrganization() != null ? org.getParentOrganization().getId() : null;
-        return new OrganizationAdminController.OrgDto(org.getId(), org.getName(), org.getType(), parentId, org.getJoinCode(), org.isOpenJoin());
+        Organization parent = org.getParentOrganization();
+        return new OrganizationAdminController.OrgDto(org.getId(), org.getName(), org.getType(),
+            parent != null ? parent.getId() : null, parent != null ? parent.getName() : null,
+            org.getJoinCode(), org.getJoinId(), org.isOpenJoin());
     }
 
     private OrganizationAdminController.MembershipDto toMembershipDto(OrganizationMembership m) {

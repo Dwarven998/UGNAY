@@ -90,7 +90,7 @@ class FacebookPublishingJobTest {
 
         // Status should be set to FAILED
         assertEquals(Post.PostStatus.FAILED, post.getStatus());
-        verify(postRepository).save(post);
+        verify(postRepository).saveAndFlush(post);
 
         // Crucial bug fix verification: organizationRepository.save MUST NEVER be called to wipe credentials
         verify(organizationRepository, never()).save(any());

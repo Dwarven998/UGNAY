@@ -20,7 +20,7 @@ function LoginFormContent() {
     setLoading(true);
     try {
       await login(email, password);
-      navigate('/posts');
+      navigate('/');
     } catch (err: any) {
       const status = err.status || err.response?.status;
       const message = err.message || err.data?.message;

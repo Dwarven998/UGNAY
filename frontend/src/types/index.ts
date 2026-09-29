@@ -64,8 +64,28 @@ export interface OrgDetail {
   name: string;
   type: OrgType;
   parentOrgId: string | null;
+  parentOrgName: string | null;
   joinCode: string;
+  /** University-only code that departments/programs enter to be linked under it. */
+  joinId: string | null;
   openJoin: boolean;
+}
+
+/** Officer/admin view of an org on its Manage screen. */
+export interface OrgManageDetail extends OrgDetail {
+  /** May change roles and regenerate codes (org admin, or admin of its parent university). */
+  canAdminister: boolean;
+  /** Viewer can manage the parent university, so the page links back to it. */
+  canManageParent: boolean;
+}
+
+export interface SubOrg {
+  id: string;
+  name: string;
+  type: OrgType;
+  memberCount: number;
+  pendingCount: number;
+  createdAt: string;
 }
 
 /** Member-facing view of an approved org member (no admin-only fields). */

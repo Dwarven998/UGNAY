@@ -20,6 +20,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class OrganizationPermissionService {
 
+    private final OrganizationRepository organizationRepository;
     private final OrganizationMembershipRepository membershipRepository;
     private final PostDirectoryRepository directoryRepository;
     private final DirectoryContributorRepository contributorRepository;
@@ -49,6 +50,39 @@ public class OrganizationPermissionService {
 
     public boolean isOfficerOrAdmin(UUID userId, UUID orgId) {
         return hasAnyRole(userId, orgId, OrgRole.ADMIN, OrgRole.OFFICER);
+    }
+
+    /** The university a Department or Program is linked under, or empty for a standalone or top-level org. */
+    public Optional<UUID> getParentUniversityId(UUID orgId) {
+        return organizationRepository.findParentUniversityId(orgId);
+    }
+
+    /**
+     * Management access (members, join code) for an org: its own officers/admins, plus the officers/admins
+     * of the university it is linked under. Used only by the organization-management screens, so a
+     * university role never carries over into a sub-org's posts or media.
+     */
+    public boolean canManageOrg(UUID userId, UUID orgId) {
+        if (isOfficerOrAdmin(userId, orgId)) return true;
+        return getParentUniversityId(orgId).map(parentId -> isOfficerOrAdmin(userId, parentId)).orElse(false);
+    }
+
+    /** Admin-level management (roles, regenerating codes): the org's admins or its parent university's admins. */
+    public boolean canAdministerOrg(UUID userId, UUID orgId) {
+        if (isOrgAdmin(userId, orgId)) return true;
+        return getParentUniversityId(orgId).map(parentId -> isOrgAdmin(userId, parentId)).orElse(false);
+    }
+
+    public void requireManageOrg(UUID userId, UUID orgId) {
+        if (!canManageOrg(userId, orgId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Requires officer or admin role");
+        }
+    }
+
+    public void requireAdministerOrg(UUID userId, UUID orgId) {
+        if (!canAdministerOrg(userId, orgId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Requires organization admin role");
+        }
     }
 
     /**

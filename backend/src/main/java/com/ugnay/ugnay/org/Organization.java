@@ -28,6 +28,13 @@ public class Organization {
     @Column(name = "join_code", nullable = false, unique = true)
     private String joinCode;
 
+    /**
+     * University-only code that a Department or Program enters at creation time to be listed as a
+     * sub-organization of this university. Null for departments and programs.
+     */
+    @Column(name = "join_id", unique = true)
+    private String joinId;
+
     @Column(name = "open_join", nullable = false)
     @Builder.Default
     private boolean openJoin = false;
@@ -47,8 +54,8 @@ public class Organization {
     private Instant createdAt = Instant.now();
 
     /**
-     * Fixed 2-3 tier hierarchy: UNIVERSITY -> DEPARTMENT -> PROGRAM.
-     * A DEPARTMENT's parent must be a UNIVERSITY; a PROGRAM's parent must be a DEPARTMENT.
+     * A UNIVERSITY is always top-level. A DEPARTMENT or PROGRAM may stand alone, or be linked under a
+     * UNIVERSITY by entering that university's Join ID when it is created.
      */
     public enum OrgType {
         UNIVERSITY, DEPARTMENT, PROGRAM

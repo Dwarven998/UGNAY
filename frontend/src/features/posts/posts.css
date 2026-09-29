@@ -1,0 +1,699 @@
+/* Shared Post Manager / composer styles: Facebook connection, modal shell, form fields, chips,
+   date-time panel, conflict banner and buttons. */
+
+/* ── Facebook Connection Card ── */
+.upe-fb-connection-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-radius: 12px;
+  padding: 12px 16px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+.upe-fb-connection-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.upe-fb-connection-meta img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.upe-fb-connection-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #1877f2, #42a5f5);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 12px;
+  color: white;
+  flex-shrink: 0;
+}
+
+.upe-fb-connection-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: #94a3b8;
+  margin-bottom: 2px;
+}
+
+.upe-fb-connection-card strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.upe-fb-disconnect-btn {
+  padding: 7px 14px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.upe-fb-disconnect-btn:hover {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.upe-fb-connect-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  background: #1877f2;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+  box-shadow: 0 2px 8px rgba(24,119,242,0.2);
+}
+
+.upe-fb-connect-btn:hover:not(:disabled) {
+  background: #1565c0;
+}
+
+.upe-fb-connect-btn:disabled,
+.upe-fb-disconnect-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.upe-fb-connect-btn:focus-visible,
+.upe-fb-disconnect-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.4);
+}
+
+/* ── Modal Styles ──────────────────────────────────────────────────────────
+   Header and footer stay put while the body scrolls, so the title, close
+   button and primary action are always reachable. */
+.upe-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(2, 6, 23, 0.5);
+  backdrop-filter: blur(4px);
+  animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.upe-modal-card {
+  width: min(760px, 100%);
+  max-height: min(90vh, 900px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.18), 0 4px 12px rgba(2, 6, 23, 0.06);
+  animation: modalSlideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+}
+.upe-modal-card-sm { width: min(600px, 100%); }
+
+@keyframes modalSlideUp {
+  from { opacity: 0; transform: translateY(16px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.upe-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-shrink: 0;
+  padding: 22px 24px 18px 28px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.upe-modal-kicker {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 700;
+  color: #0C447C;
+  margin-bottom: 4px;
+}
+
+.upe-modal-header h2 {
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: #0f172a;
+  margin: 0;
+}
+
+.upe-modal-subtitle {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.upe-modal-close {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  margin-top: -2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.upe-modal-close:hover:not(:disabled) { background: #f1f5f9; border-color: #e2e8f0; color: #0f172a; }
+.upe-modal-close:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.35); }
+.upe-modal-close:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.upe-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  padding: 22px 28px 24px;
+}
+
+.upe-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 16px 24px 16px 28px;
+  border-top: 1px solid #f1f5f9;
+  background: #fbfcfe;
+}
+
+.upe-modal-footer-note {
+  margin-right: auto;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #64748b;
+}
+
+/* Unsaved-changes confirmation, shown in place of the footer actions */
+.upe-modal-discard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.upe-modal-discard-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #92400e;
+}
+.upe-modal-discard-text svg { color: #f59e0b; flex-shrink: 0; }
+.upe-modal-discard-actions { display: flex; gap: 8px; }
+
+/* Inline error inside a modal (replaces browser alerts) */
+.upe-modal-error-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-left: 4px solid #ef4444;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: #991b1b;
+  animation: fadeIn 0.2s ease-out;
+}
+.upe-modal-error-banner svg { color: #ef4444; flex-shrink: 0; margin-top: 1px; }
+
+/* ── Form Fields ── */
+.upe-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.upe-field > span,
+.upe-field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.upe-field-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.upe-field-meta {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #0C447C;
+}
+
+.upe-field-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #94a3b8;
+}
+
+.upe-field input,
+.upe-field textarea,
+.upe-field select,
+.upe-datepicker {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 10px;
+  border: 2px solid #e2e8f0;
+  background: #f8fafc;
+  color: #0f172a;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  font-family: inherit;
+  transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
+  outline: none;
+}
+
+.upe-field select { cursor: pointer; }
+
+.upe-field input:hover,
+.upe-field textarea:hover,
+.upe-field select:hover,
+.upe-datepicker:hover {
+  border-color: #cbd5e1;
+}
+
+.upe-field input:focus,
+.upe-field textarea:focus,
+.upe-field select:focus,
+.upe-datepicker:focus {
+  border-color: #3b82f6;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+}
+
+.upe-field textarea {
+  resize: vertical;
+  min-height: 132px;
+  line-height: 1.6;
+}
+
+.upe-field input::placeholder,
+.upe-field textarea::placeholder {
+  color: #94a3b8;
+}
+
+.upe-grid-two {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.upe-media-preview-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 16px;
+  align-items: end;
+}
+
+.upe-media-preview {
+  height: 120px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+}
+
+.upe-media-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ── Chip Input ── */
+.upe-chip-input-shell {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  border-radius: 10px;
+  border: 2px solid #e2e8f0;
+  background: #f8fafc;
+  padding: 5px 6px;
+  transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
+}
+
+.upe-chip-input-shell:hover { border-color: #cbd5e1; }
+
+.upe-chip-input-shell:focus-within {
+  border-color: #3b82f6;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+}
+
+.upe-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.upe-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 8px;
+  padding: 5px 10px;
+  background: rgba(12,68,124,0.08);
+  color: #0C447C;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.15s, box-shadow 0.15s;
+}
+
+.upe-chip:hover {
+  background: rgba(12,68,124,0.14);
+}
+
+.upe-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px rgba(59,130,246,0.5);
+}
+
+.upe-chip-x {
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+/* The text input inside the chip shell is borderless — the shell is the field. */
+.upe-chip-input-shell input,
+.upe-field .upe-chip-input-shell input {
+  flex: 1;
+  min-width: 160px;
+  min-height: 30px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 4px 6px;
+  font-size: 13.5px;
+  color: #0f172a;
+  font-family: inherit;
+  outline: none;
+}
+
+.upe-chip-input-shell input::placeholder {
+  color: #94a3b8;
+}
+
+/* ── DateTime Panel ── */
+.upe-datetime-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.upe-suggested-toggle {
+  width: fit-content;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.upe-suggested-toggle:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+.upe-suggested-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.35);
+}
+
+.upe-suggested-toggle.is-active {
+  background: rgba(12,68,124,0.08);
+  border-color: rgba(12,68,124,0.2);
+  color: #0C447C;
+}
+
+.upe-datetime-hint {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.upe-datepicker-wrapper {
+  width: 100%;
+}
+
+.upe-datetime-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.upe-datepicker.is-invalid { border-color: #f87171; }
+
+/* Keep the date picker's calendar above modals and the mobile navigation. */
+#datepicker-portal .react-datepicker-popper { z-index: 1200; }
+
+/* ── Conflict Banner ── */
+.upe-conflict-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(245,158,11,0.06);
+  border: 1px solid rgba(245,158,11,0.22);
+  margin-top: 4px;
+}
+
+.upe-conflict-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: rgba(245,158,11,0.14);
+  color: #b45309;
+  font-weight: 800;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.upe-conflict-title {
+  font-weight: 700;
+  font-size: 13px;
+  color: #92400e;
+  margin-bottom: 2px;
+}
+
+.upe-conflict-body {
+  color: #a16207;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* ── Secondary Button ── */
+.upe-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 16px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.upe-secondary-btn:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+.upe-secondary-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.35);
+}
+
+.upe-secondary-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── Primary Button (modal) ── */
+.upe-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  min-width: 120px;
+  padding: 0 20px;
+  background: #0C447C;
+  color: #ffffff;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.15s, box-shadow 0.15s;
+  box-shadow: 0 2px 8px rgba(12,68,124,0.2);
+}
+
+.upe-primary-btn:hover:not(:disabled) {
+  background: #0a3867;
+  box-shadow: 0 4px 14px rgba(12,68,124,0.25);
+}
+
+.upe-primary-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.4);
+}
+
+.upe-primary-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.upe-primary-btn[aria-busy="true"] {
+  opacity: 0.85;
+  cursor: progress;
+}
+
+.upe-btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: spin 0.7s linear infinite;
+}
+
+.upe-danger-text-btn { color: #dc2626; }
+.upe-danger-text-btn:hover:not(:disabled) { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }
+
+/* ── Responsive modal: bottom sheet on phones ── */
+@media (max-width: 640px) {
+  .upe-modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .upe-modal-card,
+  .upe-modal-card-sm {
+    width: 100%;
+    max-height: 92vh;
+    border-radius: 20px 20px 0 0;
+    border-bottom: none;
+    animation-name: modalSheetUp;
+  }
+
+  .upe-modal-header { padding: 18px 16px 14px 20px; }
+  .upe-modal-body { padding: 18px 20px 20px; gap: 18px; }
+  .upe-modal-footer {
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  .upe-modal-footer > .upe-secondary-btn,
+  .upe-modal-footer > .upe-primary-btn {
+    flex: 1;
+    height: 44px;
+  }
+  .upe-modal-footer-note { display: none; }
+  .upe-modal-discard-actions { width: 100%; }
+  .upe-modal-discard-actions > button { flex: 1; height: 44px; }
+
+  .upe-grid-two,
+  .upe-media-preview-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@keyframes modalSheetUp {
+  from { opacity: 0.6; transform: translateY(40px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .upe-modal-backdrop,
+  .upe-modal-card,
+  .upe-modal-error-banner { animation: none; }
+  .upe-btn-spinner { animation-duration: 1.6s; }
+}

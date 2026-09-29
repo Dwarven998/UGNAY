@@ -1,7 +1,7 @@
 import axiosClient from '../../../api/axiosClient';
 import type { ApiResponse } from '../../../api/axiosClient';
 import type {
-  MyMembership, OrgSummary, OrgDetail, OrgMember, OrgMembership, OrgDirectory, OrgContributor, OrgType, OrgRole,
+  MyMembership, OrgSummary, OrgDetail, OrgManageDetail, SubOrg, OrgMember, OrgMembership, OrgType, OrgRole,
 } from '../../../types';
 
 // Member-facing (/api/app/organizations/**)
@@ -24,13 +24,29 @@ export const organizationApi = {
 
 // Officer/Admin-only (/api/admin/organizations/**)
 export const organizationAdminApi = {
-  create: (name: string, type: OrgType, parentOrgId: string | null, openJoin: boolean) =>
-    axiosClient.post<OrgDetail>('/api/admin/organizations', { name, type, parentOrgId, openJoin })
+  /** `parentJoinId` (optional, departments/programs only) links the new org under that university. */
+  create: (name: string, type: OrgType, parentJoinId: string | null, openJoin: boolean) =>
+    axiosClient.post<OrgDetail>('/api/admin/organizations', { name, type, parentJoinId, openJoin })
       .then((r: ApiResponse<OrgDetail>) => r.data),
+
+  getDetails: (orgId: string) =>
+    axiosClient.get<OrgManageDetail>(`/api/admin/organizations/${orgId}`)
+      .then((r: ApiResponse<OrgManageDetail>) => r.data),
 
   regenerateJoinCode: (orgId: string) =>
     axiosClient.post<{ joinCode: string }>(`/api/admin/organizations/${orgId}/join-code/regenerate`)
       .then((r: ApiResponse<{ joinCode: string }>) => r.data),
+
+  regenerateJoinId: (orgId: string) =>
+    axiosClient.post<{ joinId: string }>(`/api/admin/organizations/${orgId}/join-id/regenerate`)
+      .then((r: ApiResponse<{ joinId: string }>) => r.data),
+
+  listSubOrgs: (orgId: string) =>
+    axiosClient.get<SubOrg[]>(`/api/admin/organizations/${orgId}/sub-orgs`)
+      .then((r: ApiResponse<SubOrg[]>) => r.data),
+
+  unlinkSubOrg: (orgId: string, subOrgId: string) =>
+    axiosClient.delete(`/api/admin/organizations/${orgId}/sub-orgs/${subOrgId}`),
 
   listMembers: (orgId: string) =>
     axiosClient.get<OrgMembership[]>(`/api/admin/organizations/${orgId}/members`)
@@ -47,23 +63,4 @@ export const organizationAdminApi = {
   changeRole: (orgId: string, membershipId: string, role: OrgRole) =>
     axiosClient.patch<OrgMembership>(`/api/admin/organizations/${orgId}/members/${membershipId}/role`, { role })
       .then((r: ApiResponse<OrgMembership>) => r.data),
-
-  listDirectories: (orgId: string) =>
-    axiosClient.get<OrgDirectory[]>(`/api/admin/organizations/${orgId}/directories`)
-      .then((r: ApiResponse<OrgDirectory[]>) => r.data),
-
-  createDirectory: (orgId: string, title: string, requiresApproval: boolean) =>
-    axiosClient.post<OrgDirectory>(`/api/admin/organizations/${orgId}/directories`, { title, requiresApproval })
-      .then((r: ApiResponse<OrgDirectory>) => r.data),
-
-  listContributors: (orgId: string, directoryId: string) =>
-    axiosClient.get<OrgContributor[]>(`/api/admin/organizations/${orgId}/directories/${directoryId}/contributors`)
-      .then((r: ApiResponse<OrgContributor[]>) => r.data),
-
-  grantContributor: (orgId: string, directoryId: string, email: string) =>
-    axiosClient.post<OrgContributor>(`/api/admin/organizations/${orgId}/directories/${directoryId}/contributors`, { email })
-      .then((r: ApiResponse<OrgContributor>) => r.data),
-
-  revokeContributor: (orgId: string, directoryId: string, userId: string) =>
-    axiosClient.delete(`/api/admin/organizations/${orgId}/directories/${directoryId}/contributors/${userId}`),
 };

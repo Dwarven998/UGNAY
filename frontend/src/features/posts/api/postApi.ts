@@ -17,6 +17,12 @@ export const postApi = {
       .get<Post[]>(orgId ? `/api/posts?orgId=${orgId}` : '/api/posts')
       .then((r: ApiResponse<Post[]>) => r.data),
 
+  /** Facebook's picture for published posts whose own media was released after publishing (post id → URL). */
+  getPublishedPictures: (orgId?: string | null) =>
+    axiosClient
+      .get<Record<string, string>>(orgId ? `/api/posts/pictures?orgId=${orgId}` : '/api/posts/pictures')
+      .then((r: ApiResponse<Record<string, string>>) => r.data ?? {}),
+
   create: (data: PostUpsertPayload, orgId?: string | null) =>
     axiosClient.post<Post>('/api/posts', { ...data, orgId: orgId ?? undefined }).then((r: ApiResponse<Post>) => r.data),
 

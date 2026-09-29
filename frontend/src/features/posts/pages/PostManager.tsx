@@ -1,16 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { ApiError } from '../../../api/axiosClient';
+import ConfirmDialog from '../../../components/ui/ConfirmDialog';
 import { useAuth } from '../../../context/useAuth';
 import { useOrganization } from '../../../context/useOrganization';
 import type { Post, PostConflict } from '../../../types';
+import { SETUP_FACEBOOK_RETURN_KEY } from '../../setup/setupStatus';
 import { postApi, type PostUpsertPayload } from '../api/postApi';
+import { prefillFromPost } from '../composerHandoff';
 import FacebookPageConnectButton from '../components/FacebookPageConnectButton';
 import { useFacebookConnection } from '../hooks/useFacebookConnection';
 import PostEditorModal, { type PostEditorDraft } from '../components/PostEditorModal';
 import PostPreviewModal from '../components/PostPreviewModal';
 import PostSchedulerCalendar from '../components/PostSchedulerCalendar';
+import PostThumb from '../components/PostThumb';
+import { postCache, postThumbnail } from '../postCache';
+import '../../../components/ui/dialog.css';
+import '../posts.css';
+import './postList.css';
 
 type EditorState = {
   mode: 'create' | 'edit';
@@ -18,46 +26,20 @@ type EditorState = {
   draft?: Partial<PostEditorDraft> | null;
 };
 
-function parseCaptionDraftFromSession(): Partial<PostEditorDraft> | null {
-  const saved = sessionStorage.getItem('caption_draft');
-  if (!saved) {
-    return null;
-  }
+type StatusFilter = 'ALL' | Post['status'];
+type SortOrder = 'soonest' | 'latest';
 
-  sessionStorage.removeItem('caption_draft');
-  try {
-    const data = JSON.parse(saved) as {
-      caption?: string;
-      hashtags?: string[];
-      tone?: string;
-      imageUrl?: string;
-      imageUrls?: string[];
-      assetId?: string;
-      assetIds?: string[];
-    };
-    const resolvedUrls = data.imageUrls && data.imageUrls.length > 0
-      ? data.imageUrls
-      : (data.imageUrl ? [data.imageUrl] : []);
-    const resolvedAssetIds = data.assetIds && data.assetIds.length > 0
-      ? data.assetIds
-      : (data.assetId ? [data.assetId] : []);
-
-    return {
-      caption: data.caption ?? '',
-      /* Keep hashtags as-is (with # prefix) — the backend's FacebookPublishingJob
-         uses String.join(" ", hashtags) and expects # to already be present. */
-      hashtags: data.hashtags ?? [],
-      tone: data.tone ?? 'FORMAL',
-      mediaAssetId: resolvedAssetIds[0] || undefined,
-      mediaAssetIds: resolvedAssetIds,
-      mediaPreviewUrl: resolvedUrls[0] || undefined,
-      mediaPreviewUrls: resolvedUrls,
-      fromCaptionStudio: true,
-    };
-  } catch {
-    return null;
-  }
-}
+const STATUS_TABS: { key: StatusFilter; label: string }[] = [
+  { key: 'ALL', label: 'All' },
+  { key: 'DRAFT', label: 'Drafts' },
+  { key: 'SCHEDULED', label: 'Scheduled' },
+  { key: 'PENDING_REVIEW', label: 'Pending' },
+  { key: 'PUBLISHED', label: 'Published' },
+  { key: 'FAILED', label: 'Failed' },
+  { key: 'REJECTED', label: 'Rejected' },
+];
+const isStatusFilter = (value: string | null): value is StatusFilter =>
+  STATUS_TABS.some(tab => tab.key === value);
 
 function getDefaultDraft(date?: Date | null, initial?: Partial<PostEditorDraft> | null): Partial<PostEditorDraft> {
   return {
@@ -73,16 +55,38 @@ function getDefaultDraft(date?: Date | null, initial?: Partial<PostEditorDraft> 
   };
 }
 
+const dayKey = (date: Date) => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+
+function dayLabel(date: Date) {
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (dayKey(date) === dayKey(today)) return 'Today';
+  if (dayKey(date) === dayKey(tomorrow)) return 'Tomorrow';
+  if (dayKey(date) === dayKey(yesterday)) return 'Yesterday';
+  return date.toLocaleDateString(undefined, {
+    weekday: 'long', month: 'long', day: 'numeric',
+    year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric',
+  });
+}
+
 interface ScopedPosts { scopeKey: string; items: Post[] }
 const NO_POSTS: Post[] = [];
 
+type PendingAction = { kind: 'delete' | 'publish'; post: Post } | null;
+
 export default function PostManager() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view: 'list' | 'calendar' = location.pathname.startsWith('/calendar') ? 'calendar' : 'list';
   const { user } = useAuth();
   const { activeOrgId, activeOrg } = useOrganization();
   const {
     connected: facebookConnected,
+    pageName,
     refresh: refreshFacebookConnection,
     resolved: facebookResolved,
     scopeKey,
@@ -92,26 +96,49 @@ export default function PostManager() {
      instead of leaving the previous Page's posts on screen until the next fetch lands. */
   const [postsState, setPostsState] = useState<ScopedPosts>({ scopeKey: '', items: [] });
   const [pendingState, setPendingState] = useState<ScopedPosts>({ scopeKey: '', items: [] });
-  const posts = postsState.scopeKey === scopeKey ? postsState.items : NO_POSTS;
+  const [picturesState, setPicturesState] = useState<{ scopeKey: string; items: Record<string, string> }>({ scopeKey: '', items: {} });
+  // The last list seen for this Page is shown right away while the fresh one loads.
+  const cachedPosts = useMemo(() => (facebookResolved ? postCache.getPosts(scopeKey) : null), [facebookResolved, scopeKey]);
+  const cachedPictures = useMemo(() => (facebookResolved ? postCache.getPictures(scopeKey) : null), [facebookResolved, scopeKey]);
+  const posts = postsState.scopeKey === scopeKey ? postsState.items : (cachedPosts ?? NO_POSTS);
   const pendingPosts = pendingState.scopeKey === scopeKey ? pendingState.items : NO_POSTS;
+  const pictures = picturesState.scopeKey === scopeKey ? picturesState.items : cachedPictures;
+  const postsLoaded = postsState.scopeKey === scopeKey || cachedPosts !== null;
   const scopeKeyRef = useRef(scopeKey);
   useEffect(() => { scopeKeyRef.current = scopeKey; }, [scopeKey]);
   const setPosts = useCallback((update: Post[] | ((current: Post[]) => Post[])) => {
     setPostsState(prev => {
-      const base = prev.scopeKey === scopeKey ? prev.items : NO_POSTS;
+      const base = prev.scopeKey === scopeKey ? prev.items : (postCache.getPosts(scopeKey) ?? NO_POSTS);
       return { scopeKey, items: typeof update === 'function' ? update(base) : update };
     });
   }, [scopeKey]);
+  // Every change to the list (load, create, delete, publish) refreshes the cached copy.
+  useEffect(() => {
+    if (postsState.scopeKey) postCache.setPosts(postsState.scopeKey, postsState.items);
+  }, [postsState]);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [conflict, setConflict] = useState<PostConflict | null>(null);
   const [loading, setLoading] = useState(false);
   const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
   const [moderatingPostId, setModeratingPostId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [editorError, setEditorError] = useState('');
   const [info, setInfo] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [previewPost, setPreviewPost] = useState<Post | null>(null);
   const [appealBusy, setAppealBusy] = useState(false);
   const [appealError, setAppealError] = useState('');
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState('');
+
+  const statusParam = searchParams.get('status');
+  const statusFilter: StatusFilter = isStatusFilter(statusParam) ? statusParam : 'ALL';
+  const highlightId = searchParams.get('highlight');
+  const [search, setSearch] = useState('');
+  const [sortOverride, setSortOverride] = useState<SortOrder | null>(null);
+  const sortOrder: SortOrder = sortOverride
+    ?? (statusFilter === 'SCHEDULED' || statusFilter === 'PENDING_REVIEW' ? 'soonest' : 'latest');
 
   // Anything opened for a post of the previous Page must not stay open once the Page changes
   // (adjusted during render, so the old Page's post is never painted for the new one).
@@ -119,6 +146,7 @@ export default function PostManager() {
   if (openedForScope !== scopeKey) {
     setOpenedForScope(scopeKey);
     setPreviewPost(null);
+    setPendingAction(null);
     setEditor(current => (current?.mode === 'edit' ? null : current));
   }
 
@@ -135,9 +163,15 @@ export default function PostManager() {
     try {
       const data = await postApi.getAll(activeOrgId);
       // A slow response for a Page that has since been switched away from must not land on the new Page.
-      if (scopeKeyRef.current === requestedScope) setPostsState({ scopeKey: requestedScope, items: data });
+      if (scopeKeyRef.current === requestedScope) {
+        setPostsState({ scopeKey: requestedScope, items: data });
+        setLoadError('');
+      }
     } catch (err) {
       console.error('Failed to fetch posts:', err);
+      if (scopeKeyRef.current === requestedScope) {
+        setLoadError(err instanceof Error && err.message ? err.message : 'Posts could not be loaded.');
+      }
     }
   }, [activeOrgId, facebookResolved, scopeKey]);
 
@@ -169,13 +203,31 @@ export default function PostManager() {
     return () => clearInterval(intervalId);
   }, [loadPosts, loadPendingPosts]);
 
+  /* Published posts no longer keep their uploaded files, so their picture is looked up on Facebook. Only
+     refetched when the set of such posts changes, not on every 15-second refresh. */
+  const pictureTargets = useMemo(
+    () => posts
+      .filter(post => post.status === 'PUBLISHED' && !post.mediaUrl && !(post.mediaUrls && post.mediaUrls.length > 0))
+      .map(post => post.id)
+      .join(','),
+    [posts],
+  );
   useEffect(() => {
-    const initialDraft = parseCaptionDraftFromSession();
-    if (initialDraft) {
-      setEditor({ mode: 'create', draft: initialDraft });
-    }
-  }, []);
+    if (!facebookResolved || !facebookConnected || !pictureTargets) return;
+    let current = true;
+    const requestedScope = scopeKey;
+    postApi.getPublishedPictures(activeOrgId).then(
+      items => {
+        if (!current || scopeKeyRef.current !== requestedScope) return;
+        setPicturesState({ scopeKey: requestedScope, items });
+        postCache.setPictures(requestedScope, items);
+      },
+      err => console.error('Failed to load published post pictures:', err),
+    );
+    return () => { current = false; };
+  }, [activeOrgId, facebookConnected, facebookResolved, pictureTargets, scopeKey]);
 
+  // Facebook OAuth always returns to /posts?facebook=…; hand it back to first-time setup if that started it.
   useEffect(() => {
     const facebookState = searchParams.get('facebook');
     if (!facebookState) {
@@ -183,29 +235,67 @@ export default function PostManager() {
     }
 
     const message = searchParams.get('message');
+    let returnToSetup = false;
+    try {
+      returnToSetup = sessionStorage.getItem(SETUP_FACEBOOK_RETURN_KEY) === '1';
+      sessionStorage.removeItem(SETUP_FACEBOOK_RETURN_KEY);
+    } catch {
+      // ignore
+    }
+    if (returnToSetup) {
+      const query = new URLSearchParams({ facebook: facebookState });
+      if (message) query.set('message', message);
+      navigate(`/setup?${query.toString()}`, { replace: true });
+      return;
+    }
+
     void refreshFacebookConnection();
     if (facebookState === 'failed') {
       setError(message || 'Facebook connection failed.');
     } else {
       setError('');
+      setInfo('Facebook Page connected. You can now publish and schedule posts.');
     }
 
     navigate('/posts', { replace: true });
   }, [navigate, refreshFacebookConnection, searchParams]);
 
+  // Arriving from the composer ("View Post"): bring that post into view and mark it briefly.
+  useEffect(() => {
+    if (!highlightId || !postsLoaded || view !== 'list') return;
+    const el = document.getElementById(`post-${highlightId}`);
+    el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [highlightId, postsLoaded, view]);
+
+  const setStatusFilter = (next: StatusFilter) => {
+    const params = new URLSearchParams(searchParams);
+    if (next === 'ALL') params.delete('status');
+    else params.set('status', next);
+    params.delete('highlight');
+    setSearchParams(params, { replace: true });
+    setSortOverride(null);
+  };
+
+  /** The composer is the one place posts are created; a calendar day pre-fills its schedule. */
   const openCreate = (date?: Date) => {
-    if (!facebookConnected) {
-      setError('Connect your Facebook Page to enable post scheduling.');
+    if (!date) {
+      navigate('/create');
       return;
     }
-    setConflict(null);
-    setError('');
-    setEditor({ mode: 'create', draft: getDefaultDraft(date) });
+    const when = new Date(date);
+    // Month cells report midnight — use the evening slot the composer suggests by default.
+    if (when.getHours() === 0 && when.getMinutes() === 0) when.setHours(19, 0, 0, 0);
+    navigate(when.getTime() > Date.now() ? `/create?date=${encodeURIComponent(when.toISOString())}` : '/create');
+  };
+
+  const duplicatePost = (post: Post) => {
+    prefillFromPost(post);
+    navigate('/create');
   };
 
   const openEdit = (post: Post) => {
     setConflict(null);
-    setError('');
+    setEditorError('');
     const postUrls = post.mediaUrls && post.mediaUrls.length > 0
       ? post.mediaUrls
       : (post.mediaUrl ? [post.mediaUrl] : []);
@@ -227,7 +317,7 @@ export default function PostManager() {
   const closeEditor = () => {
     setEditor(null);
     setConflict(null);
-    setError('');
+    setEditorError('');
   };
 
   /* A SCHEDULED org post is locked from direct editing — clicking it opens a read-only preview
@@ -296,14 +386,14 @@ export default function PostManager() {
 
     try {
       setLoading(true);
-      setError('');
+      setEditorError('');
       setInfo('');
       const saved = editor?.mode === 'edit' && editor.post
         ? await postApi.update(editor.post.id, payload, activeOrgId)
         : await postApi.create(payload, activeOrgId);
-      if (saved.status === 'PENDING_REVIEW') {
-        setInfo('Submitted for officer/admin approval before it can be scheduled.');
-      }
+      setInfo(saved.status === 'PENDING_REVIEW'
+        ? 'Submitted for officer/admin approval before it can be scheduled.'
+        : 'Post updated.');
       await loadPosts();
       closeEditor();
     } catch (caughtError) {
@@ -311,19 +401,41 @@ export default function PostManager() {
         setConflict(caughtError.data as PostConflict);
         return;
       }
-      if (caughtError instanceof ApiError && caughtError.status === 428) {
-        setError(caughtError.message);
-        return;
-      }
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save post');
+      setEditorError(caughtError instanceof Error ? caughtError.message : 'Unable to save post');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    await postApi.delete(id);
-    setPosts(current => current.filter(post => post.id !== id));
+  const confirmPendingAction = async () => {
+    if (!pendingAction || actionBusy) return;
+    const { kind, post } = pendingAction;
+    setActionBusy(true);
+    setActionError('');
+    try {
+      if (kind === 'delete') {
+        await postApi.delete(post.id);
+        setPosts(current => current.filter(item => item.id !== post.id));
+        setInfo('Post deleted.');
+      } else {
+        setPublishingPostId(post.id);
+        const published = await postApi.publish(post.id);
+        setPosts(current => current.map(item => (item.id === post.id ? published : item)));
+        if (published.status === 'PUBLISHED') {
+          setInfo(`Published to ${pageName ?? 'Facebook'}.`);
+          setError('');
+        } else {
+          setError('Facebook did not accept the post. It is marked Failed — check the Page connection and try again.');
+        }
+        void loadPosts();
+      }
+      setPendingAction(null);
+    } catch (caughtError) {
+      setActionError(caughtError instanceof Error ? caughtError.message : `Unable to ${kind} post`);
+    } finally {
+      setActionBusy(false);
+      setPublishingPostId(null);
+    }
   };
 
   const handleApprove = async (id: string) => {
@@ -350,21 +462,50 @@ export default function PostManager() {
     }
   };
 
-  const handlePublish = async (post: Post) => {
-    try {
-      setPublishingPostId(post.id);
-      setError('');
-      await postApi.publish(post.id);
-      await loadPosts();
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to publish post');
-    } finally {
-      setPublishingPostId(null);
-    }
-  };
+  const isOwner = (post: Post) => Boolean(user?.userId) && post.ownerId === user?.userId;
+  const canEditPost = (post: Post) => post.status !== 'PUBLISHED' && (canManagePosts || isOwner(post));
+  const canPublishPost = (post: Post) =>
+    canManagePosts && isOwner(post) && (post.status === 'DRAFT' || post.status === 'SCHEDULED' || post.status === 'FAILED');
+  const canDeletePost = (post: Post) =>
+    post.status !== 'PUBLISHED' && (canManagePosts || (isOwner(post) && !(post.orgId && post.status === 'SCHEDULED')));
 
   /* Filter upcoming posts: only show non-published posts in the queue sidebar */
   const upcomingPosts = posts.filter(p => p.status !== 'PUBLISHED').slice(0, 6);
+
+  const counts = useMemo(() => {
+    const result: Record<string, number> = { ALL: posts.length };
+    for (const post of posts) result[post.status] = (result[post.status] ?? 0) + 1;
+    return result;
+  }, [posts]);
+
+  const groups = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    const filtered = posts.filter(post => {
+      if (statusFilter !== 'ALL' && post.status !== statusFilter) return false;
+      if (!term) return true;
+      return post.caption.toLowerCase().includes(term)
+        || post.hashtags.some(tag => tag.toLowerCase().includes(term));
+    });
+    const time = (post: Post) => (post.scheduledAt ? new Date(post.scheduledAt).getTime() : null);
+    filtered.sort((a, b) => {
+      const ta = time(a);
+      const tb = time(b);
+      if (ta === null && tb === null) return 0;
+      if (ta === null) return 1;
+      if (tb === null) return -1;
+      return sortOrder === 'soonest' ? ta - tb : tb - ta;
+    });
+    const result: { key: string; label: string; items: Post[] }[] = [];
+    for (const post of filtered) {
+      const date = post.scheduledAt ? new Date(post.scheduledAt) : null;
+      const key = date ? dayKey(date) : 'none';
+      const label = date ? dayLabel(date) : 'No date set';
+      const last = result[result.length - 1];
+      if (last && last.key === key) last.items.push(post);
+      else result.push({ key, label, items: [post] });
+    }
+    return { total: filtered.length, groups: result };
+  }, [posts, search, sortOrder, statusFilter]);
 
   const STATUS_BADGE: Record<string, { bg: string; color: string; label: string }> = {
     DRAFT: { bg: 'rgba(148,163,184,0.12)', color: '#64748b', label: 'Draft' },
@@ -375,24 +516,81 @@ export default function PostManager() {
     REJECTED: { bg: 'rgba(239,68,68,0.10)', color: '#dc2626', label: 'Rejected' },
   };
 
+  const pendingApprovalCard = canModerate && (
+    <div className="upe-sidebar-card" style={{ animation: 'fadeUp 0.5s cubic-bezier(0.16,1,0.3,1) 0.05s backwards' }}>
+      <div className="upe-sidebar-header">
+        <div className="upe-sidebar-header-left">
+          <div className="upe-sidebar-icon" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h2 className="upe-sidebar-title">Pending Approval</h2>
+        </div>
+        <span className="upe-sidebar-count">{pendingPosts.length}</span>
+      </div>
+
+      <div className="upe-queue-list">
+        {pendingPosts.length === 0 && (
+          <div className="upe-queue-empty">
+            <p className="upe-queue-empty-title">Nothing to review</p>
+            <p className="upe-queue-empty-text">Posts from members awaiting approval will show up here</p>
+          </div>
+        )}
+        {pendingPosts.map((post, i) => (
+          <article key={post.id} className="upe-queue-item" style={{ animationDelay: `${i * 0.05}s` }}>
+            <p className="upe-queue-caption">{post.caption}</p>
+            {post.scheduledAt && (
+              <time className="upe-queue-time" dateTime={post.scheduledAt}>
+                {new Date(post.scheduledAt).toLocaleString(undefined, {
+                  month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                })}
+              </time>
+            )}
+            <div className="upe-queue-actions">
+              <button
+                type="button"
+                className="upe-queue-btn upe-queue-btn-publish"
+                onClick={() => handleApprove(post.id)}
+                disabled={moderatingPostId === post.id}
+              >
+                {moderatingPostId === post.id ? 'Working…' : 'Approve'}
+              </button>
+              <button
+                type="button"
+                className="upe-queue-btn upe-queue-btn-delete"
+                onClick={() => handleReject(post.id)}
+                disabled={moderatingPostId === post.id}
+              >
+                Reject
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     <div className="upe-page">
       {/* ── Header ── */}
       <div className="upe-header" style={{ animation: 'fadeUp 0.4s cubic-bezier(0.16,1,0.3,1)' }}>
         <div>
           <div className="upe-breadcrumb">
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
-            <span>Post Manager</span>
+            <span>{view === 'calendar' ? 'Calendar' : 'Post Manager'}</span>
           </div>
-          <h1 className="upe-title">Automated Facebook Publishing</h1>
+          <h1 className="upe-title">{view === 'calendar' ? 'Post Calendar' : 'Posts'}</h1>
           <p className="upe-subtitle">
-            Schedule posts, resolve time conflicts before saving, and let the backend publish them exactly at the chosen time.
+            {view === 'calendar'
+              ? 'See everything scheduled at a glance. Click a day to plan a post for it.'
+              : 'Schedule posts, resolve time conflicts before saving, and let the backend publish them exactly at the chosen time.'}
           </p>
-          {!facebookConnected && (
-            <div className="upe-connection-notice">
-              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          {!facebookConnected && facebookResolved && (
+            <div className="upe-connection-notice" role="note">
+              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
               {canManageFacebook
@@ -404,196 +602,327 @@ export default function PostManager() {
 
         <div className="upe-header-actions">
           {canManageFacebook && <FacebookPageConnectButton />}
-          <button
-            type="button"
-            className="upe-btn-primary"
-            onClick={() => openCreate()}
-            disabled={!facebookConnected}
-          >
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            New Post
-          </button>
+          <div className="upe-header-buttons">
+            <div className="pl-view-toggle" role="group" aria-label="View">
+              <Link to="/posts" className={`pl-view-btn${view === 'list' ? ' is-active' : ''}`} aria-current={view === 'list' ? 'page' : undefined}>
+                <i className="fi fi-rr-list" aria-hidden="true"></i> List
+              </Link>
+              <Link to="/calendar" className={`pl-view-btn${view === 'calendar' ? ' is-active' : ''}`} aria-current={view === 'calendar' ? 'page' : undefined}>
+                <i className="fi fi-rr-calendar" aria-hidden="true"></i> Calendar
+              </Link>
+            </div>
+            <button
+              type="button"
+              className="upe-btn-primary"
+              onClick={() => openCreate()}
+            >
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Create Post
+            </button>
+          </div>
         </div>
       </div>
 
       {/* ── Error banner ── */}
       {error && (
-        <div className="upe-error-banner" style={{ animation: 'fadeUp 0.3s cubic-bezier(0.16,1,0.3,1)' }}>
-          <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <div className="upe-error-banner" role="alert" style={{ animation: 'fadeUp 0.3s cubic-bezier(0.16,1,0.3,1)' }}>
+          <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <span>{error}</span>
+          <button type="button" className="pl-banner-dismiss" onClick={() => setError('')} aria-label="Dismiss error">×</button>
         </div>
       )}
 
       {/* ── Info banner ── */}
       {info && (
-        <div className="upe-info-banner" style={{ animation: 'fadeUp 0.3s cubic-bezier(0.16,1,0.3,1)' }}>
-          <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <div className="upe-info-banner" role="status" style={{ animation: 'fadeUp 0.3s cubic-bezier(0.16,1,0.3,1)' }}>
+          <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <span>{info}</span>
+          <button type="button" className="pl-banner-dismiss" onClick={() => setInfo('')} aria-label="Dismiss message">×</button>
         </div>
       )}
 
-      {/* ── Main layout ── */}
-      <div className="upe-layout">
-        <PostSchedulerCalendar posts={posts} onDateClick={openCreate} onEventClick={handleEventClick} />
+      {loadError && (
+        <div className="upe-error-banner" role="alert">
+          <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span>
+            {postsLoaded ? 'Showing the last posts we could load. ' : ''}Couldn’t refresh posts: {loadError}
+          </span>
+          <button type="button" className="ug-btn ug-btn-secondary ug-btn-sm pl-retry" onClick={() => void loadPosts()}>Try again</button>
+        </div>
+      )}
 
-        <div className="upe-sidebar-stack">
+      {view === 'calendar' ? (
+        /* ── Calendar view ── */
+        <div className="upe-layout">
+          <PostSchedulerCalendar posts={posts} onDateClick={openCreate} onEventClick={handleEventClick} />
 
-        {/* ── Pending Approval (officer/admin of the active org only) ── */}
-        {canModerate && (
-          <div className="upe-sidebar-card" style={{ animation: 'fadeUp 0.5s cubic-bezier(0.16,1,0.3,1) 0.05s backwards' }}>
+          <div className="upe-sidebar-stack">
+          {pendingApprovalCard}
+
+          {/* ── Upcoming Posts sidebar ── */}
+          <div className="upe-sidebar-card" style={{ animation: 'fadeUp 0.5s cubic-bezier(0.16,1,0.3,1) 0.1s backwards' }}>
             <div className="upe-sidebar-header">
               <div className="upe-sidebar-header-left">
-                <div className="upe-sidebar-icon" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
-                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <div className="upe-sidebar-icon">
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                   </svg>
                 </div>
-                <h3 className="upe-sidebar-title">Pending Approval</h3>
+                <h2 className="upe-sidebar-title">Upcoming Posts</h2>
               </div>
-              <span className="upe-sidebar-count">{pendingPosts.length}</span>
+              <span className="upe-sidebar-count">{upcomingPosts.length}</span>
             </div>
 
             <div className="upe-queue-list">
-              {pendingPosts.length === 0 && (
+              {upcomingPosts.length === 0 && (
                 <div className="upe-queue-empty">
-                  <p className="upe-queue-empty-title">Nothing to review</p>
-                  <p className="upe-queue-empty-text">Posts from members awaiting approval will show up here</p>
+                  <div className="upe-queue-empty-icon">
+                    <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.2} aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                    </svg>
+                  </div>
+                  <p className="upe-queue-empty-title">No upcoming posts</p>
+                  <p className="upe-queue-empty-text">Create a post to get started</p>
                 </div>
               )}
-              {pendingPosts.map((post, i) => (
-                <article key={post.id} className="upe-queue-item" style={{ animationDelay: `${i * 0.05}s` }}>
-                  <p className="upe-queue-caption">{post.caption}</p>
-                  {post.scheduledAt && (
-                    <time className="upe-queue-time">
-                      {new Date(post.scheduledAt).toLocaleString(undefined, {
-                        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-                      })}
-                    </time>
-                  )}
-                  <div className="upe-queue-actions">
-                    <button
-                      type="button"
-                      className="upe-queue-btn upe-queue-btn-publish"
-                      onClick={() => handleApprove(post.id)}
-                      disabled={moderatingPostId === post.id}
+
+              {upcomingPosts.map((post, i) => (
+                <article
+                  key={post.id}
+                  className="upe-queue-item"
+                  style={{ animationDelay: `${i * 0.05}s` }}
+                >
+                  <div className="upe-queue-item-top">
+                    <span
+                      className="upe-status-badge"
+                      style={{
+                        background: STATUS_BADGE[post.status]?.bg,
+                        color: STATUS_BADGE[post.status]?.color,
+                      }}
                     >
-                      {moderatingPostId === post.id ? 'Working…' : 'Approve'}
-                    </button>
-                    <button
-                      type="button"
-                      className="upe-queue-btn upe-queue-btn-delete"
-                      onClick={() => handleReject(post.id)}
-                      disabled={moderatingPostId === post.id}
-                    >
-                      Reject
-                    </button>
+                      <span className={`upe-status-dot is-${post.status.toLowerCase()}`} />
+                      {STATUS_BADGE[post.status]?.label ?? post.status}
+                    </span>
+                    {post.mediaUrls && post.mediaUrls.length > 1 && (
+                      <span style={{ fontSize: '11px', color: '#0C447C', background: 'rgba(12,68,124,0.08)', padding: '2px 6px', borderRadius: '6px', fontWeight: 600 }}>
+                        📷 {post.mediaUrls.length} photos
+                      </span>
+                    )}
+                    {post.scheduledAt && (
+                      <time className="upe-queue-time" dateTime={post.scheduledAt}>
+                        {new Date(post.scheduledAt).toLocaleString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })}
+                      </time>
+                    )}
                   </div>
+                  <p className="upe-queue-caption">{post.caption}</p>
+                  {canManagePosts && (
+                    <div className="upe-queue-actions">
+                      <button
+                        type="button"
+                        className="upe-queue-btn upe-queue-btn-publish"
+                        onClick={() => { setActionError(''); setPendingAction({ kind: 'publish', post }); }}
+                        disabled={publishingPostId === post.id || !canPublishPost(post)}
+                      >
+                        {publishingPostId === post.id ? 'Publishing…' : 'Publish'}
+                      </button>
+                      <button
+                        type="button"
+                        className="upe-queue-btn upe-queue-btn-edit"
+                        onClick={() => openEdit(post)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="upe-queue-btn upe-queue-btn-delete"
+                        onClick={() => { setActionError(''); setPendingAction({ kind: 'delete', post }); }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
                 </article>
               ))}
             </div>
           </div>
-        )}
 
-        {/* ── Upcoming Posts sidebar ── */}
-        <div className="upe-sidebar-card" style={{ animation: 'fadeUp 0.5s cubic-bezier(0.16,1,0.3,1) 0.1s backwards' }}>
-          <div className="upe-sidebar-header">
-            <div className="upe-sidebar-header-left">
-              <div className="upe-sidebar-icon">
-                <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                </svg>
-              </div>
-              <h3 className="upe-sidebar-title">Upcoming Posts</h3>
-            </div>
-            <span className="upe-sidebar-count">{upcomingPosts.length}</span>
           </div>
+        </div>
+      ) : (
+        /* ── List view ── */
+        <div className={`pl-layout${canModerate ? ' has-aside' : ''}`}>
+          <section className="pl-main" aria-label="Posts">
+            <div className="pl-toolbar">
+              <div className="pl-search">
+                <i className="fi fi-rr-search" aria-hidden="true"></i>
+                <label htmlFor="pl-search-input" className="pl-sr-only">Search posts</label>
+                <input
+                  id="pl-search-input"
+                  type="search"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search captions and hashtags…"
+                />
+              </div>
+              <div className="pl-sort">
+                <label htmlFor="pl-sort-select" className="pl-sort-label">Sort</label>
+                <select id="pl-sort-select" value={sortOrder} onChange={e => setSortOverride(e.target.value as SortOrder)}>
+                  <option value="latest">Latest date first</option>
+                  <option value="soonest">Earliest date first</option>
+                </select>
+              </div>
+            </div>
 
-          <div className="upe-queue-list">
-            {upcomingPosts.length === 0 && (
-              <div className="upe-queue-empty">
-                <div className="upe-queue-empty-icon">
+            <div className="pl-tabs" role="group" aria-label="Filter by status">
+              {STATUS_TABS.filter(tab => tab.key !== 'REJECTED' || (counts.REJECTED ?? 0) > 0 || statusFilter === 'REJECTED').map(tab => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  className={`pl-tab${statusFilter === tab.key ? ' is-active' : ''}`}
+                  aria-pressed={statusFilter === tab.key}
+                  onClick={() => setStatusFilter(tab.key)}
+                >
+                  {tab.label}
+                  <span className="pl-tab-count">{counts[tab.key] ?? 0}</span>
+                </button>
+              ))}
+            </div>
+
+            <div aria-live="polite" className="pl-sr-only">
+              {postsLoaded ? `${groups.total} post${groups.total === 1 ? '' : 's'} shown` : ''}
+            </div>
+
+            {!postsLoaded && !loadError && (
+              <div className="pl-skeletons" role="status" aria-label="Loading posts">
+                {[0, 1, 2].map(i => <div key={i} className="pl-skeleton" />)}
+              </div>
+            )}
+
+            {postsLoaded && groups.total === 0 && (
+              <div className="pl-empty">
+                <div className="upe-queue-empty-icon" aria-hidden="true">
                   <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                   </svg>
                 </div>
-                <p className="upe-queue-empty-title">No upcoming posts</p>
-                <p className="upe-queue-empty-text">Create a post to get started</p>
+                {posts.length === 0 ? (
+                  <>
+                    <p className="pl-empty-title">No posts yet</p>
+                    <p className="pl-empty-text">Create your first post — add media, get AI caption help, and schedule it in one flow.</p>
+                    <button type="button" className="ug-btn ug-btn-primary" onClick={() => openCreate()}>Create Post</button>
+                  </>
+                ) : (
+                  <>
+                    <p className="pl-empty-title">No posts match</p>
+                    <p className="pl-empty-text">Try another status or clear the search.</p>
+                    <button type="button" className="ug-btn ug-btn-secondary" onClick={() => { setSearch(''); setStatusFilter('ALL'); }}>Show all posts</button>
+                  </>
+                )}
               </div>
             )}
 
-            {upcomingPosts.map((post, i) => (
-              <article
-                key={post.id}
-                className="upe-queue-item"
-                style={{ animationDelay: `${i * 0.05}s` }}
-              >
-                <div className="upe-queue-item-top">
-                  <span
-                    className="upe-status-badge"
-                    style={{
-                      background: STATUS_BADGE[post.status]?.bg,
-                      color: STATUS_BADGE[post.status]?.color,
-                    }}
-                  >
-                    <span className={`upe-status-dot is-${post.status.toLowerCase()}`} />
-                    {STATUS_BADGE[post.status]?.label ?? post.status}
-                  </span>
-                  {post.mediaUrls && post.mediaUrls.length > 1 && (
-                    <span style={{ fontSize: '11px', color: '#0C447C', background: 'rgba(12,68,124,0.08)', padding: '2px 6px', borderRadius: '6px', fontWeight: 600 }}>
-                      📷 {post.mediaUrls.length} photos
-                    </span>
-                  )}
-                  {post.scheduledAt && (
-                    <time className="upe-queue-time">
-                      {new Date(post.scheduledAt).toLocaleString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })}
-                    </time>
-                  )}
-                </div>
-                <p className="upe-queue-caption">{post.caption}</p>
-                {canManagePosts && (
-                  <div className="upe-queue-actions">
-                    <button
-                      type="button"
-                      className="upe-queue-btn upe-queue-btn-publish"
-                      onClick={() => handlePublish(post)}
-                      disabled={publishingPostId === post.id || post.status === 'PUBLISHED' || post.status === 'PENDING_REVIEW' || post.status === 'REJECTED'}
-                    >
-                      {publishingPostId === post.id ? 'Publishing…' : 'Publish'}
-                    </button>
-                    <button
-                      type="button"
-                      className="upe-queue-btn upe-queue-btn-edit"
-                      onClick={() => openEdit(post)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="upe-queue-btn upe-queue-btn-delete"
-                      onClick={() => handleDelete(post.id)}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                )}
-              </article>
+            {groups.groups.map(group => (
+              <div key={group.key} className="pl-group">
+                <h2 className="pl-group-title">{group.label}</h2>
+                <ul className="pl-list">
+                  {group.items.map(post => {
+                    const badge = STATUS_BADGE[post.status];
+                    const thumb = postThumbnail(post, pictures);
+                    const mediaCount = post.mediaUrls?.length ?? (post.mediaUrl ? 1 : 0);
+                    const editable = canEditPost(post);
+                    const lockedForMember = Boolean(post.orgId) && post.status === 'SCHEDULED' && !canManagePosts;
+                    return (
+                      <li
+                        key={post.id}
+                        id={`post-${post.id}`}
+                        className={`pl-item${highlightId === post.id ? ' is-highlighted' : ''}`}
+                      >
+                        <PostThumb src={thumb} className="pl-thumb" fallbackClassName="pl-thumb-text" />
+                        <div className="pl-body">
+                          <div className="pl-meta">
+                            <span className="upe-status-badge" style={{ background: badge?.bg, color: badge?.color }}>
+                              <span className={`upe-status-dot is-${post.status.toLowerCase()}`} />
+                              {badge?.label ?? post.status}
+                            </span>
+                            {post.scheduledAt && (
+                              <time className="pl-time" dateTime={post.scheduledAt}>
+                                {new Date(post.scheduledAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                              </time>
+                            )}
+                            {mediaCount > 0 && (
+                              <span className="pl-media-count">
+                                <i className="fi fi-rr-images" aria-hidden="true"></i> {mediaCount} image{mediaCount === 1 ? '' : 's'}
+                              </span>
+                            )}
+                            {post.appealType && (
+                              <span className="pl-appeal">Appeal: {post.appealType === 'EDIT' ? 'edit' : 'cancel'} requested</span>
+                            )}
+                          </div>
+                          <p className="pl-caption">{post.caption || <em>No caption</em>}</p>
+                          {post.hashtags.length > 0 && (
+                            <p className="pl-tags">{post.hashtags.slice(0, 5).map(tag => `#${tag.replace(/^#/, '')}`).join(' ')}{post.hashtags.length > 5 ? ` +${post.hashtags.length - 5}` : ''}</p>
+                          )}
+                        </div>
+                        <div className="pl-actions">
+                          {post.status === 'PUBLISHED' && post.fbPostId && (
+                            <Link to={`/analytics/posts/${encodeURIComponent(post.fbPostId)}`} className="ug-btn ug-btn-secondary ug-btn-sm">
+                              <i className="fi fi-rr-chart-histogram" aria-hidden="true"></i> Insights
+                            </Link>
+                          )}
+                          {(editable || lockedForMember) && (
+                            <button type="button" className="ug-btn ug-btn-secondary ug-btn-sm" onClick={() => handleEventClick(post)}>
+                              <i className="fi fi-rr-edit" aria-hidden="true"></i> {lockedForMember ? 'View' : 'Edit'}
+                              <span className="pl-sr-only"> post: {post.caption.slice(0, 40)}</span>
+                            </button>
+                          )}
+                          {canPublishPost(post) && (
+                            <button
+                              type="button"
+                              className="ug-btn ug-btn-primary ug-btn-sm"
+                              onClick={() => { setActionError(''); setPendingAction({ kind: 'publish', post }); }}
+                              disabled={publishingPostId === post.id}
+                            >
+                              {publishingPostId === post.id ? 'Publishing…' : post.status === 'FAILED' ? 'Retry' : 'Publish'}
+                            </button>
+                          )}
+                          <button type="button" className="ug-btn ug-btn-ghost ug-btn-sm" onClick={() => duplicatePost(post)}>
+                            <i className="fi fi-rr-copy-alt" aria-hidden="true"></i> Duplicate
+                          </button>
+                          {canDeletePost(post) && (
+                            <button
+                              type="button"
+                              className="ug-btn ug-btn-ghost ug-btn-sm pl-delete"
+                              onClick={() => { setActionError(''); setPendingAction({ kind: 'delete', post }); }}
+                              aria-label={`Delete post: ${post.caption.slice(0, 40)}`}
+                            >
+                              <i className="fi fi-rr-trash" aria-hidden="true"></i>
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
             ))}
-          </div>
-        </div>
+          </section>
 
+          {canModerate && <aside className="pl-aside" aria-label="Approval queue">{pendingApprovalCard}</aside>}
         </div>
-      </div>
+      )}
 
       <PostEditorModal
         open={Boolean(editor)}
@@ -601,7 +930,7 @@ export default function PostManager() {
         initialDraft={editor?.draft ?? null}
         conflict={conflict}
         loading={loading}
-        error={error}
+        error={editorError}
         onClose={closeEditor}
         onSubmit={saveDraft}
         onClearConflict={() => setConflict(null)}
@@ -619,6 +948,23 @@ export default function PostManager() {
         onApproveAppeal={() => resolveAppeal(true)}
         onRejectAppeal={() => resolveAppeal(false)}
         onEditNow={editNowFromPreview}
+      />
+
+      <ConfirmDialog
+        open={pendingAction !== null}
+        tone={pendingAction?.kind === 'delete' ? 'danger' : 'primary'}
+        title={pendingAction?.kind === 'delete' ? 'Delete this post?' : `Publish now to ${pageName ?? 'Facebook'}?`}
+        description={pendingAction?.kind === 'delete'
+          ? (pendingAction.post.status === 'SCHEDULED'
+            ? 'It will be removed from the calendar and will not be published. This can’t be undone.'
+            : 'This permanently removes the post from Ugnay. This can’t be undone.')
+          : 'The post goes live on your Facebook Page immediately and replaces any scheduled time.'}
+        confirmLabel={pendingAction?.kind === 'delete' ? 'Delete Post' : 'Publish Now'}
+        busyLabel={pendingAction?.kind === 'delete' ? 'Deleting…' : 'Publishing…'}
+        busy={actionBusy}
+        error={actionError}
+        onCancel={() => { if (!actionBusy) setPendingAction(null); }}
+        onConfirm={() => void confirmPendingAction()}
       />
 
       {loading && (
@@ -1118,455 +1464,6 @@ export default function PostManager() {
           color: #b91c1c;
         }
 
-        /* ── Facebook Connection Card ── */
-        .upe-fb-connection-card {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 14px;
-          border-radius: 12px;
-          padding: 12px 16px;
-          background: #ffffff;
-          border: 1px solid #e2e8f0;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-        }
-
-        .upe-fb-connection-meta {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          min-width: 0;
-        }
-
-        .upe-fb-connection-meta img {
-          width: 36px;
-          height: 36px;
-          border-radius: 50%;
-          object-fit: cover;
-          flex-shrink: 0;
-        }
-
-        .upe-fb-connection-avatar {
-          width: 36px;
-          height: 36px;
-          border-radius: 10px;
-          background: linear-gradient(135deg, #1877f2, #42a5f5);
-          display: grid;
-          place-items: center;
-          font-weight: 700;
-          font-size: 12px;
-          color: white;
-          flex-shrink: 0;
-        }
-
-        .upe-fb-connection-label {
-          font-size: 10px;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          font-weight: 600;
-          color: #94a3b8;
-          margin-bottom: 2px;
-        }
-
-        .upe-fb-connection-card strong {
-          font-size: 13px;
-          font-weight: 600;
-          color: #0f172a;
-        }
-
-        .upe-fb-disconnect-btn {
-          padding: 7px 14px;
-          background: #f1f5f9;
-          border: 1px solid #e2e8f0;
-          border-radius: 8px;
-          color: #64748b;
-          font-size: 12px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.15s;
-          font-family: inherit;
-          white-space: nowrap;
-        }
-
-        .upe-fb-disconnect-btn:hover {
-          background: #e2e8f0;
-          color: #475569;
-        }
-
-        .upe-fb-connect-btn {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          padding: 10px 18px;
-          background: #1877f2;
-          color: #fff;
-          font-size: 13px;
-          font-weight: 600;
-          border: none;
-          border-radius: 10px;
-          cursor: pointer;
-          transition: all 0.15s;
-          font-family: inherit;
-          box-shadow: 0 2px 8px rgba(24,119,242,0.2);
-        }
-
-        .upe-fb-connect-btn:hover:not(:disabled) {
-          background: #1565c0;
-        }
-
-        .upe-fb-connect-btn:disabled,
-        .upe-fb-disconnect-btn:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
-
-        /* ── Modal Styles ── */
-        .upe-modal-backdrop {
-          position: fixed;
-          inset: 0;
-          background: rgba(15, 23, 42, 0.4);
-          backdrop-filter: blur(4px);
-          display: grid;
-          place-items: center;
-          padding: 24px;
-          z-index: 30;
-          animation: fadeIn 0.2s ease;
-        }
-
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-
-        .upe-modal-card {
-          width: min(920px, 100%);
-          max-height: 90vh;
-          overflow-y: auto;
-          background: #ffffff;
-          color: #0f172a;
-          border-radius: 24px;
-          border: 1px solid #e2e8f0;
-          box-shadow: 0 24px 48px rgba(15,23,42,0.12), 0 8px 16px rgba(15,23,42,0.06);
-          padding: 28px;
-          animation: modalSlideUp 0.3s cubic-bezier(0.16,1,0.3,1);
-        }
-
-        @keyframes modalSlideUp {
-          from { opacity: 0; transform: translateY(24px) scale(0.98); }
-          to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-
-        .upe-modal-kicker {
-          font-size: 11px;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          font-weight: 600;
-          color: #0C447C;
-          margin-bottom: 4px;
-        }
-
-        .upe-modal-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 16px;
-        }
-
-        .upe-modal-header h2 {
-          font-size: 20px;
-          font-weight: 700;
-          color: #0f172a;
-          margin: 0;
-        }
-
-        .upe-modal-close {
-          width: 36px;
-          height: 36px;
-          border-radius: 10px;
-          border: 1px solid #e2e8f0;
-          background: #f8fafc;
-          color: #64748b;
-          font-size: 18px;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          transition: all 0.15s;
-        }
-
-        .upe-modal-close:hover {
-          background: #e2e8f0;
-          color: #334155;
-        }
-
-        .upe-modal-body {
-          display: grid;
-          gap: 18px;
-          margin-top: 22px;
-        }
-
-        .upe-modal-footer {
-          display: flex;
-          justify-content: flex-end;
-          gap: 10px;
-          margin-top: 24px;
-          padding-top: 20px;
-          border-top: 1px solid #f1f5f9;
-        }
-
-        /* ── Form Fields ── */
-        .upe-field {
-          display: grid;
-          gap: 6px;
-        }
-
-        .upe-field > span {
-          font-size: 13px;
-          font-weight: 600;
-          color: #334155;
-        }
-
-        .upe-field input,
-        .upe-field textarea,
-        .upe-field select,
-        .upe-datepicker {
-          width: 100%;
-          border-radius: 10px;
-          border: 2px solid #e2e8f0;
-          background: #f8fafc;
-          color: #0f172a;
-          padding: 12px 14px;
-          font-size: 13px;
-          font-family: inherit;
-          transition: all 0.15s;
-          outline: none;
-        }
-
-        .upe-field input:focus,
-        .upe-field textarea:focus,
-        .upe-field select:focus,
-        .upe-datepicker:focus {
-          border-color: #3b82f6;
-          background: #ffffff;
-          box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
-        }
-
-        .upe-field textarea {
-          resize: vertical;
-          min-height: 100px;
-          line-height: 1.6;
-        }
-
-        .upe-field input::placeholder,
-        .upe-field textarea::placeholder {
-          color: #94a3b8;
-        }
-
-        .upe-grid-two {
-          display: grid;
-          grid-template-columns: 1.2fr 0.8fr;
-          gap: 16px;
-        }
-
-        .upe-media-preview-row {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) 180px;
-          gap: 16px;
-          align-items: end;
-        }
-
-        .upe-media-preview {
-          height: 120px;
-          border-radius: 12px;
-          overflow: hidden;
-          border: 1px solid #e2e8f0;
-        }
-
-        .upe-media-preview img {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-        }
-
-        /* ── Chip Input ── */
-        .upe-chip-input-shell {
-          min-height: 50px;
-          border-radius: 10px;
-          border: 2px solid #e2e8f0;
-          background: #f8fafc;
-          padding: 8px;
-          transition: all 0.15s;
-        }
-
-        .upe-chip-input-shell:focus-within {
-          border-color: #3b82f6;
-          background: #ffffff;
-          box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
-        }
-
-        .upe-chip-row {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 6px;
-        }
-
-        .upe-chip {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          border: none;
-          border-radius: 8px;
-          padding: 5px 10px;
-          background: rgba(12,68,124,0.08);
-          color: #0C447C;
-          font-size: 12px;
-          font-weight: 600;
-          cursor: pointer;
-          font-family: inherit;
-          transition: all 0.15s;
-        }
-
-        .upe-chip:hover {
-          background: rgba(12,68,124,0.14);
-        }
-
-        .upe-chip input {
-          flex: 1;
-          border: 0;
-          background: transparent;
-          padding: 5px 4px;
-          min-width: 180px;
-          font-size: 13px;
-          color: #0f172a;
-          font-family: inherit;
-          outline: none;
-        }
-
-        .upe-chip input::placeholder {
-          color: #94a3b8;
-        }
-
-        /* ── DateTime Panel ── */
-        .upe-datetime-panel {
-          display: grid;
-          gap: 10px;
-        }
-
-        .upe-suggested-toggle {
-          width: fit-content;
-          padding: 8px 16px;
-          border: 1px solid #e2e8f0;
-          border-radius: 10px;
-          background: #f8fafc;
-          color: #475569;
-          font-size: 12px;
-          font-weight: 600;
-          cursor: pointer;
-          font-family: inherit;
-          transition: all 0.15s;
-        }
-
-        .upe-suggested-toggle:hover {
-          background: #e2e8f0;
-        }
-
-        .upe-suggested-toggle.is-active {
-          background: rgba(12,68,124,0.08);
-          border-color: rgba(12,68,124,0.15);
-          color: #0C447C;
-        }
-
-        .upe-datetime-hint {
-          color: #94a3b8;
-          font-size: 12px;
-          font-weight: 500;
-        }
-
-        .upe-datepicker-wrapper {
-          width: 100%;
-        }
-
-        /* ── Conflict Banner ── */
-        .upe-conflict-banner {
-          display: flex;
-          align-items: flex-start;
-          gap: 12px;
-          padding: 16px 18px;
-          border-radius: 14px;
-          background: rgba(245,158,11,0.05);
-          border: 1px solid rgba(245,158,11,0.18);
-          margin-top: 18px;
-        }
-
-        .upe-conflict-icon {
-          width: 28px;
-          height: 28px;
-          border-radius: 8px;
-          display: grid;
-          place-items: center;
-          background: rgba(245,158,11,0.12);
-          color: #b45309;
-          font-weight: 800;
-          font-size: 14px;
-          flex-shrink: 0;
-        }
-
-        .upe-conflict-title {
-          font-weight: 700;
-          font-size: 13px;
-          color: #92400e;
-          margin-bottom: 4px;
-        }
-
-        .upe-conflict-body {
-          color: #a16207;
-          font-size: 12px;
-          line-height: 1.5;
-        }
-
-        /* ── Secondary Button ── */
-        .upe-secondary-btn {
-          padding: 8px 16px;
-          background: #f1f5f9;
-          border: 1px solid #e2e8f0;
-          border-radius: 10px;
-          color: #475569;
-          font-size: 13px;
-          font-weight: 600;
-          cursor: pointer;
-          font-family: inherit;
-          transition: all 0.15s;
-        }
-
-        .upe-secondary-btn:hover {
-          background: #e2e8f0;
-          color: #334155;
-        }
-
-        /* ── Primary Button (modal) ── */
-        .upe-primary-btn {
-          padding: 10px 20px;
-          background: #0C447C;
-          color: #ffffff;
-          border: none;
-          border-radius: 10px;
-          font-size: 13px;
-          font-weight: 600;
-          cursor: pointer;
-          font-family: inherit;
-          transition: all 0.15s;
-          box-shadow: 0 2px 8px rgba(12,68,124,0.2);
-        }
-
-        .upe-primary-btn:hover:not(:disabled) {
-          background: #0a3867;
-        }
-
-        .upe-primary-btn:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
         /* ── Responsive ── */
         @media (max-width: 1100px) {
           .upe-layout {
@@ -1581,38 +1478,36 @@ export default function PostManager() {
 
         @media (max-width: 720px) {
           .upe-page {
-            padding: 24px 20px;
+            padding: 20px 16px 32px;
+          }
+
+          .upe-title {
+            font-size: 24px;
           }
 
           .upe-header {
             flex-direction: column;
-            align-items: flex-start;
+            align-items: stretch;
+            gap: 16px;
           }
 
           .upe-header-actions {
-            flex-direction: row;
-            align-items: center;
+            align-items: stretch;
             width: 100%;
+          }
+
+          .upe-header-buttons {
+            justify-content: space-between;
+          }
+
+          .upe-calendar-card {
+            padding: 16px 12px;
           }
 
           .upe-calendar-header {
             flex-direction: column;
             align-items: flex-start;
             gap: 10px;
-          }
-
-          .upe-modal-card {
-            padding: 20px;
-          }
-
-          .upe-modal-header,
-          .upe-modal-footer {
-            flex-direction: column;
-            align-items: flex-start;
-          }
-
-          .upe-modal-footer {
-            flex-direction: row;
           }
         }
       `}</style>

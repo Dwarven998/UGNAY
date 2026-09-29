@@ -2,6 +2,7 @@ package com.ugnay.ugnay.post;
 
 import com.ugnay.ugnay.core.User;
 import java.util.Optional;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -18,17 +19,29 @@ import java.util.UUID;
  */
 public interface PostRepository extends JpaRepository<Post, UUID> {
 
+    /*
+     * Listings load each post's media in the same query. Without this every post in a list cost one or two
+     * extra round trips to the (remote) database while being turned into a DTO, which made the Posts page
+     * take several seconds once a workspace had a few dozen posts.
+     */
+
+    @EntityGraph(attributePaths = {"mediaAsset", "mediaAssets"})
     List<Post> findByOrganization_IdAndFbPageIdOrderByCreatedAtDesc(UUID organizationId, String fbPageId);
 
     /** Posts made while no Page was connected. */
+    @EntityGraph(attributePaths = {"mediaAsset", "mediaAssets"})
     List<Post> findByOrganization_IdAndFbPageIdIsNullOrderByCreatedAtDesc(UUID organizationId);
 
+    @EntityGraph(attributePaths = {"mediaAsset", "mediaAssets"})
     List<Post> findByUserAndOrganizationIsNullAndFbPageIdOrderByCreatedAtDesc(User user, String fbPageId);
 
+    @EntityGraph(attributePaths = {"mediaAsset", "mediaAssets"})
     List<Post> findByUserAndOrganizationIsNullAndFbPageIdIsNullOrderByCreatedAtDesc(User user);
 
+    @EntityGraph(attributePaths = {"mediaAsset", "mediaAssets"})
     List<Post> findByOrganization_IdAndFbPageIdAndStatusOrderByCreatedAtDesc(UUID organizationId, String fbPageId, Post.PostStatus status);
 
+    @EntityGraph(attributePaths = {"mediaAsset", "mediaAssets"})
     List<Post> findByOrganization_IdAndFbPageIdIsNullAndStatusOrderByCreatedAtDesc(UUID organizationId, Post.PostStatus status);
 
     /**

@@ -2,6 +2,7 @@ import { createContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 
 import axiosClient from '../api/axiosClient.ts';
+import { scopedCache } from '../features/posts/postCache';
 
 interface AuthUser {
   userId: string;
@@ -98,6 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     localStorage.clear();
+    scopedCache.clear();
     setUser(null);
   };
 

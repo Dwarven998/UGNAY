@@ -19,6 +19,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ugnay.ugnay.core.PooledHttpConnector;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -34,6 +35,7 @@ public class FacebookInsightsClient {
     private static final Duration TIMEOUT = Duration.ofSeconds(4);
 
     private final WebClient webClient = WebClient.builder()
+        .clientConnector(PooledHttpConnector.create("facebook-insights", Duration.ofSeconds(10)))
         .codecs(c -> c.defaultCodecs().maxInMemorySize(8 * 1024 * 1024))
         .build();
     private final ObjectMapper objectMapper = new ObjectMapper();
