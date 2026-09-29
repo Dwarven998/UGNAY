@@ -5,6 +5,7 @@ export interface RegisterRequest {
   email: string;
   password: string;
   orgName: string;
+  turnstileToken: string;
 }
 
 export interface RegisterResponse {

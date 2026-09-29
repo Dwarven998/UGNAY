@@ -4,6 +4,7 @@ import type { ApiResponse } from '../../../api/axiosClient';
 export interface LoginRequest {
   email: string;
   password: string;
+  turnstileToken: string;
 }
 
 export interface LoginResponse {

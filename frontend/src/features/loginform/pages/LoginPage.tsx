@@ -197,6 +197,10 @@ export default function LoginPage() {
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4); } 70% { box-shadow: 0 0 0 6px rgba(74, 222, 128, 0); } 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); } }
         @keyframes spin { to { transform: rotate(360deg); } }
 
+        /* Cloudflare Turnstile Widget */
+        .turnstile-wrapper { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 0.25rem 0; }
+        .turnstile-hint { font-size: 0.8rem; color: #94a3b8; margin: 0; text-align: center; }
+
         @media (max-width: 1024px) { .left-panel { width: 40%; padding: 1.5rem; } .form-container { padding: 2.5rem; } .hero-title { font-size: 1.8rem; } }
         @media (max-width: 768px) { .left-panel { display: none; } .right-panel { padding: 1.5rem; } .form-container { padding: 2rem; max-width: 100%; } }
       `}</style>

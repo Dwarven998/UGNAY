@@ -5,6 +5,7 @@ import { useAuth } from '../../../context/useAuth';
 import { ApiError } from '../../../api/axiosClient';
 import { preloadGoogleIdentity, requestGoogleAccessToken } from '../api/googleIdentity';
 import { AuthFeatureIcon, AuthProductPreview, AuthenticationBackground } from './AuthVisuals';
+import { useTurnstile } from '../hooks/useTurnstile';
 
 function LoginFormContent() {
   const [email, setEmail] = useState('');
@@ -17,6 +18,8 @@ function LoginFormContent() {
   const [googleSignup, setGoogleSignup] = useState<{ accessToken: string; email: string } | null>(null);
   const [orgName, setOrgName] = useState('');
   const [googleLoading, setGoogleLoading] = useState(false);
+
+  const { token: turnstileToken, isVerified: turnstileVerified, reset: resetTurnstile, containerRef: turnstileRef } = useTurnstile();
 
   const { login, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
@@ -68,11 +71,21 @@ function LoginFormContent() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
+
+    // Guard: Turnstile token must be present before allowing submission
+    if (!turnstileVerified || !turnstileToken) {
+      setError('Please complete the security verification before signing in.');
+      return;
+    }
+
     setLoading(true);
     try {
-      await login(email, password);
+      await login(email, password, turnstileToken);
       navigate('/');
     } catch (err: any) {
+      // Always reset after a failed attempt — tokens are single-use
+      resetTurnstile();
+
       const status = err.status || err.response?.status;
       const message = err.message || err.data?.message;
 
@@ -82,6 +95,8 @@ function LoginFormContent() {
         setError('Account locked due to 5 consecutive failed attempts. Please try again in 15 minutes.');
       } else if (status === 401) {
         setError(message || 'Invalid email or password.');
+      } else if (status === 400 && (message?.toLowerCase().includes('security') || message?.toLowerCase().includes('turnstile'))) {
+        setError('Security verification failed. Please complete the verification again.');
       } else {
         setError(message || 'Login failed. Please try again.');
       }
@@ -89,6 +104,9 @@ function LoginFormContent() {
       setLoading(false);
     }
   };
+
+  // Prevent submit while Turnstile has not yet resolved
+  const isSubmitDisabled = loading || !turnstileVerified;
 
   return (
     <>
@@ -155,7 +173,7 @@ function LoginFormContent() {
               <img src="/ugnay_logo_ui.png" alt="" aria-hidden="true" />
               <span>Ugnay</span>
             </div>
-            {googleSignup ? (
+            {googleSignup && (
               <>
                 <div className="form-header stagger-1">
                   <h1 className="form-title">One last step</h1>
@@ -226,8 +244,10 @@ function LoginFormContent() {
                   </button>
                 </p>
               </>
-            ) : (
-              <>
+            )}
+
+            {/* Hidden rather than unmounted during the Google step: the Turnstile widget only renders once per mount. */}
+            <div hidden={googleSignup !== null}>
             <div className="form-header stagger-1">
               <h1 className="form-title">Welcome back</h1>
               <p className="form-subtitle">Sign in to your organization account to continue</p>
@@ -305,8 +325,16 @@ function LoginFormContent() {
                 </div>
               )}
 
+              {/* Cloudflare Turnstile Widget */}
+              <div className="turnstile-wrapper">
+                <div ref={turnstileRef} id="turnstile-login" />
+                {!turnstileVerified && (
+                  <p className="turnstile-hint">Complete the security check above to enable sign in.</p>
+                )}
+              </div>
+
               {/* Submit */}
-              <button type="submit" disabled={loading} className="btn-primary modern-btn">
+              <button type="submit" disabled={isSubmitDisabled} className="btn-primary modern-btn">
                 {loading ? (
                   <>
                     <svg className="spinner" width="20" height="20" viewBox="0 0 24 24" fill="none">
@@ -361,8 +389,7 @@ function LoginFormContent() {
               Don't have an account?{' '}
               <Link to="/register" className="register-link">Create one now</Link>
             </p>
-              </>
-            )}
+            </div>
           </div>
         </div>
       </div>
