@@ -86,7 +86,7 @@ function RegistrationFormContent() {
             <div className="hero-content">
               <div className="ai-badge">
                 <span className="pulse-dot"></span>
-                Join the future of college orgs
+                Join the future of academic orgs
               </div>
 
               <h2 className="hero-title">
