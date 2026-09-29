@@ -68,6 +68,13 @@ export interface OrgDetail {
   openJoin: boolean;
 }
 
+/** Member-facing view of an approved org member (no admin-only fields). */
+export interface OrgMember {
+  userId: string;
+  email: string;
+  role: OrgRole;
+}
+
 export interface OrgMembership {
   membershipId: string;
   userId: string;

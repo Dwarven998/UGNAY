@@ -1,7 +1,7 @@
 import axiosClient from '../../../api/axiosClient';
 import type { ApiResponse } from '../../../api/axiosClient';
 import type {
-  MyMembership, OrgSummary, OrgDetail, OrgMembership, OrgDirectory, OrgContributor, OrgType, OrgRole,
+  MyMembership, OrgSummary, OrgDetail, OrgMember, OrgMembership, OrgDirectory, OrgContributor, OrgType, OrgRole,
 } from '../../../types';
 
 // Member-facing (/api/app/organizations/**)
@@ -14,6 +14,12 @@ export const organizationApi = {
 
   getOrg: (orgId: string) =>
     axiosClient.get<OrgSummary>(`/api/app/organizations/${orgId}`).then((r: ApiResponse<OrgSummary>) => r.data),
+
+  listMembers: (orgId: string) =>
+    axiosClient.get<OrgMember[]>(`/api/app/organizations/${orgId}/members`).then((r: ApiResponse<OrgMember[]>) => r.data),
+
+  leave: (orgId: string) =>
+    axiosClient.delete(`/api/app/organizations/${orgId}/membership`),
 };
 
 // Officer/Admin-only (/api/admin/organizations/**)

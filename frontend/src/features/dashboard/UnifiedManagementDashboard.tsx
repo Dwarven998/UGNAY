@@ -1,8 +1,25 @@
 // pages/Dashboard.tsx
+import { useState, useEffect } from 'react';
+import type { FocusEvent, MouseEvent } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
 import { useAuth } from '../../context/useAuth';
+import { useOrganization } from '../../context/useOrganization';
 import OrgSwitcher from '../organizations/user/components/OrgSwitcher';
 import '@flaticon/flaticon-uicons/css/regular/rounded.css';
+
+const SIDEBAR_STORAGE_KEY = 'ugnay_sidebar_open';
+const MOBILE_QUERY = '(max-width: 768px)';
+
+function readInitialSidebarOpen(): boolean {
+  if (typeof window !== 'undefined' && window.matchMedia(MOBILE_QUERY).matches) return false;
+  try {
+    return localStorage.getItem(SIDEBAR_STORAGE_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+type TooltipState = { text: string; top: number; left: number } | null;
 
 // Icons are Flaticon UIcons (regular / rounded) — the class name is the icon.
 const NAV_ITEMS = [
@@ -14,27 +31,115 @@ const NAV_ITEMS = [
 ];
 
 export default function Dashboard() {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
+  const { activeOrg } = useOrganization();
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(readInitialSidebarOpen);
+  const [isMobile, setIsMobile] = useState<boolean>(() => window.matchMedia(MOBILE_QUERY).matches);
+  const [tooltip, setTooltip] = useState<TooltipState>(null);
+
+  useEffect(() => {
+    const mql = window.matchMedia(MOBILE_QUERY);
+    const onChange = (e: MediaQueryListEvent) => {
+      setIsMobile(e.matches);
+      if (e.matches) setSidebarOpen(false);
+    };
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+
+  // Close the overlay sidebar with Escape on small screens.
+  useEffect(() => {
+    if (!isMobile || !sidebarOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSidebarOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [isMobile, sidebarOpen]);
+
+  const setOpen = (open: boolean) => {
+    setSidebarOpen(open);
+    setTooltip(null);
+    // The mobile overlay always starts closed, so only remember the desktop preference.
+    if (isMobile) return;
+    try {
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, String(open));
+    } catch {
+      // Storage unavailable (private mode etc.) — the toggle still works for this session.
+    }
+  };
+
+  // Tooltips are position: fixed so the sidebar can keep overflow: hidden for its glow orbs.
+  const showTooltip = (text: string, force = false) =>
+    (e: MouseEvent<HTMLElement> | FocusEvent<HTMLElement>) => {
+      if (sidebarOpen && !force) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      setTooltip({ text, top: rect.top + rect.height / 2, left: rect.right + 12 });
+    };
+  const hideTooltip = () => setTooltip(null);
+  const tooltipProps = (text: string, force = false) => ({
+    onMouseEnter: showTooltip(text, force),
+    onFocus: showTooltip(text, force),
+    onMouseLeave: hideTooltip,
+    onBlur: hideTooltip,
+  });
+
+  const orgName = activeOrg ? activeOrg.orgName : (user?.orgName || 'Personal Workspace');
 
   return (
     <>
-      <div className="dash-layout">
+      <div className={`dash-layout ${sidebarOpen ? 'is-sidebar-open' : 'is-sidebar-collapsed'}`}>
         {/* ── SIDEBAR ── */}
-        <aside className="dash-sidebar">
+        <aside className="dash-sidebar" aria-label="Main navigation">
           {/* Ambient glow orbs */}
           <div className="sidebar-orb sidebar-orb-1"></div>
           <div className="sidebar-orb sidebar-orb-2"></div>
 
           {/* Logo */}
-          <div className="sidebar-logo">
-            <div className="sidebar-logo-icon">
-              <img className="brand-mark" src="/ugnay_logo_ui.png" alt="" aria-hidden="true" />
+          {sidebarOpen ? (
+            <div className="sidebar-logo">
+              <div className="sidebar-logo-icon">
+                <img className="brand-mark" src="/ugnay_logo_ui.png" alt="" aria-hidden="true" />
+              </div>
+              <span className="sidebar-logo-text">Ugnay</span>
+              <button
+                type="button"
+                className="sidebar-toggle"
+                onClick={() => setOpen(false)}
+                aria-label="Close sidebar"
+                aria-expanded="true"
+                {...tooltipProps('Close sidebar', true)}
+              >
+                <i className="fi fi-rr-sidebar" aria-hidden="true"></i>
+              </button>
             </div>
-            <span className="sidebar-logo-text">Ugnay</span>
-          </div>
+          ) : (
+            <div className="sidebar-logo sidebar-logo--collapsed">
+              <button
+                type="button"
+                className="sidebar-logo-btn"
+                onClick={() => setOpen(true)}
+                aria-label="Open sidebar"
+                aria-expanded="false"
+                {...tooltipProps('Open sidebar')}
+              >
+                <img className="brand-mark" src="/ugnay_logo_ui.png" alt="" aria-hidden="true" />
+              </button>
+            </div>
+          )}
 
-          {/* Org switcher */}
-          <OrgSwitcher />
+          {/* Org switcher (compact avatar when collapsed) */}
+          {sidebarOpen ? (
+            <OrgSwitcher />
+          ) : (
+            <button
+              type="button"
+              className="sidebar-org-compact"
+              onClick={() => setOpen(true)}
+              aria-label={`${orgName} — open sidebar to switch organization`}
+              {...tooltipProps(orgName)}
+            >
+              {orgName.charAt(0).toUpperCase()}
+            </button>
+          )}
 
           {/* Divider */}
           <div className="sidebar-divider"></div>
@@ -46,9 +151,12 @@ export default function Dashboard() {
               <NavLink
                 key={item.to}
                 to={item.to}
+                aria-label={sidebarOpen ? undefined : item.label}
+                onClick={() => { hideTooltip(); if (isMobile) setOpen(false); }}
                 className={({ isActive }: { isActive: boolean }) =>
                   `sidebar-nav-item ${isActive ? 'sidebar-nav-active' : ''}`
                 }
+                {...tooltipProps(item.label)}
               >
                 <span className="sidebar-nav-icon"><i className={`fi ${item.icon}`} aria-hidden="true"></i></span>
                 <span className="sidebar-nav-text">{item.label}</span>
@@ -64,13 +172,29 @@ export default function Dashboard() {
           <div className="sidebar-divider"></div>
 
           {/* Sign Out */}
-          <button onClick={logout} className="sidebar-signout">
+          <button
+            onClick={logout}
+            className="sidebar-signout"
+            aria-label={sidebarOpen ? undefined : 'Sign Out'}
+            {...tooltipProps('Sign Out')}
+          >
             <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
             </svg>
-            <span>Sign Out</span>
+            <span className="sidebar-signout-text">Sign Out</span>
           </button>
         </aside>
+
+        {/* Backdrop for the overlay sidebar on small screens */}
+        {isMobile && sidebarOpen && (
+          <div className="dash-sidebar-backdrop" onClick={() => setOpen(false)} aria-hidden="true"></div>
+        )}
+
+        {tooltip && (
+          <div className="sidebar-tooltip" role="tooltip" style={{ top: tooltip.top, left: tooltip.left }}>
+            {tooltip.text}
+          </div>
+        )}
 
         {/* ── MAIN CONTENT ── */}
         <main className="dash-main">
@@ -87,6 +211,7 @@ export default function Dashboard() {
       <style>{`
         /* ── Dashboard Layout ── */
         .dash-layout {
+          --sidebar-w: 260px;
           display: flex;
           height: 100vh;
           font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -95,8 +220,12 @@ export default function Dashboard() {
         }
 
         /* ── SIDEBAR ── */
+        .dash-layout.is-sidebar-collapsed { --sidebar-w: 72px; }
+
         .dash-sidebar {
-          width: 260px;
+          width: var(--sidebar-w);
+          transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+          z-index: 40;
           flex-shrink: 0;
           background: #020617;
           display: flex;
@@ -315,7 +444,8 @@ export default function Dashboard() {
         .dash-main-pattern {
           position: fixed;
           top: 0; right: 0;
-          width: calc(100% - 260px);
+          width: calc(100% - var(--sidebar-w));
+          transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
           height: 100%;
           background-image: radial-gradient(#cbd5e1 0.8px, transparent 0.8px);
           background-size: 28px 28px;
@@ -353,19 +483,137 @@ export default function Dashboard() {
         .dash-sidebar::-webkit-scrollbar-track { background: transparent; }
         .dash-sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
-        /* ── Responsive ── */
+        /* ── Sidebar toggle (expanded) ── */
+        .sidebar-toggle {
+          margin-left: auto;
+          width: 34px; height: 34px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: none;
+          border-radius: 9px;
+          background: transparent;
+          color: #64748b;
+          font-size: 16px;
+          cursor: pointer;
+          transition: background 0.15s, color 0.15s;
+          flex-shrink: 0;
+        }
+        .sidebar-toggle i { display: flex; line-height: 1; }
+        .sidebar-toggle:hover,
+        .sidebar-toggle:focus-visible {
+          color: #e2e8f0;
+          background: rgba(255,255,255,0.08);
+          outline: none;
+        }
+
+        /* ── Collapsed rail ── */
+        .sidebar-logo--collapsed { justify-content: center; padding: 0; }
+        .sidebar-logo-btn {
+          width: 48px; height: 48px;
+          padding: 6px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid transparent;
+          border-radius: 12px;
+          background: transparent;
+          cursor: pointer;
+          transition: background 0.15s, border-color 0.15s;
+        }
+        .sidebar-logo-btn:hover,
+        .sidebar-logo-btn:focus-visible {
+          background: rgba(255,255,255,0.08);
+          border-color: rgba(255,255,255,0.08);
+          outline: none;
+        }
+        .sidebar-org-compact {
+          width: 40px; height: 40px;
+          margin: 0 auto 20px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          border: none;
+          border-radius: 10px;
+          background: linear-gradient(135deg, #0C447C, #3b82f6);
+          color: #fff;
+          font-family: inherit;
+          font-weight: 700;
+          font-size: 14px;
+          cursor: pointer;
+          position: relative;
+          z-index: 2;
+          transition: box-shadow 0.15s;
+        }
+        .sidebar-org-compact:hover,
+        .sidebar-org-compact:focus-visible {
+          box-shadow: 0 0 0 3px rgba(59,130,246,0.35);
+          outline: none;
+        }
+
+        .is-sidebar-collapsed .dash-sidebar { padding: 28px 12px 20px; }
+        .is-sidebar-collapsed .sidebar-nav-label,
+        .is-sidebar-collapsed .sidebar-nav-text,
+        .is-sidebar-collapsed .sidebar-signout-text { display: none; }
+        .is-sidebar-collapsed .sidebar-nav { align-items: center; }
+        .is-sidebar-collapsed .sidebar-nav-item {
+          width: 48px;
+          justify-content: center;
+          padding: 12px;
+        }
+        .is-sidebar-collapsed .sidebar-nav-active::before { left: -12px; }
+        .is-sidebar-collapsed .sidebar-signout {
+          width: 48px;
+          margin: 0 auto;
+          justify-content: center;
+          padding: 12px;
+        }
+        .is-sidebar-collapsed .sidebar-divider { margin: 8px 4px 16px; }
+
+        /* ── Tooltip (fixed, so it escapes the sidebar's overflow clip) ── */
+        .sidebar-tooltip {
+          position: fixed;
+          transform: translateY(-50%);
+          z-index: 1100;
+          padding: 6px 10px;
+          border-radius: 8px;
+          background: #1e293b;
+          color: #f8fafc;
+          font-size: 12px;
+          font-weight: 600;
+          white-space: nowrap;
+          pointer-events: none;
+          box-shadow: 0 6px 18px rgba(2,6,23,0.25);
+          animation: sidebarTooltipIn 0.12s ease-out;
+        }
+        @keyframes sidebarTooltipIn {
+          from { opacity: 0; transform: translate(-4px, -50%); }
+          to { opacity: 1; transform: translate(0, -50%); }
+        }
+
+        .dash-sidebar-backdrop { display: none; }
+
+        /* ── Responsive: rail stays in place, expanded sidebar overlays content ── */
         @media (max-width: 768px) {
-          .dash-sidebar { width: 72px; padding: 20px 8px; }
-          .sidebar-logo-text,
-          .sidebar-org-info,
-          .sidebar-nav-label,
-          .sidebar-nav-text,
-          .sidebar-signout span { display: none; }
-          .sidebar-org { padding: 8px; justify-content: center; }
-          .sidebar-nav-item { justify-content: center; padding: 12px; }
-          .sidebar-signout { justify-content: center; }
-          .sidebar-nav-active::before { display: none; }
+          .dash-sidebar {
+            position: fixed;
+            top: 0; left: 0; bottom: 0;
+          }
+          .is-sidebar-open .dash-sidebar { box-shadow: 12px 0 32px rgba(2,6,23,0.35); }
+          .dash-main { margin-left: 72px; }
           .dash-main-pattern { width: calc(100% - 72px); }
+          .dash-sidebar-backdrop {
+            display: block;
+            position: fixed;
+            inset: 0;
+            z-index: 35;
+            background: rgba(2,6,23,0.45);
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .dash-sidebar, .dash-main-pattern { transition: none; }
+          .sidebar-tooltip { animation: none; }
         }
       `}</style>
     </>
