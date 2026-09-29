@@ -25,8 +25,8 @@ interface CurrentUserProfile {
 
 interface AuthContextType {
   user: AuthUser | null;
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, orgName: string) => Promise<void>;
+  login: (email: string, password: string, turnstileToken: string) => Promise<void>;
+  register: (email: string, password: string, orgName: string, turnstileToken: string) => Promise<void>;
   logout: () => void;
   isLoading: boolean;
   refreshUserProfile: () => Promise<void>;
@@ -73,9 +73,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refreshUserProfile();
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string, turnstileToken: string) => {
     try {
-      const { data } = await axiosClient.post<AuthUser>('/api/auth/login', { email, password });
+      const { data } = await axiosClient.post<AuthUser>('/api/auth/login', { email, password, turnstileToken });
       localStorage.setItem('ugnay_token', data.token);
       localStorage.setItem('ugnay_userId', data.userId);
       localStorage.setItem('ugnay_orgName', data.orgName);
@@ -85,9 +85,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const register = async (email: string, password: string, orgName: string) => {
+  const register = async (email: string, password: string, orgName: string, turnstileToken: string) => {
     try {
-      const { data } = await axiosClient.post<AuthUser>('/api/auth/register', { email, password, orgName });
+      const { data } = await axiosClient.post<AuthUser>('/api/auth/register', { email, password, orgName, turnstileToken });
       localStorage.setItem('ugnay_token', data.token);
       localStorage.setItem('ugnay_userId', data.userId);
       localStorage.setItem('ugnay_orgName', data.orgName);

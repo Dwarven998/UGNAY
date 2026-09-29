@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../../context/useAuth';
 import { AuthFeatureIcon, AuthProductPreview, AuthenticationBackground } from './AuthVisuals';
+import { useTurnstile } from '../hooks/useTurnstile';
 
 function LoginFormContent() {
   const [email, setEmail] = useState('');
@@ -11,17 +12,29 @@ function LoginFormContent() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const { token: turnstileToken, isVerified: turnstileVerified, reset: resetTurnstile, containerRef: turnstileRef } = useTurnstile();
+
   const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
+
+    // Guard: Turnstile token must be present before allowing submission
+    if (!turnstileVerified || !turnstileToken) {
+      setError('Please complete the security verification before signing in.');
+      return;
+    }
+
     setLoading(true);
     try {
-      await login(email, password);
+      await login(email, password, turnstileToken);
       navigate('/');
     } catch (err: any) {
+      // Always reset after a failed attempt — tokens are single-use
+      resetTurnstile();
+
       const status = err.status || err.response?.status;
       const message = err.message || err.data?.message;
 
@@ -31,6 +44,8 @@ function LoginFormContent() {
         setError('Account locked due to 5 consecutive failed attempts. Please try again in 15 minutes.');
       } else if (status === 401) {
         setError(message || 'Invalid email or password.');
+      } else if (status === 400 && (message?.toLowerCase().includes('security') || message?.toLowerCase().includes('turnstile'))) {
+        setError('Security verification failed. Please complete the verification again.');
       } else {
         setError(message || 'Login failed. Please try again.');
       }
@@ -38,6 +53,9 @@ function LoginFormContent() {
       setLoading(false);
     }
   };
+
+  // Prevent submit while Turnstile has not yet resolved
+  const isSubmitDisabled = loading || !turnstileVerified;
 
   return (
     <>
@@ -181,8 +199,16 @@ function LoginFormContent() {
                 </div>
               )}
 
+              {/* Cloudflare Turnstile Widget */}
+              <div className="turnstile-wrapper">
+                <div ref={turnstileRef} id="turnstile-login" />
+                {!turnstileVerified && (
+                  <p className="turnstile-hint">Complete the security check above to enable sign in.</p>
+                )}
+              </div>
+
               {/* Submit */}
-              <button type="submit" disabled={loading} className="btn-primary modern-btn">
+              <button type="submit" disabled={isSubmitDisabled} className="btn-primary modern-btn">
                 {loading ? (
                   <>
                     <svg className="spinner" width="20" height="20" viewBox="0 0 24 24" fill="none">

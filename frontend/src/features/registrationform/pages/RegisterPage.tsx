@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from   '../../../context/useAuth';
 import { AuthFeatureIcon, AuthProductPreview, AuthenticationBackground } from '../../loginform/components/AuthVisuals';
+import { useTurnstile } from '../../loginform/hooks/useTurnstile';
 
 function RegistrationFormContent() {
   const [email, setEmail] = useState('');
@@ -15,6 +16,8 @@ function RegistrationFormContent() {
   // Added UI state for toggling password visibility
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const { token: turnstileToken, isVerified: turnstileVerified, reset: resetTurnstile, containerRef: turnstileRef } = useTurnstile();
 
   const { register } = useAuth();
   const navigate = useNavigate();
@@ -34,17 +37,28 @@ function RegistrationFormContent() {
       return;
     }
 
+    // Guard: Turnstile token must be present before allowing submission
+    if (!turnstileVerified || !turnstileToken) {
+      setError('Please complete the security verification before creating an account.');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      await register(email, password, orgName);
+      await register(email, password, orgName, turnstileToken);
       navigate('/setup');
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Registration failed. Please try again.');
+      // Always reset after a failed attempt — tokens are single-use
+      resetTurnstile();
+      setError(err.message || err.response?.data?.message || 'Registration failed. Please try again.');
     } finally {
       setLoading(false);
     }
   };
+
+  // Prevent submit while Turnstile has not yet resolved
+  const isSubmitDisabled = loading || !turnstileVerified;
 
   return (
     <>
@@ -230,8 +244,16 @@ function RegistrationFormContent() {
                 </div>
               )}
 
+              {/* Cloudflare Turnstile Widget */}
+              <div className="turnstile-wrapper">
+                <div ref={turnstileRef} id="turnstile-register" />
+                {!turnstileVerified && (
+                  <p className="turnstile-hint">Complete the security check above to enable account creation.</p>
+                )}
+              </div>
+
               {/* Submit */}
-              <button type="submit" disabled={loading} className="btn-primary modern-btn stagger-6" style={{ marginTop: '0.5rem' }}>
+              <button type="submit" disabled={isSubmitDisabled} className="btn-primary modern-btn stagger-6" style={{ marginTop: '0.5rem' }}>
                 {loading ? (
                   <>
                     <svg className="spinner" width="20" height="20" viewBox="0 0 24 24" fill="none">
@@ -486,6 +508,10 @@ function RegistrationFormContent() {
         .register-prompt { text-align: center; margin-top: 2rem; font-size: 1rem; color: #64748b; }
         .register-link { color: #2563eb; font-weight: 600; text-decoration: none; transition: color 0.2s; }
         .register-link:hover { color: #1d4ed8; text-decoration: underline; }
+
+        /* Cloudflare Turnstile Widget */
+        .turnstile-wrapper { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 0.25rem 0; }
+        .turnstile-hint { font-size: 0.8rem; color: #94a3b8; margin: 0; text-align: center; }
 
         /* Responsive */
         @media (max-width: 1024px) {

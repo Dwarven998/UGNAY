@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 
 import java.util.Map;
@@ -23,12 +24,26 @@ public class AuthController {
     private final JwtUtil jwtUtil;
     private final FacebookOAuthService facebookOAuthService;
     private final LoginRateLimiterService rateLimiterService;
+    private final TurnstileService turnstileService;
 
     @PostMapping("/register")
-    public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest req) {
+    public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest req,
+                                      HttpServletRequest httpRequest) {
+        // 1. Turnstile verification — must happen before any business logic
+        String clientIp = extractClientIp(httpRequest);
+        if (!turnstileService.verify(req.turnstileToken(), clientIp)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "Security Verification Failed",
+                "message", "Security verification failed. Please try again."
+            ));
+        }
+
+        // 2. Email uniqueness check
         if (userRepository.existsByEmail(req.email())) {
             return ResponseEntity.badRequest().body("Email already registered");
         }
+
+        // 3. Create user
         User user = User.builder()
             .email(req.email())
             .passwordHash(passwordEncoder.encode(req.password()))
@@ -41,10 +56,20 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest req) {
+    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest req,
+                                   HttpServletRequest httpRequest) {
         String email = req.email();
 
-        // 1. Account Lockout Check
+        // 1. Turnstile verification — must happen before any business logic
+        String clientIp = extractClientIp(httpRequest);
+        if (!turnstileService.verify(req.turnstileToken(), clientIp)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "Security Verification Failed",
+                "message", "Security verification failed. Please try again."
+            ));
+        }
+
+        // 2. Account Lockout Check
         if (rateLimiterService.isAccountLocked(email)) {
             return ResponseEntity.status(HttpStatus.LOCKED).body(Map.of(
                 "error", "Account Locked",
@@ -52,7 +77,7 @@ public class AuthController {
             ));
         }
 
-        // 2. Database Lookup & Password Verification
+        // 3. Database Lookup & Password Verification
         Optional<User> userOptional = userRepository.findByEmail(email);
 
         if (userOptional.isEmpty() || !passwordEncoder.matches(req.password(), userOptional.get().getPasswordHash())) {
@@ -65,13 +90,21 @@ public class AuthController {
             ));
         }
 
-        // 3. Reset Fail Counters on Success
+        // 4. Reset Fail Counters on Success
         User user = userOptional.get();
         rateLimiterService.recordSuccessfulLogin(email);
 
-        // 4. Issue Token
+        // 5. Issue Token
         String token = jwtUtil.generateToken(user.getEmail(), user.getId().toString());
         return ResponseEntity.ok(new AuthResponse(token, user.getId(), user.getOrgName()));
+    }
+
+    private String extractClientIp(HttpServletRequest request) {
+        String xForwardedFor = request.getHeader("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isBlank()) {
+            return xForwardedFor.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
     }
 
     @GetMapping("/me")
@@ -91,12 +124,14 @@ public class AuthController {
     public record RegisterRequest(
         @jakarta.validation.constraints.Email String email,
         @jakarta.validation.constraints.NotBlank String password,
-        @jakarta.validation.constraints.NotBlank String orgName
+        @jakarta.validation.constraints.NotBlank String orgName,
+        @jakarta.validation.constraints.NotBlank String turnstileToken
     ) {}
 
     public record LoginRequest(
         @jakarta.validation.constraints.Email String email,
-        @jakarta.validation.constraints.NotBlank String password
+        @jakarta.validation.constraints.NotBlank String password,
+        @jakarta.validation.constraints.NotBlank String turnstileToken
     ) {}
 
     public record AuthResponse(String token, java.util.UUID userId, String orgName) {}
