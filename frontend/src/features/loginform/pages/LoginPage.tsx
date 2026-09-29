@@ -189,6 +189,8 @@ export default function LoginPage() {
         .register-prompt { text-align: center; margin-top: 2.5rem; font-size: 1rem; color: #64748b; }
         .register-link { color: #2563eb; font-weight: 600; text-decoration: none; transition: color 0.2s; }
         .register-link:hover { color: #1d4ed8; text-decoration: underline; }
+        .link-button { background: none; border: none; padding: 0; font: inherit; cursor: pointer; }
+        .btn-social:disabled { opacity: 0.7; cursor: not-allowed; transform: none; }
 
         @keyframes float { 0% { transform: translate(0, 0) rotate(0deg); } 33% { transform: translate(30px, -50px) rotate(120deg); } 66% { transform: translate(-20px, 20px) rotate(240deg); } 100% { transform: translate(0, 0) rotate(360deg); } }
         @keyframes slideUpFade { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }

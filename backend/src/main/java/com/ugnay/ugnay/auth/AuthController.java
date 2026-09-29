@@ -23,6 +23,7 @@ public class AuthController {
     private final JwtUtil jwtUtil;
     private final FacebookOAuthService facebookOAuthService;
     private final LoginRateLimiterService rateLimiterService;
+    private final GoogleAuthService googleAuthService;
 
     @PostMapping("/register")
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest req) {
@@ -74,6 +75,46 @@ public class AuthController {
         return ResponseEntity.ok(new AuthResponse(token, user.getId(), user.getOrgName()));
     }
 
+    /**
+     * "Continue with Google": logs in the account matching the verified Google email. When no account exists yet,
+     * replies with needsOrgName so the client can ask for an organization name and call again with it.
+     */
+    @PostMapping("/google")
+    public ResponseEntity<?> google(@Valid @RequestBody GoogleAuthRequest req) {
+        GoogleAuthService.GoogleIdentity identity;
+        try {
+            identity = googleAuthService.verify(req.accessToken());
+        } catch (GoogleAuthService.GoogleAuthException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
+                "error", "Google Sign-In Failed",
+                "message", e.getMessage()
+            ));
+        }
+
+        Optional<User> existing = userRepository.findByEmail(identity.email());
+        if (existing.isPresent()) {
+            User user = existing.get();
+            String token = jwtUtil.generateToken(user.getEmail(), user.getId().toString());
+            return ResponseEntity.ok(new GoogleAuthResponse(token, user.getId(), user.getOrgName(), false, false, user.getEmail()));
+        }
+
+        String orgName = req.orgName() == null ? "" : req.orgName().trim();
+        if (orgName.isEmpty()) {
+            return ResponseEntity.ok(new GoogleAuthResponse(null, null, null, true, false, identity.email()));
+        }
+
+        // Google accounts have no password; store a hash of a random value so password login can never match.
+        User user = User.builder()
+            .email(identity.email())
+            .passwordHash(passwordEncoder.encode(java.util.UUID.randomUUID().toString()))
+            .orgName(orgName)
+            .tonePreference(User.TonePreference.FORMAL)
+            .build();
+        userRepository.save(user);
+        String token = jwtUtil.generateToken(user.getEmail(), user.getId().toString());
+        return ResponseEntity.ok(new GoogleAuthResponse(token, user.getId(), user.getOrgName(), false, true, user.getEmail()));
+    }
+
     @GetMapping("/me")
     public ResponseEntity<CurrentUserResponse> me(@AuthenticationPrincipal User user) {
         var connection = facebookOAuthService.buildConnectionDetails(user);
@@ -97,6 +138,20 @@ public class AuthController {
     public record LoginRequest(
         @jakarta.validation.constraints.Email String email,
         @jakarta.validation.constraints.NotBlank String password
+    ) {}
+
+    public record GoogleAuthRequest(
+        @jakarta.validation.constraints.NotBlank String accessToken,
+        String orgName
+    ) {}
+
+    public record GoogleAuthResponse(
+        String token,
+        java.util.UUID userId,
+        String orgName,
+        boolean needsOrgName,
+        boolean newAccount,
+        String email
     ) {}
 
     public record AuthResponse(String token, java.util.UUID userId, String orgName) {}
