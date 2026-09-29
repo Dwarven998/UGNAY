@@ -23,10 +23,27 @@ interface CurrentUserProfile {
   facebookPagePictureUrl: string | null;
 }
 
+interface GoogleAuthResponse {
+  token: string | null;
+  userId: string | null;
+  orgName: string | null;
+  needsOrgName: boolean;
+  newAccount: boolean;
+  email: string;
+}
+
+/** needsOrgName: no account exists for this Google email yet; call again with an organization name to create it. */
+export interface GoogleLoginResult {
+  needsOrgName: boolean;
+  newAccount: boolean;
+  email: string;
+}
+
 interface AuthContextType {
   user: AuthUser | null;
   login: (email: string, password: string, turnstileToken: string) => Promise<void>;
   register: (email: string, password: string, orgName: string, turnstileToken: string) => Promise<void>;
+  loginWithGoogle: (accessToken: string, orgName?: string) => Promise<GoogleLoginResult>;
   logout: () => void;
   isLoading: boolean;
   refreshUserProfile: () => Promise<void>;
@@ -97,6 +114,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const loginWithGoogle = async (accessToken: string, orgName?: string): Promise<GoogleLoginResult> => {
+    const { data } = await axiosClient.post<GoogleAuthResponse>('/api/auth/google', { accessToken, orgName });
+    if (data.token && data.userId && data.orgName) {
+      localStorage.setItem('ugnay_token', data.token);
+      localStorage.setItem('ugnay_userId', data.userId);
+      localStorage.setItem('ugnay_orgName', data.orgName);
+      await refreshUserProfile();
+    }
+    return { needsOrgName: data.needsOrgName, newAccount: data.newAccount, email: data.email };
+  };
+
   const logout = () => {
     localStorage.clear();
     scopedCache.clear();
@@ -104,7 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, isLoading, refreshUserProfile }}>
+    <AuthContext.Provider value={{ user, login, register, loginWithGoogle, logout, isLoading, refreshUserProfile }}>
       {children}
     </AuthContext.Provider>
   );

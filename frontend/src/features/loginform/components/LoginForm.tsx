@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../../context/useAuth';
+import { ApiError } from '../../../api/axiosClient';
+import { preloadGoogleIdentity, requestGoogleAccessToken } from '../api/googleIdentity';
 import { AuthFeatureIcon, AuthProductPreview, AuthenticationBackground } from './AuthVisuals';
 import { useTurnstile } from '../hooks/useTurnstile';
 
@@ -12,10 +14,59 @@ function LoginFormContent() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Set when Google sign-in found no account for this email: we ask for an organization name before creating it.
+  const [googleSignup, setGoogleSignup] = useState<{ accessToken: string; email: string } | null>(null);
+  const [orgName, setOrgName] = useState('');
+  const [googleLoading, setGoogleLoading] = useState(false);
+
   const { token: turnstileToken, isVerified: turnstileVerified, reset: resetTurnstile, containerRef: turnstileRef } = useTurnstile();
 
-  const { login } = useAuth();
+  const { login, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    preloadGoogleIdentity();
+  }, []);
+
+  const handleGoogle = async () => {
+    setError('');
+    setGoogleLoading(true);
+    try {
+      const accessToken = await requestGoogleAccessToken();
+      const result = await loginWithGoogle(accessToken);
+      if (result.needsOrgName) {
+        setOrgName('');
+        setGoogleSignup({ accessToken, email: result.email });
+      } else {
+        navigate('/');
+      }
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : 'Google sign-in failed. Please try again.');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleGoogleSignup = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!googleSignup) return;
+    setError('');
+    setGoogleLoading(true);
+    try {
+      const result = await loginWithGoogle(googleSignup.accessToken, orgName.trim());
+      navigate(result.newAccount ? '/setup' : '/');
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        // The Google token expired while the form was open; send them through Google again.
+        setGoogleSignup(null);
+        setError('Your Google session expired. Please continue with Google again.');
+      } else {
+        setError(err instanceof Error && err.message ? err.message : 'Could not create your account. Please try again.');
+      }
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -122,6 +173,81 @@ function LoginFormContent() {
               <img src="/ugnay_logo_ui.png" alt="" aria-hidden="true" />
               <span>Ugnay</span>
             </div>
+            {googleSignup && (
+              <>
+                <div className="form-header stagger-1">
+                  <h1 className="form-title">One last step</h1>
+                  <p className="form-subtitle">
+                    Name your organization to finish creating your account for <strong>{googleSignup.email}</strong>
+                  </p>
+                </div>
+
+                <form onSubmit={handleGoogleSignup} className="auth-form stagger-2">
+                  <div className="input-group">
+                    <label htmlFor="google-org-name">Organization Name</label>
+                    <div className="input-wrapper">
+                      <div className="input-icon">
+                        <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                        </svg>
+                      </div>
+                      <input
+                        id="google-org-name"
+                        type="text"
+                        placeholder="e.g. Computer Science Society"
+                        value={orgName}
+                        onChange={e => setOrgName(e.target.value)}
+                        required
+                        autoFocus
+                        className="modern-input"
+                      />
+                    </div>
+                  </div>
+
+                  {error && (
+                    <div className="error-card">
+                      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>{error}</span>
+                    </div>
+                  )}
+
+                  <button type="submit" disabled={googleLoading || !orgName.trim()} className="btn-primary modern-btn">
+                    {googleLoading ? (
+                      <>
+                        <svg className="spinner" width="20" height="20" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.25)" strokeWidth="3" />
+                          <path fill="white" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Creating account...
+                      </>
+                    ) : (
+                      <>
+                        Continue
+                        <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                        </svg>
+                      </>
+                    )}
+                  </button>
+                </form>
+
+                <p className="register-prompt stagger-3">
+                  Not you?{' '}
+                  <button
+                    type="button"
+                    className="register-link link-button"
+                    onClick={() => { setGoogleSignup(null); setError(''); }}
+                  >
+                    Back to sign in
+                  </button>
+                </p>
+              </>
+            )}
+
+            {/* Hidden rather than unmounted during the Google step: the Turnstile widget only renders once per mount. */}
+            <div hidden={googleSignup !== null}>
             <div className="form-header stagger-1">
               <h1 className="form-title">Welcome back</h1>
               <p className="form-subtitle">Sign in to your organization account to continue</p>
@@ -235,12 +361,27 @@ function LoginFormContent() {
               <div className="line"></div>
             </div>
 
-            {/* Facebook SSO */}
-            <button type="button" className="btn-social modern-btn stagger-4">
-              <svg width="20" height="20" fill="#1877F2" viewBox="0 0 24 24">
-                <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-              </svg>
-              Facebook
+            {/* Google SSO */}
+            <button
+              type="button"
+              onClick={handleGoogle}
+              disabled={googleLoading || loading}
+              className="btn-social modern-btn stagger-4"
+            >
+              {googleLoading ? (
+                <svg className="spinner" width="20" height="20" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="#e2e8f0" strokeWidth="3" />
+                  <path fill="#4285F4" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="#4285F4" d="M23.52 12.27c0-.85-.08-1.67-.22-2.45H12v4.64h6.46a5.52 5.52 0 01-2.4 3.62v3h3.88c2.27-2.09 3.58-5.17 3.58-8.81z" />
+                  <path fill="#34A853" d="M12 24c3.24 0 5.96-1.07 7.94-2.91l-3.88-3.01c-1.07.72-2.45 1.15-4.06 1.15-3.13 0-5.78-2.11-6.72-4.95H1.27v3.11A12 12 0 0012 24z" />
+                  <path fill="#FBBC05" d="M5.28 14.28a7.2 7.2 0 010-4.56V6.61H1.27a12 12 0 000 10.78l4.01-3.11z" />
+                  <path fill="#EA4335" d="M12 4.77c1.76 0 3.34.61 4.59 1.8l3.44-3.44C17.95 1.19 15.24 0 12 0A12 12 0 001.27 6.61l4.01 3.11C6.22 6.88 8.87 4.77 12 4.77z" />
+                </svg>
+              )}
+              Google
             </button>
 
             {/* Register link */}
@@ -248,6 +389,7 @@ function LoginFormContent() {
               Don't have an account?{' '}
               <Link to="/register" className="register-link">Create one now</Link>
             </p>
+            </div>
           </div>
         </div>
       </div>
