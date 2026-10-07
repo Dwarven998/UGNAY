@@ -216,8 +216,26 @@ export default function ResetPasswordPage() {
         .orb-3 { width: 300px; height: 300px; background: #1e3a8a; top: 40%; left: 40%; animation-delay: -6s; opacity: 0.5; }
         .noise-overlay { position: absolute; inset: 0; opacity: 0.03; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E"); }
         .glass-card { position: relative; z-index: 10; width: 100%; max-width: 520px; background: rgba(255,255,255,0.03); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,0.08); border-radius: 24px; padding: 3rem; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); animation: slideUpFade 0.8s cubic-bezier(0.16,1,0.3,1); }
-        .logo-section { position: absolute; top: 2.5rem; left: 2.5rem; z-index: 20; display: flex; align-items: center; gap: 12px; }
-        .logo-icon { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; }
+        .logo-section {
+          position: relative;
+          top: auto;
+          left: auto;
+          z-index: 20;
+          display: flex;
+          align-items: center;
+          gap: clamp(8px, 1vw, 12px);
+          width: fit-content;
+          max-width: min(100%, 20rem);
+          margin: 0 0 1.5rem;
+        }
+        .logo-icon {
+          width: clamp(32px, 2.1vw, 44px);
+          height: clamp(32px, 2.1vw, 44px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
         .brand-mark { width: 100%; height: 100%; object-fit: contain; }
         .logo-text { color: #fff; font-size: 22px; font-weight: 700; letter-spacing: 0.05em; }
         .ai-badge { display: inline-flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); padding: 8px 16px; border-radius: 30px; color: #e2e8f0; font-size: 13px; font-weight: 500; margin-bottom: 1.5rem; }

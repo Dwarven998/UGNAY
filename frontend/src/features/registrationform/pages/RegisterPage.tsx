@@ -66,7 +66,6 @@ function RegistrationFormContent() {
 
         {/* ── LEFT PANEL ───────────────────────── */}
         <div className="left-panel reg-left-panel">
-          {/* Logo - Anchored absolute top left */}
           <div className="logo-section">
             <div className="logo-icon">
               <img className="brand-mark" src="/ugnay_logo_ui.png" alt="" aria-hidden="true" />
@@ -342,15 +341,6 @@ function RegistrationFormContent() {
           animation: slideUpFade 0.8s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
-        .logo-section { 
-          position: absolute;
-          top: 2.5rem;
-          left: 2.5rem;
-          z-index: 20;
-          display: flex; 
-          align-items: center; 
-          gap: 12px; 
-        }
         .logo-icon { width: 44px; height: 44px; background: transparent; border-radius: 0; display: flex; align-items: center; justify-content: center; }
         .brand-mark { width: 100%; height: 100%; object-fit: contain; }
         .logo-text { color: #fff; font-size: 22px; font-weight: 700; letter-spacing: 0.05em; }

@@ -61,18 +61,36 @@ export default function LoginPage() {
           animation: slideUpFade 0.8s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
-        .logo-section { 
-          position: absolute;
-          top: 2.5rem;
-          left: 2.5rem;
+        .logo-section {
+          position: relative;
+          top: auto;
+          left: auto;
           z-index: 20;
-          display: flex; 
-          align-items: center; 
-          gap: 12px; 
+          display: flex;
+          align-items: center;
+          gap: clamp(8px, 1vw, 12px);
+          width: fit-content;
+          max-width: min(100%, 20rem);
+          margin: 0 0 1.5rem;
         }
-        .logo-icon { width: 44px; height: 44px; background: transparent; border-radius: 0; display: flex; align-items: center; justify-content: center; }
+        .logo-icon {
+          width: clamp(32px, 2.1vw, 44px);
+          height: clamp(32px, 2.1vw, 44px);
+          background: transparent;
+          border-radius: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
         .brand-mark { width: 100%; height: 100%; object-fit: contain; }
-        .logo-text { color: #fff; font-size: 22px; font-weight: 700; letter-spacing: 0.05em; }
+        .logo-text {
+          color: #fff;
+          font-size: clamp(1.125rem, 1.15vw + 0.7rem, 1.65rem);
+          font-weight: 700;
+          letter-spacing: 0.05em;
+          white-space: nowrap;
+        }
 
         .ai-badge { display: inline-flex; align-items: center; gap: 8px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.15); padding: 8px 16px; border-radius: 30px; color: #e2e8f0; font-size: 13px; font-weight: 500; margin-bottom: 1.5rem; }
         .pulse-dot { width: 8px; height: 8px; background: #4ade80; border-radius: 50%; animation: pulse 2s infinite; }

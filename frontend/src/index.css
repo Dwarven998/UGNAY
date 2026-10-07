@@ -67,6 +67,11 @@ html, body {
 }
 
 :is(.login-layout, .auth-layout) .left-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
   width: 42%;
   flex: 0 0 42%;
   padding: 2.5rem;
@@ -74,8 +79,42 @@ html, body {
 }
 
 :is(.login-layout, .auth-layout) .logo-section {
-  top: 2rem;
-  left: 2.25rem;
+  position: relative;
+  top: auto;
+  left: auto;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: clamp(8px, 1vw, 12px);
+  width: fit-content;
+  max-width: min(100%, 20rem);
+  margin: 0 0 1.5rem;
+}
+
+:is(.login-layout, .auth-layout) .logo-icon {
+  width: clamp(32px, 2.1vw, 44px);
+  height: clamp(32px, 2.1vw, 44px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+:is(.login-layout, .auth-layout) .brand-mark {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+:is(.login-layout, .auth-layout) .logo-text {
+  display: inline-flex;
+  align-items: center;
+  color: #fff;
+  font-size: clamp(1.125rem, 1.15vw + 0.7rem, 1.65rem);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
 }
 
 :is(.login-layout, .auth-layout) .glass-card {
@@ -103,6 +142,7 @@ html, body {
 }
 
 :is(.login-layout, .auth-layout) .right-panel {
+  align-items: safe center;
   min-width: 0;
   padding: 2rem;
   background: #f8fafc;
@@ -452,11 +492,6 @@ html, body {
   transform: rotate(-17deg);
 }
 
-:is(.login-layout, .auth-layout) .logo-section {
-  top: 2.25rem;
-  left: 3.25rem;
-}
-
 :is(.login-layout, .auth-layout) .glass-card {
   z-index: 10;
   width: 100%;
@@ -776,7 +811,6 @@ html, body {
 
 @media (max-width: 1200px) {
   :is(.login-layout, .auth-layout) .left-panel { width: 43%; flex-basis: 43%; padding: 2.5rem 2rem; }
-  :is(.login-layout, .auth-layout) .logo-section { left: 2rem; }
   :is(.login-layout, .auth-layout) .hero-title { font-size: 2.3rem; }
   :is(.login-layout, .auth-layout) .form-container { padding: 1.75rem 2rem; }
   .auth-preview { right: -12%; width: 92%; height: 330px; bottom: -170px; }

@@ -114,7 +114,6 @@ function LoginFormContent() {
         
         {/* ── LEFT PANEL ───────────────────────── */}
         <div className="left-panel">
-          {/* Logo - Moved to absolute top left */}
           <div className="logo-section">
             <div className="logo-icon">
               <img className="brand-mark" src="/ugnay_logo_ui.png" alt="" aria-hidden="true" />
