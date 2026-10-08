@@ -50,6 +50,13 @@ public class AuthController {
             .email(req.email())
             .passwordHash(passwordEncoder.encode(req.password()))
             .orgName(req.orgName())
+            .description(req.description() != null ? req.description().trim() : null)
+            .fullName(req.fullName() != null ? req.fullName().trim() : null)
+            .audience(req.audience() != null ? req.audience().trim() : null)
+            .focusAreas(req.focusAreas() != null ? req.focusAreas().trim() : null)
+            .languagePref(req.languagePref() != null ? req.languagePref().trim() : null)
+            .officialHashtags(req.officialHashtags() != null ? req.officialHashtags().trim() : null)
+            .captionAvoid(req.captionAvoid() != null ? req.captionAvoid().trim() : null)
             .tonePreference(User.TonePreference.FORMAL)
             .build();
         userRepository.save(user);
@@ -134,6 +141,13 @@ public class AuthController {
             .email(identity.email())
             .passwordHash(passwordEncoder.encode(java.util.UUID.randomUUID().toString()))
             .orgName(orgName)
+            .description(req.description() != null ? req.description().trim() : null)
+            .fullName(req.fullName() != null ? req.fullName().trim() : null)
+            .audience(req.audience() != null ? req.audience().trim() : null)
+            .focusAreas(req.focusAreas() != null ? req.focusAreas().trim() : null)
+            .languagePref(req.languagePref() != null ? req.languagePref().trim() : null)
+            .officialHashtags(req.officialHashtags() != null ? req.officialHashtags().trim() : null)
+            .captionAvoid(req.captionAvoid() != null ? req.captionAvoid().trim() : null)
             .tonePreference(User.TonePreference.FORMAL)
             .build();
         userRepository.save(user);
@@ -158,8 +172,47 @@ public class AuthController {
             connection.facebookConnected(),
             connection.facebookPageId(),
             connection.facebookPageName(),
-            connection.facebookPagePictureUrl()
+            connection.facebookPagePictureUrl(),
+            user.getDescription(),
+            user.getFullName(),
+            user.getAudience(),
+            user.getFocusAreas(),
+            user.getLanguagePref(),
+            user.getOfficialHashtags(),
+            user.getCaptionAvoid()
         ));
+    }
+
+    @PatchMapping("/profile")
+    public ResponseEntity<CurrentUserResponse> updateProfile(@AuthenticationPrincipal User authUser,
+                                                             @RequestBody UpdateUserProfileRequest req) {
+        User user = userRepository.findById(authUser.getId()).orElse(authUser);
+        if (req.orgName() != null && !req.orgName().isBlank()) {
+            user.setOrgName(req.orgName().trim());
+        }
+        if (req.description() != null) {
+            user.setDescription(req.description().trim());
+        }
+        if (req.fullName() != null) {
+            user.setFullName(req.fullName().trim());
+        }
+        if (req.audience() != null) {
+            user.setAudience(req.audience().trim());
+        }
+        if (req.focusAreas() != null) {
+            user.setFocusAreas(req.focusAreas().trim());
+        }
+        if (req.languagePref() != null) {
+            user.setLanguagePref(req.languagePref().trim());
+        }
+        if (req.officialHashtags() != null) {
+            user.setOfficialHashtags(req.officialHashtags().trim());
+        }
+        if (req.captionAvoid() != null) {
+            user.setCaptionAvoid(req.captionAvoid().trim());
+        }
+        userRepository.save(user);
+        return me(user);
     }
 
     // --- Forgot Password / Reset Password ---
@@ -210,7 +263,14 @@ public class AuthController {
         @jakarta.validation.constraints.Email String email,
         @jakarta.validation.constraints.NotBlank String password,
         @jakarta.validation.constraints.NotBlank String orgName,
-        @jakarta.validation.constraints.NotBlank String turnstileToken
+        @jakarta.validation.constraints.NotBlank String turnstileToken,
+        String description,
+        String fullName,
+        String audience,
+        String focusAreas,
+        String languagePref,
+        String officialHashtags,
+        String captionAvoid
     ) {}
 
     public record LoginRequest(
@@ -221,7 +281,14 @@ public class AuthController {
 
     public record GoogleAuthRequest(
         @jakarta.validation.constraints.NotBlank String accessToken,
-        String orgName
+        String orgName,
+        String description,
+        String fullName,
+        String audience,
+        String focusAreas,
+        String languagePref,
+        String officialHashtags,
+        String captionAvoid
     ) {}
 
     public record GoogleAuthResponse(
@@ -241,6 +308,24 @@ public class AuthController {
         boolean facebookConnected,
         String facebookPageId,
         String facebookPageName,
-        String facebookPagePictureUrl
+        String facebookPagePictureUrl,
+        String description,
+        String fullName,
+        String audience,
+        String focusAreas,
+        String languagePref,
+        String officialHashtags,
+        String captionAvoid
+    ) {}
+
+    public record UpdateUserProfileRequest(
+        String orgName,
+        String description,
+        String fullName,
+        String audience,
+        String focusAreas,
+        String languagePref,
+        String officialHashtags,
+        String captionAvoid
     ) {}
 }

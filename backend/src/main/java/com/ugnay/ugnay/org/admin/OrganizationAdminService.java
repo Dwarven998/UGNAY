@@ -63,6 +63,13 @@ public class OrganizationAdminService {
             .joinId(req.type() == OrgType.UNIVERSITY ? generateUniqueJoinId() : null)
             .openJoin(req.openJoin())
             .createdBy(creator)
+            .description(req.description() != null ? req.description().trim() : null)
+            .fullName(req.fullName() != null ? req.fullName().trim() : null)
+            .audience(req.audience() != null ? req.audience().trim() : null)
+            .focusAreas(req.focusAreas() != null ? req.focusAreas().trim() : null)
+            .languagePref(req.languagePref() != null ? req.languagePref().trim() : null)
+            .officialHashtags(req.officialHashtags() != null ? req.officialHashtags().trim() : null)
+            .captionAvoid(req.captionAvoid() != null ? req.captionAvoid().trim() : null)
             .build();
         organizationRepository.save(org);
 
@@ -101,7 +108,41 @@ public class OrganizationAdminService {
             parent != null ? parent.getName() : null,
             org.getJoinCode(), org.getJoinId(), org.isOpenJoin(),
             permissionService.canAdministerOrg(requester.getId(), orgId),
-            parent != null && permissionService.isOfficerOrAdmin(requester.getId(), parent.getId()));
+            parent != null && permissionService.isOfficerOrAdmin(requester.getId(), parent.getId()),
+            org.getDescription(), org.getFullName(), org.getAudience(), org.getFocusAreas(),
+            org.getLanguagePref(), org.getOfficialHashtags(), org.getCaptionAvoid());
+    }
+
+    @Transactional
+    public OrganizationAdminController.OrgManageDto updateProfile(User requester, UUID orgId, OrganizationAdminController.UpdateOrgProfileRequest req) {
+        permissionService.requireManageOrg(requester.getId(), orgId);
+        Organization org = getOrgOrThrow(orgId);
+        if (req.name() != null && !req.name().isBlank()) {
+            org.setName(req.name().trim());
+        }
+        if (req.description() != null) {
+            org.setDescription(req.description().trim());
+        }
+        if (req.fullName() != null) {
+            org.setFullName(req.fullName().trim());
+        }
+        if (req.audience() != null) {
+            org.setAudience(req.audience().trim());
+        }
+        if (req.focusAreas() != null) {
+            org.setFocusAreas(req.focusAreas().trim());
+        }
+        if (req.languagePref() != null) {
+            org.setLanguagePref(req.languagePref().trim());
+        }
+        if (req.officialHashtags() != null) {
+            org.setOfficialHashtags(req.officialHashtags().trim());
+        }
+        if (req.captionAvoid() != null) {
+            org.setCaptionAvoid(req.captionAvoid().trim());
+        }
+        organizationRepository.save(org);
+        return getManageDetails(requester, orgId);
     }
 
     @Transactional
@@ -325,7 +366,9 @@ public class OrganizationAdminService {
         Organization parent = org.getParentOrganization();
         return new OrganizationAdminController.OrgDto(org.getId(), org.getName(), org.getType(),
             parent != null ? parent.getId() : null, parent != null ? parent.getName() : null,
-            org.getJoinCode(), org.getJoinId(), org.isOpenJoin());
+            org.getJoinCode(), org.getJoinId(), org.isOpenJoin(),
+            org.getDescription(), org.getFullName(), org.getAudience(), org.getFocusAreas(),
+            org.getLanguagePref(), org.getOfficialHashtags(), org.getCaptionAvoid());
     }
 
     private OrganizationAdminController.MembershipDto toMembershipDto(OrganizationMembership m) {

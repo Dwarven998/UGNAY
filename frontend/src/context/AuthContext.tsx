@@ -4,7 +4,9 @@ import type { ReactNode } from 'react';
 import axiosClient from '../api/axiosClient.ts';
 import { scopedCache } from '../features/posts/postCache';
 
-interface AuthUser {
+import type { OrgProfileFields } from '../types';
+
+interface AuthUser extends OrgProfileFields {
   userId: string;
   orgName: string;
   token: string;
@@ -14,7 +16,7 @@ interface AuthUser {
   facebookPagePictureUrl: string | null;
 }
 
-interface CurrentUserProfile {
+interface CurrentUserProfile extends OrgProfileFields {
   userId: string;
   orgName: string;
   facebookConnected: boolean;
@@ -42,8 +44,9 @@ export interface GoogleLoginResult {
 interface AuthContextType {
   user: AuthUser | null;
   login: (email: string, password: string, turnstileToken: string) => Promise<void>;
-  register: (email: string, password: string, orgName: string, turnstileToken: string) => Promise<void>;
-  loginWithGoogle: (accessToken: string, orgName?: string) => Promise<GoogleLoginResult>;
+  register: (email: string, password: string, orgName: string, turnstileToken: string, profile?: Partial<OrgProfileFields>) => Promise<void>;
+  loginWithGoogle: (accessToken: string, orgName?: string, profile?: Partial<OrgProfileFields>) => Promise<GoogleLoginResult>;
+  updateUserProfile: (profile: Partial<OrgProfileFields>) => Promise<void>;
   logout: () => void;
   isLoading: boolean;
   refreshUserProfile: () => Promise<void>;
@@ -102,9 +105,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const register = async (email: string, password: string, orgName: string, turnstileToken: string) => {
+  const register = async (
+    email: string,
+    password: string,
+    orgName: string,
+    turnstileToken: string,
+    profile?: Partial<OrgProfileFields>
+  ) => {
     try {
-      const { data } = await axiosClient.post<AuthUser>('/api/auth/register', { email, password, orgName, turnstileToken });
+      const { data } = await axiosClient.post<AuthUser>('/api/auth/register', {
+        email,
+        password,
+        orgName,
+        turnstileToken,
+        ...profile,
+      });
       localStorage.setItem('ugnay_token', data.token);
       localStorage.setItem('ugnay_userId', data.userId);
       localStorage.setItem('ugnay_orgName', data.orgName);
@@ -114,8 +129,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const loginWithGoogle = async (accessToken: string, orgName?: string): Promise<GoogleLoginResult> => {
-    const { data } = await axiosClient.post<GoogleAuthResponse>('/api/auth/google', { accessToken, orgName });
+  const loginWithGoogle = async (
+    accessToken: string,
+    orgName?: string,
+    profile?: Partial<OrgProfileFields>
+  ): Promise<GoogleLoginResult> => {
+    const { data } = await axiosClient.post<GoogleAuthResponse>('/api/auth/google', {
+      accessToken,
+      orgName,
+      ...profile,
+    });
     if (data.token && data.userId && data.orgName) {
       localStorage.setItem('ugnay_token', data.token);
       localStorage.setItem('ugnay_userId', data.userId);
@@ -125,6 +148,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { needsOrgName: data.needsOrgName, newAccount: data.newAccount, email: data.email };
   };
 
+  const updateUserProfile = async (profile: Partial<OrgProfileFields>) => {
+    await axiosClient.patch('/api/auth/profile', profile);
+    await refreshUserProfile();
+  };
+
   const logout = () => {
     localStorage.clear();
     scopedCache.clear();
@@ -132,7 +160,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, loginWithGoogle, logout, isLoading, refreshUserProfile }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        login,
+        register,
+        loginWithGoogle,
+        updateUserProfile,
+        logout,
+        isLoading,
+        refreshUserProfile,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

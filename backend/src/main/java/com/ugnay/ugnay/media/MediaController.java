@@ -81,7 +81,7 @@ public class MediaController {
     @PostMapping("/assets/generate-caption")
     public ResponseEntity<List<String>> generateCaptionFromAssets(@AuthenticationPrincipal User user,
                                                                    @RequestBody GenerateCaptionRequest req) {
-        return ResponseEntity.ok(mediaService.generateCaptionsFromAssets(user, req.assetIds(), req.tone()));
+        return ResponseEntity.ok(mediaService.generateCaptionsFromAssets(user, req.assetIds(), req.tone(), req.orgId(), req.notes()));
     }
 
     // DTOs
@@ -91,5 +91,5 @@ public class MediaController {
     public record CreateFolderRequest(String name, UUID orgId) {}
     public record RecommendRequest(String description) {}
     public record RecommendationDto(UUID id, String fileName, String fileUrl, String fileType, int score, String reason) {}
-    public record GenerateCaptionRequest(List<UUID> assetIds, String tone) {}
+    public record GenerateCaptionRequest(List<UUID> assetIds, String tone, UUID orgId, String notes) {}
 }

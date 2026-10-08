@@ -5,9 +5,9 @@
  * goes wrong here falls back to the plain URL, which the server still accepts.
  */
 
-// 768px is plenty for the model to describe a photo, and keeps the upload (and model time) small.
-const MAX_EDGE = 768;
-const JPEG_QUALITY = 0.82;
+// 1536px allows Gemini to read small text, dates, venues, and announcements on pubmats clearly.
+const MAX_EDGE = 1536;
+const JPEG_QUALITY = 0.90;
 const FETCH_TIMEOUT_MS = 8000;
 
 export async function toCaptionImage(url: string): Promise<string> {

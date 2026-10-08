@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { captionApi } from '../api/captionApi.ts';
 import { mediaApi } from '../../media/api/mediaApi.ts';
+import { useOrganization } from '../../../context/useOrganization';
 import TonePreferenceSelector from '../components/TonePreferenceSelector.tsx';
 import type { Tone } from '../../../types';
 
@@ -10,9 +11,11 @@ const DEFAULT_TONE: Tone = 'FORMAL';
 export default function CaptionToneSelection() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { activeOrgId, activeOrg } = useOrganization();
   const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [assetIds, setAssetIds] = useState<string[]>([]);
   const [selectedTone, setSelectedTone] = useState<Tone>(DEFAULT_TONE);
+  const [notes, setNotes] = useState('');
   const [captions, setCaptions] = useState<string[]>([]);
   const [selectedCaption, setSelectedCaption] = useState('');
   const [hashtags, setHashtags] = useState<string[]>([]);
@@ -73,8 +76,8 @@ export default function CaptionToneSelection() {
     setGenerateError('');
     try {
       const result = isMulti
-        ? await mediaApi.generateCaptionFromAssets(assetIds, selectedTone)
-        : await captionApi.generate(imageUrls[0], selectedTone);
+        ? await mediaApi.generateCaptionFromAssets(assetIds, selectedTone, activeOrgId, notes)
+        : await captionApi.generate(imageUrls[0], selectedTone, activeOrgId, notes);
       setCaptions(result);
       setSelectedCaption('');
       setHashtags([]);
@@ -91,7 +94,7 @@ export default function CaptionToneSelection() {
     setRefineError('');
     setSelectedTone(tone);
     try {
-      const rewritten = await captionApi.rewrite(selectedCaption, tone);
+      const rewritten = await captionApi.rewrite(selectedCaption, tone, activeOrgId, notes, imageUrls[0]);
       setSelectedCaption(rewritten);
     } catch (err) {
       setRefineError(err instanceof Error && err.message ? err.message : 'Failed to rewrite caption.');
@@ -105,7 +108,7 @@ export default function CaptionToneSelection() {
     setIsGeneratingHashtags(true);
     setHashtagError('');
     try {
-      const tags = await captionApi.hashtags(selectedCaption);
+      const tags = await captionApi.hashtags(selectedCaption, activeOrgId, imageUrls[0]);
       setHashtags(tags);
     } catch (err) {
       setHashtagError(err instanceof Error && err.message ? err.message : 'Failed to generate hashtags.');
@@ -209,7 +212,51 @@ export default function CaptionToneSelection() {
                 </div>
               </div>
 
+              {activeOrg && !activeOrg.description && (
+                <div style={{
+                  marginBottom: '1rem',
+                  padding: '0.75rem 1rem',
+                  borderRadius: '8px',
+                  backgroundColor: '#fffbeb',
+                  border: '1px solid #fef3c7',
+                  fontSize: '0.85rem',
+                  color: '#92400e',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                }}>
+                  <span aria-hidden="true">💡</span>
+                  <span>
+                    Add an organization description in <strong>Settings</strong> for more tailored, branded captions.
+                  </span>
+                </div>
+              )}
+
               <TonePreferenceSelector value={selectedTone} onChange={setSelectedTone} disabled={isGenerating} />
+
+              <div style={{ marginTop: '1.25rem', marginBottom: '1.25rem' }}>
+                <label htmlFor="cts-notes" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, color: '#334155', marginBottom: '0.35rem' }}>
+                  What's this post about? <span style={{ fontWeight: 400, color: '#64748b' }}>(Optional context/details)</span>
+                </label>
+                <textarea
+                  id="cts-notes"
+                  rows={2}
+                  value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                  placeholder="e.g. Audition results, schedule announcement, ticket link in bio"
+                  disabled={isGenerating}
+                  style={{
+                    width: '100%',
+                    padding: '0.625rem 0.75rem',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '0.875rem',
+                    resize: 'vertical',
+                    fontFamily: 'inherit',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
 
               <button
                 type="button"

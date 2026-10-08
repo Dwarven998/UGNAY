@@ -73,13 +73,60 @@ public class GeminiClient {
     public static final int MAX_CAPTION_IMAGES = 6; // reasoning over many images at once gets slow/unreliable
 
     private static final Duration IMAGE_CALL_TIMEOUT = Duration.ofSeconds(20);
-    private static final Duration TEXT_CALL_TIMEOUT = Duration.ofSeconds(12);
-    private static final int MODEL_IMAGE_EDGE = 768;
+    private static final Duration TEXT_CALL_TIMEOUT = Duration.ofSeconds(15);
+    public static final int CAPTION_IMAGE_EDGE = 1536; // Increased resolution for readable text/dates on pubmats
+    public static final int RANKING_IMAGE_EDGE = 768;  // Fast thumbnail resolution kept for candidate ranking
 
     private static final Map<String, Object> STRING_LIST_SCHEMA = Map.of(
         "type", "ARRAY",
         "items", Map.of("type", "STRING")
     );
+
+    private static final Map<String, Object> IMAGE_ANALYSIS_SCHEMA = Map.of(
+        "type", "OBJECT",
+        "properties", Map.ofEntries(
+            Map.entry("scene", Map.of("type", "STRING")),
+            Map.entry("setting", Map.of("type", "STRING")),
+            Map.entry("people", Map.of("type", "STRING")),
+            Map.entry("activities", Map.of("type", "ARRAY", "items", Map.of("type", "STRING"))),
+            Map.entry("visibleText", Map.of("type", "ARRAY", "items", Map.of("type", "STRING"))),
+            Map.entry("eventName", Map.of("type", "STRING")),
+            Map.entry("date", Map.of("type", "STRING")),
+            Map.entry("venue", Map.of("type", "STRING")),
+            Map.entry("mood", Map.of("type", "STRING")),
+            Map.entry("postType", Map.of("type", "STRING")),
+            Map.entry("relationToOrg", Map.of("type", "STRING"))
+        )
+    );
+
+    private static final Map<String, Object> ALBUM_ANALYSIS_SCHEMA = Map.of(
+        "type", "OBJECT",
+        "properties", Map.of(
+            "overallStory", Map.of("type", "STRING"),
+            "sceneProgression", Map.of("type", "ARRAY", "items", Map.of("type", "STRING")),
+            "keyActivities", Map.of("type", "ARRAY", "items", Map.of("type", "STRING")),
+            "visibleText", Map.of("type", "ARRAY", "items", Map.of("type", "STRING")),
+            "eventName", Map.of("type", "STRING"),
+            "date", Map.of("type", "STRING"),
+            "venue", Map.of("type", "STRING"),
+            "mood", Map.of("type", "STRING")
+        )
+    );
+
+    private static class CacheEntry<T> {
+        final T value;
+        final long expiresAt;
+        CacheEntry(T value, long ttlMillis) {
+            this.value = value;
+            this.expiresAt = System.currentTimeMillis() + ttlMillis;
+        }
+        boolean isExpired() {
+            return System.currentTimeMillis() > expiresAt;
+        }
+    }
+
+    private final Map<String, CacheEntry<String>> analysisCache = new ConcurrentHashMap<>();
+    private static final long CACHE_TTL_MS = 30 * 60 * 1000L; // 30 minutes
 
     /**
      * Models raced for every request, the configured one ({@code gemini.api.url}) first. Google's free tier is
@@ -120,34 +167,119 @@ public class GeminiClient {
 
     // ───────────────────────── public API ─────────────────────────
 
-    /** Generates 3 caption options for the given image (data URL, http(s) URL or Gemini file URI) and tone. */
-    public List<String> generateCaptions(String imageUrl, String tone, String orgName) {
+    /**
+     * Step 1: Look first (factual image analysis).
+     * Extracts scene, setting, visible people, activities, and verbatim visible text/dates/venues via OCR.
+     * Cached by image hash/URL for 30 minutes to make rewrites, hashtags, and tone switches instant.
+     */
+    public String describeImage(String imageUrl, OrgAiProfile profile) {
+        String key = cacheKey(imageUrl);
+        CacheEntry<String> cached = analysisCache.get(key);
+        if (cached != null && !cached.isExpired()) {
+            return cached.value;
+        }
+
         List<Map<String, Object>> parts = new ArrayList<>();
-        parts.add(imagePart(imageUrl));
-        parts.add(Map.of("text", buildCaptionPrompt(tone, orgName)));
-        return generateStringList(parts, 0.8, 1024, IMAGE_CALL_TIMEOUT);
-    }
-
-    /** Rewrites a caption in the specified tone. */
-    public String rewriteWithTone(String caption, String tone, String orgName) {
-        String prompt = String.format(
-            """
-            Rewrite the following Facebook caption for a Philippine college organization called "%s".
-            Target tone: %s.
-            - FORMAL: professional, structured, respectful
-            - ENERGETIC: exciting, dynamic, with energy-filled words
-            - CELEBRATORY: festive, warm, joyful, with 🎉 emojis
-            - URGENT: time-sensitive, clear call-to-action, concise
-
-            Return ONLY the rewritten caption, nothing else.
-
-            Original caption: %s
-            """,
-            orgName, tone, caption
-        );
+        parts.add(imagePart(imageUrl)); // Image FIRST
+        parts.add(Map.of("text", buildDescribePrompt(profile)));
 
         Map<String, Object> config = new LinkedHashMap<>();
-        config.put("temperature", 0.7);
+        config.put("temperature", 0.2);
+        config.put("maxOutputTokens", 1024);
+        config.put("responseMimeType", "application/json");
+        config.put("responseSchema", IMAGE_ANALYSIS_SCHEMA);
+        config.put("thinkingConfig", Map.of("thinkingLevel", "low"));
+
+        try {
+            Map<String, Object> response = generate(parts, config, Duration.ofSeconds(25));
+            String text = extractText(response);
+            if (text != null && !text.isBlank()) {
+                String cleaned = cleanJson(text);
+                analysisCache.put(key, new CacheEntry<>(cleaned, CACHE_TTL_MS));
+                return cleaned;
+            }
+        } catch (Exception e) {
+            log.warn("Step 1 image describe failed, proceeding to direct write: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Step 1 for multi-image album: extracts the collective story progression and activities across the images.
+     */
+    public String describeAlbum(List<String> imageUrls, OrgAiProfile profile) {
+        String key = "album:" + imageUrls.stream().map(this::cacheKey).reduce("", (a, b) -> a + "|" + b);
+        CacheEntry<String> cached = analysisCache.get(key);
+        if (cached != null && !cached.isExpired()) {
+            return cached.value;
+        }
+
+        List<Map<String, Object>> parts = new ArrayList<>();
+        // Images attached FIRST
+        List<ModelImage> downloaded = downloadAll(imageUrls, CAPTION_IMAGE_EDGE);
+        for (int i = 0; i < imageUrls.size(); i++) {
+            ModelImage img = downloaded.get(i);
+            if (img != null) {
+                parts.add(img.part());
+            }
+        }
+        parts.add(Map.of("text", buildAlbumDescribePrompt(profile, imageUrls.size())));
+
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("temperature", 0.2);
+        config.put("maxOutputTokens", 1024);
+        config.put("responseMimeType", "application/json");
+        config.put("responseSchema", ALBUM_ANALYSIS_SCHEMA);
+        config.put("thinkingConfig", Map.of("thinkingLevel", "low"));
+
+        try {
+            Map<String, Object> response = generate(parts, config, Duration.ofSeconds(30));
+            String text = extractText(response);
+            if (text != null && !text.isBlank()) {
+                String cleaned = cleanJson(text);
+                analysisCache.put(key, new CacheEntry<>(cleaned, CACHE_TTL_MS));
+                return cleaned;
+            }
+        } catch (Exception e) {
+            log.warn("Step 1 album describe failed: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Generates 3 caption options grounded primarily in the image (70-80%), framed by the organization
+     * profile (20-30%), with high priority given to optional poster notes.
+     */
+    public List<String> generateCaptions(String imageUrl, String tone, OrgAiProfile profile, String notes) {
+        // Step 1: Look first (factual image analysis)
+        String analysisJson = describeImage(imageUrl, profile);
+
+        // Step 2: Write captions
+        List<Map<String, Object>> parts = new ArrayList<>();
+        parts.add(imagePart(imageUrl)); // Image FIRST
+        parts.add(Map.of("text", buildCaptionPrompt(tone, profile, notes, analysisJson)));
+
+        return generateStringList(parts, 0.65, 1024, Duration.ofSeconds(20));
+    }
+
+    public List<String> generateCaptions(String imageUrl, String tone, String orgName) {
+        return generateCaptions(imageUrl, tone, new OrgAiProfile(orgName, null, null, null, null, null, null, null), null);
+    }
+
+    /** Rewrites a caption in the specified tone, preserving all facts and avoiding name insertion. */
+    public String rewriteWithTone(String caption, String tone, OrgAiProfile profile, String notes, String imageUrl) {
+        String analysisJson = null;
+        if (imageUrl != null && !imageUrl.isBlank()) {
+            CacheEntry<String> cached = analysisCache.get(cacheKey(imageUrl));
+            if (cached != null && !cached.isExpired()) {
+                analysisJson = cached.value;
+            }
+        }
+
+        String prompt = buildRewritePrompt(caption, tone, profile, notes, analysisJson);
+
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("temperature", 0.65);
         config.put("maxOutputTokens", 512);
         for (int attempt = 1; attempt <= 2; attempt++) {
             String text = extractText(generate(List.of(Map.of("text", prompt)), config, TEXT_CALL_TIMEOUT));
@@ -157,41 +289,56 @@ public class GeminiClient {
             "The AI assistant returned an empty answer. Please try again.");
     }
 
-    /** Generates 7 relevant hashtags from the caption. Falls back to hashtags derived from the caption. */
-    public List<String> generateHashtags(String caption, String orgName) {
-        String prompt = String.format(
-            """
-            You are a social media hashtag expert for "%s", a Philippine college organization.
+    public String rewriteWithTone(String caption, String tone, String orgName) {
+        return rewriteWithTone(caption, tone, new OrgAiProfile(orgName, null, null, null, null, null, null, null), null, null);
+    }
 
-            Analyze the following caption and generate exactly 7 highly relevant Facebook hashtags.
-
-            Caption: %s
-
-            Rules:
-            - Hashtags MUST be directly relevant to the specific content, topics, and themes in the caption above
-            - Include hashtags about the subject matter discussed in the caption
-            - Include 1-2 hashtags related to the organization name "%s"
-            - Each hashtag must start with #
-            - Do NOT use only generic tags — they must relate to what the caption is actually about
-            - Return ONLY a valid JSON array of exactly 7 strings, no markdown, no explanation, no conversational filler
-            - Example format: ["#hashtag1", "#hashtag2", "#hashtag3", "#hashtag4", "#hashtag5", "#hashtag6", "#hashtag7"]
-            """,
-            orgName, caption, orgName
-        );
-
-        try {
-            return generateStringList(List.of(Map.of("text", prompt)), 0.7, 512, TEXT_CALL_TIMEOUT);
-        } catch (ResponseStatusException e) {
-            if (e.getStatusCode().value() == 429) throw e;
-            log.warn("Hashtag generation failed, using caption-derived hashtags: {}", e.getReason());
+    /** Generates 7 relevant hashtags, prioritizing the organization's official hashtags first. */
+    public List<String> generateHashtags(String caption, OrgAiProfile profile, String imageUrl) {
+        String analysisJson = null;
+        if (imageUrl != null && !imageUrl.isBlank()) {
+            CacheEntry<String> cached = analysisCache.get(cacheKey(imageUrl));
+            if (cached != null && !cached.isExpired()) {
+                analysisJson = cached.value;
+            }
         }
 
+        String prompt = buildHashtagsPrompt(caption, profile, analysisJson);
+
+        try {
+            return generateStringList(List.of(Map.of("text", prompt)), 0.65, 512, TEXT_CALL_TIMEOUT);
+        } catch (ResponseStatusException e) {
+            if (e.getStatusCode().value() == 429) throw e;
+            log.warn("Hashtag generation failed, using profile/caption fallback: {}", e.getReason());
+        }
+
+        return fallbackHashtags(caption, profile);
+    }
+
+    public List<String> generateHashtags(String caption, String orgName) {
+        return generateHashtags(caption, new OrgAiProfile(orgName, null, null, null, null, null, null, null), null);
+    }
+
+    private List<String> fallbackHashtags(String caption, OrgAiProfile profile) {
         List<String> fallback = new ArrayList<>();
-        fallback.add("#" + orgName.replaceAll("[^a-zA-Z0-9]", ""));
-        for (String word : caption.split("\\s+")) {
-            String cleaned = word.replaceAll("[^a-zA-Z0-9]", "");
-            if (cleaned.length() >= 4 && fallback.size() < 5) {
-                fallback.add("#" + cleaned.substring(0, 1).toUpperCase() + cleaned.substring(1).toLowerCase());
+        if (profile != null) {
+            List<String> official = profile.parsedOfficialHashtags();
+            if (!official.isEmpty()) {
+                fallback.addAll(official);
+            } else if (profile.orgName() != null && !profile.orgName().isBlank()) {
+                fallback.add("#" + profile.orgName().replaceAll("[^a-zA-Z0-9]", ""));
+            }
+        }
+
+        if (caption != null) {
+            for (String word : caption.split("\\s+")) {
+                String cleaned = word.replaceAll("[^a-zA-Z0-9]", "");
+                if (cleaned.length() >= 4 && fallback.size() < 7) {
+                    String tag = "#" + cleaned.substring(0, 1).toUpperCase() + cleaned.substring(1).toLowerCase();
+                    if (!fallback.contains(tag)) {
+                        fallback.add(tag);
+                    }
+                }
             }
         }
         return fallback;
@@ -200,6 +347,7 @@ public class GeminiClient {
     /**
      * Scores a folder's candidate images against a free-text description and returns
      * them ranked best-match-first. Used by the Media Repository's AI image picker.
+     * Retains RANKING_IMAGE_EDGE (768px) for performance.
      */
     public List<ImageRanking> rankImages(List<AssetForRanking> assets, String description) {
         if (assets.isEmpty()) {
@@ -208,7 +356,7 @@ public class GeminiClient {
 
         List<Map<String, Object>> parts = new ArrayList<>();
         parts.add(Map.of("text", buildRankingPrompt(description, assets.size())));
-        List<ModelImage> downloaded = downloadAll(assets.stream().map(AssetForRanking::fileUrl).toList());
+        List<ModelImage> downloaded = downloadAll(assets.stream().map(AssetForRanking::fileUrl).toList(), RANKING_IMAGE_EDGE);
         for (int i = 0; i < assets.size(); i++) {
             AssetForRanking asset = assets.get(i);
             parts.add(Map.of("text", "Image ID: " + asset.id()));
@@ -232,25 +380,27 @@ public class GeminiClient {
 
     /**
      * Generates 3 caption options treating multiple images as one cohesive album/carousel post,
-     * rather than captioning each image separately.
+     * highlighting the overall story and progression across the images.
      */
-    public List<String> generateCaptionsMultiImage(List<String> imageUrls, String tone, String orgName) {
+    public List<String> generateCaptionsMultiImage(List<String> imageUrls, String tone, OrgAiProfile profile, String notes) {
         if (imageUrls == null || imageUrls.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose at least one image.");
         }
 
-        List<Map<String, Object>> parts = new ArrayList<>();
-        parts.add(Map.of("text", buildMultiImageCaptionPrompt(tone, orgName, imageUrls.size())));
+        // Step 1: Look first (album narrative & progression analysis)
+        String albumAnalysis = describeAlbum(imageUrls, profile);
 
+        // Step 2: Write captions
+        List<Map<String, Object>> parts = new ArrayList<>();
+        List<ModelImage> downloaded = downloadAll(imageUrls, CAPTION_IMAGE_EDGE);
         int attached = 0;
-        List<ModelImage> downloaded = downloadAll(imageUrls);
         for (int i = 0; i < imageUrls.size(); i++) {
             ModelImage image = downloaded.get(i);
             if (image == null) {
                 log.warn("Skipping image in multi-caption (download failed): {}", imageUrls.get(i));
                 continue;
             }
-            parts.add(image.part());
+            parts.add(image.part()); // Images FIRST
             attached++;
         }
 
@@ -258,7 +408,13 @@ public class GeminiClient {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
                 "Couldn't load the images for the AI assistant. Please try again in a moment.");
         }
-        return generateStringList(parts, 0.8, 1024, Duration.ofSeconds(30));
+
+        parts.add(Map.of("text", buildMultiImageCaptionPrompt(tone, profile, notes, albumAnalysis, imageUrls.size())));
+        return generateStringList(parts, 0.65, 1024, Duration.ofSeconds(30));
+    }
+
+    public List<String> generateCaptionsMultiImage(List<String> imageUrls, String tone, String orgName) {
+        return generateCaptionsMultiImage(imageUrls, tone, new OrgAiProfile(orgName, null, null, null, null, null, null, null), null);
     }
 
     public record AssetForRanking(UUID id, String fileUrl) {}
@@ -350,8 +506,10 @@ public class GeminiClient {
                 config.remove("responseMimeType");
                 config.remove("responseSchema");
             }
-            Map<String, Object> thinking = THINKING_VARIANTS.get(variant);
-            if (!thinking.isEmpty()) config.put("thinkingConfig", thinking);
+            if (!config.containsKey("thinkingConfig")) {
+                Map<String, Object> thinking = THINKING_VARIANTS.get(variant);
+                if (!thinking.isEmpty()) config.put("thinkingConfig", thinking);
+            }
             Map<String, Object> body = Map.of(
                 "contents", List.of(Map.of("role", "user", "parts", parts)),
                 "generationConfig", config
@@ -479,24 +637,22 @@ public class GeminiClient {
             return Map.of("inline_data", Map.of("mime_type", mimeType, "data", splits.length > 1 ? splits[1] : ""));
         }
         if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) {
-            return shrinkForModel(downloadImageBytes(imageUrl), getMimeType(imageUrl)).part();
+            return shrinkForModel(downloadImageBytes(imageUrl), getMimeType(imageUrl), CAPTION_IMAGE_EDGE).part();
         }
         // Gemini file URI
         return Map.of("file_data", Map.of("file_uri", imageUrl, "mime_type", "image/jpeg"));
     }
 
     /**
-     * Downscales to at most {@value #MODEL_IMAGE_EDGE}px on the long edge as JPEG: plenty for writing a caption,
-     * and a fraction of the upload and processing time of a full-size photo. Formats Java can't read (WebP)
-     * are sent as they are.
+     * Downscales to at most {@code maxEdge}px on the long edge as JPEG.
      */
-    private ModelImage shrinkForModel(byte[] bytes, String mimeType) {
+    private ModelImage shrinkForModel(byte[] bytes, String mimeType, int maxEdge) {
         try {
             BufferedImage source = ImageIO.read(new ByteArrayInputStream(bytes));
             if (source == null) return new ModelImage(mimeType, bytes);
             int width = source.getWidth();
             int height = source.getHeight();
-            double scale = Math.min(1.0, (double) MODEL_IMAGE_EDGE / Math.max(width, height));
+            double scale = Math.min(1.0, (double) maxEdge / Math.max(width, height));
             if (scale >= 1.0 && "image/jpeg".equals(mimeType)) return new ModelImage(mimeType, bytes);
 
             int targetWidth = Math.max(1, (int) Math.round(width * scale));
@@ -519,6 +675,10 @@ public class GeminiClient {
         }
     }
 
+    private ModelImage shrinkForModel(byte[] bytes, String mimeType) {
+        return shrinkForModel(bytes, mimeType, CAPTION_IMAGE_EDGE);
+    }
+
     /*
      * Storage (Supabase/Cloudflare) closes idle keep-alive connections on its side. Reusing one of those from the
      * pool is what produced the intermittent "Connection reset" when generating captions, so downloads use a pool
@@ -538,17 +698,21 @@ public class GeminiClient {
     });
 
     /** Downloads (and downscales) every image at once; an entry is null when that image could not be fetched. */
-    private List<ModelImage> downloadAll(List<String> imageUrls) {
+    private List<ModelImage> downloadAll(List<String> imageUrls, int maxEdge) {
         List<CompletableFuture<ModelImage>> futures = imageUrls.stream()
             .map(url -> CompletableFuture.supplyAsync(() -> {
                 try {
-                    return shrinkForModel(downloadImageBytes(url), getMimeType(url));
+                    return shrinkForModel(downloadImageBytes(url), getMimeType(url), maxEdge);
                 } catch (Exception e) {
                     return null;
                 }
             }, downloadPool))
             .toList();
         return futures.stream().map(CompletableFuture::join).toList();
+    }
+
+    private List<ModelImage> downloadAll(List<String> imageUrls) {
+        return downloadAll(imageUrls, CAPTION_IMAGE_EDGE);
     }
 
     private byte[] downloadImageBytes(String imageUrl) {
@@ -591,51 +755,262 @@ public class GeminiClient {
 
     // ───────────────────────── prompts ─────────────────────────
 
-    private String buildCaptionPrompt(String tone, String orgName) {
+    private String cacheKey(String imageUrl) {
+        if (imageUrl == null) return "";
+        if (imageUrl.startsWith("data:")) {
+            try {
+                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+                byte[] digest = md.digest(imageUrl.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                return "data:" + Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+            } catch (Exception e) {
+                return "data:" + imageUrl.hashCode() + ":" + imageUrl.length();
+            }
+        }
+        return imageUrl;
+    }
+
+    private String cleanJson(String raw) {
+        if (raw == null || raw.isBlank()) return "{}";
+        String text = raw.trim().replaceAll("```json|```", "").trim();
+        int start = text.indexOf('{');
+        int end = text.lastIndexOf('}');
+        if (start != -1 && end > start) {
+            return text.substring(start, end + 1);
+        }
+        return text;
+    }
+
+    private String buildDescribePrompt(OrgAiProfile profile) {
+        return """
+            Analyze this image in detail for a Philippine school organization post.
+            Examine visible people, activities, setting, mood, and do an accurate OCR read of all visible text (especially event names, titles, dates, venues, deadlines, and calls to action).
+
+            Return ONLY valid JSON matching this schema:
+            {
+              "scene": "detailed description of what is happening",
+              "setting": "location/setting (e.g. indoor gym, classroom, stage, outdoor field)",
+              "people": "count/roles visible without identifying individuals",
+              "activities": ["key activities depicted"],
+              "visibleText": ["exact text segments, headlines, dates, venues read from the poster or image"],
+              "eventName": "event title or null if none",
+              "date": "event date/time or null if none",
+              "venue": "venue/location or null if none",
+              "mood": "atmosphere/mood",
+              "postType": "announcement/pubmat | event recap | achievement | reminder | greeting | other",
+              "relationToOrg": "how or whether this visually connects to a school org"
+            }
+            """;
+    }
+
+    private String buildAlbumDescribePrompt(OrgAiProfile profile, int imageCount) {
         return String.format(
             """
-            You are a social media assistant for "%s", a Philippine college organization.
-            Analyze this image and generate exactly 3 Facebook caption options.
+            Analyze ALL %d images as a cohesive sequence/album for a Philippine school organization post.
+            Extract the overarching story, progression of events, visible text, and activities across the set.
 
-            Tone: %s
-            - FORMAL: professional and institutional
-            - ENERGETIC: exciting and dynamic
-            - CELEBRATORY: festive and warm
-            - URGENT: time-sensitive with clear CTA
-
-            Rules:
-            - Each caption must include relevant emojis
-            - Each caption should be 2–4 sentences
-            - Use Filipino college student context
-            - Return ONLY a valid JSON array of exactly 3 strings (no markdown, no backticks):
-              ["caption 1", "caption 2", "caption 3"]
+            Return ONLY valid JSON matching this schema:
+            {
+              "overallStory": "the overarching narrative or progression shown across the images",
+              "sceneProgression": ["step 1 / image 1 scene", "step 2 / image 2 scene"],
+              "keyActivities": ["activities across the album"],
+              "visibleText": ["key dates, titles, venues, or slogans visible across the images"],
+              "eventName": "event name or null if none",
+              "date": "event date or null if none",
+              "venue": "venue or null if none",
+              "mood": "general mood"
+            }
             """,
-            orgName, tone
+            imageCount
         );
     }
 
-    private String buildMultiImageCaptionPrompt(String tone, String orgName, int imageCount) {
+    private String buildOrgProfileBlock(OrgAiProfile profile) {
+        if (profile == null) {
+            return "Name: Student Organization\n(Note: Only the organization's name is known. Focus on the image.)";
+        }
+        if (!profile.hasDescription()) {
+            return String.format(
+                """
+                Name: %s
+                (Note: Only the organization's name is known. Do not guess what the acronym stands for, and do not build the caption around the name. Focus on the image.)
+                """,
+                profile.orgName()
+            ).trim();
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("Name: ").append(profile.orgName());
+        if (profile.fullName() != null && !profile.fullName().isBlank()) {
+            sb.append(" (").append(profile.fullName().trim()).append(")");
+        }
+        sb.append("\nAbout: ").append(profile.description().trim());
+        if (profile.audience() != null && !profile.audience().isBlank()) {
+            sb.append("\nAudience: ").append(profile.audience().trim());
+        }
+        if (profile.focusAreas() != null && !profile.focusAreas().isBlank()) {
+            sb.append("\nUsual activities: ").append(profile.focusAreas().trim());
+        }
+        if (profile.languagePref() != null && !profile.languagePref().isBlank()) {
+            sb.append("\nLanguage: ").append(profile.languagePref().trim());
+        }
+        if (profile.officialHashtags() != null && !profile.officialHashtags().isBlank()) {
+            sb.append("\nOfficial hashtags: ").append(profile.officialHashtags().trim());
+        }
+        if (profile.captionAvoid() != null && !profile.captionAvoid().isBlank()) {
+            sb.append("\nAvoid: ").append(profile.captionAvoid().trim());
+        }
+        return sb.toString();
+    }
+
+    private String buildCaptionPrompt(String tone, OrgAiProfile profile, String notes, String analysisJson) {
+        String analysisBlock = (analysisJson != null && !analysisJson.isBlank())
+            ? analysisJson
+            : "Visible image content is attached. Describe the scene, visible people, activities, setting, and all visible text.";
+
+        String orgBlock = buildOrgProfileBlock(profile);
+
+        String notesBlock = (notes != null && !notes.isBlank())
+            ? notes.trim()
+            : "None provided.";
+
         return String.format(
             """
-            You are a social media assistant for "%s", a Philippine college organization.
-            You will see %d images that will be posted together in a single Facebook post (like an album/carousel).
-            Analyze ALL %d images together as one cohesive set — do not caption them individually —
-            and generate exactly 3 Facebook caption options that work for the set as a whole.
+            You write Facebook captions for a Philippine school organization.
 
-            Tone: %s
-            - FORMAL: professional and institutional
-            - ENERGETIC: exciting and dynamic
-            - CELEBRATORY: festive and warm
-            - URGENT: time-sensitive with clear CTA
+            PRIMARY SOURCE - THE IMAGE (most of the caption's content must come from here):
+            %s
+
+            BACKGROUND - THE ORGANIZATION (use for framing and voice, NOT as the main topic):
+            %s
+
+            OPTIONAL NOTES FROM THE POSTER:
+            %s
+
+            TONE: %s - affects wording and energy only, not the facts.
+            - FORMAL: professional, structured, respectful
+            - ENERGETIC: exciting, dynamic, with energy-filled words
+            - CELEBRATORY: festive, warm, joyful, with celebratory emojis
+            - URGENT: time-sensitive, clear call-to-action, concise
 
             Rules:
-            - Each caption must include relevant emojis
-            - Each caption should be 2–4 sentences
-            - Use Filipino college student context
-            - Return ONLY a valid JSON array of exactly 3 strings (no markdown, no backticks):
+            1. Describe what actually happens in the image: the activity, setting, people, and any visible text (event name, date, venue, call to action). Each caption must mention at least two specific details from the image.
+            2. Mention the organization by name at most once per caption. Connect the image to the org's purpose only where it fits naturally.
+            3. Never invent dates, venues, names, results, or events that are not in the image, the org profile, or the notes.
+            4. If the image is unrelated to the org's usual activities, still caption the image faithfully. Do not force the org theme.
+            5. Write 3 options that differ in angle (e.g. recap / invitation / appreciation). Each is 2–4 sentences with fitting emojis.
+            6. Return ONLY a valid JSON array of exactly 3 strings (no markdown, no backticks):
             ["caption 1", "caption 2", "caption 3"]
             """,
-            orgName, imageCount, imageCount, tone
+            analysisBlock, orgBlock, notesBlock, tone
+        );
+    }
+
+    private String buildMultiImageCaptionPrompt(String tone, OrgAiProfile profile, String notes, String albumAnalysis, int imageCount) {
+        String analysisBlock = (albumAnalysis != null && !albumAnalysis.isBlank())
+            ? albumAnalysis
+            : "Visible images are attached. Describe the collective sequence, progression of activities, and visible poster text.";
+
+        String orgBlock = buildOrgProfileBlock(profile);
+
+        String notesBlock = (notes != null && !notes.isBlank())
+            ? notes.trim()
+            : "None provided.";
+
+        return String.format(
+            """
+            You write Facebook captions for a Philippine school organization.
+            You are captioning a set of %d images posted together in a single Facebook post (like an album/carousel).
+            Analyze ALL %d images together as one cohesive set — do not caption them individually.
+            The captions should tell the overall story or progression shown across the images.
+
+            PRIMARY SOURCE - THE ALBUM (most of the caption's content must come from here):
+            %s
+
+            BACKGROUND - THE ORGANIZATION (use for framing and voice, NOT as the main topic):
+            %s
+
+            OPTIONAL NOTES FROM THE POSTER:
+            %s
+
+            TONE: %s - affects wording and energy only, not the facts.
+            - FORMAL: professional, structured, respectful
+            - ENERGETIC: exciting, dynamic, with energy-filled words
+            - CELEBRATORY: festive, warm, joyful, with celebratory emojis
+            - URGENT: time-sensitive, clear call-to-action, concise
+
+            Rules:
+            1. Tell the collective story across the %d images: highlight the progression, key activity, and any visible dates/titles/venues. Each caption must mention at least two specific details from the images.
+            2. Mention the organization by name at most once per caption. Connect the images to the org's purpose only where it fits naturally.
+            3. Never invent dates, venues, names, results, or events that are not in the images, the org profile, or the notes.
+            4. If the images are unrelated to the org's usual activities, still caption the images faithfully. Do not force the org theme.
+            5. Write 3 options that differ in angle (e.g. recap / invitation / appreciation). Each is 2–4 sentences with fitting emojis.
+            6. Return ONLY a valid JSON array of exactly 3 strings (no markdown, no backticks):
+            ["caption 1", "caption 2", "caption 3"]
+            """,
+            imageCount, imageCount, analysisBlock, orgBlock, notesBlock, tone, imageCount
+        );
+    }
+
+    private String buildRewritePrompt(String caption, String tone, OrgAiProfile profile, String notes, String analysisJson) {
+        String orgName = profile != null ? profile.orgName() : "the organization";
+        String imageContext = (analysisJson != null && !analysisJson.isBlank())
+            ? "\nVisible Image Context: " + analysisJson
+            : "";
+        String notesContext = (notes != null && !notes.isBlank())
+            ? "\nPoster Notes: " + notes.trim()
+            : "";
+
+        return String.format(
+            """
+            Rewrite the following Facebook caption for a Philippine school organization "%s".
+            Target tone: %s.
+            - FORMAL: professional, structured, respectful
+            - ENERGETIC: exciting, dynamic, with energy-filled words
+            - CELEBRATORY: festive, warm, joyful, with celebratory emojis
+            - URGENT: time-sensitive, clear call-to-action, concise
+
+            Rules:
+            - Keep all facts, names, dates, and details from the original caption.
+            - Change ONLY the tone, wording, and energy.
+            - Do NOT add the organization name if it is not already in the original caption.
+            - Never invent new facts or event details.%s%s
+
+            Return ONLY the rewritten caption, nothing else.
+
+            Original caption: %s
+            """,
+            orgName, tone, imageContext, notesContext, caption
+        );
+    }
+
+    private String buildHashtagsPrompt(String caption, OrgAiProfile profile, String analysisJson) {
+        String orgName = profile != null ? profile.orgName() : "the organization";
+        String officialTags = (profile != null && profile.parsedOfficialHashtags().size() > 0)
+            ? String.join(" ", profile.parsedOfficialHashtags())
+            : "None specified";
+
+        String imageContext = (analysisJson != null && !analysisJson.isBlank())
+            ? "\nVisible Image Details: " + analysisJson
+            : "";
+
+        return String.format(
+            """
+            You are a social media hashtag expert for "%s", a Philippine school organization.
+
+            Analyze the following caption and visible content to generate exactly 7 highly relevant Facebook hashtags.
+
+            Caption: %s%s
+            Official Organization Hashtags: %s
+
+            Rules:
+            - Generate exactly 7 hashtags starting with #
+            - Prioritize official hashtags if provided: %s
+            - Mix: about 2 official hashtags (if configured in profile), about 3 topic/event hashtags based on the caption and visible image details, and about 2 general/community hashtags.
+            - If no official hashtags are provided in the profile, do NOT invent hashtags from the organization name. Focus instead on the specific event, activity, and campus community.
+            - Each hashtag must start with #
+            - Return ONLY a valid JSON array of exactly 7 strings (no markdown, no backticks):
+            ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7"]
+            """,
+            orgName, caption, imageContext, officialTags, officialTags
         );
     }
 

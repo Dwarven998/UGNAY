@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import type { FormEvent } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import ConfirmDialog from '../../../../components/ui/ConfirmDialog';
 import { organizationAdminApi } from '../../api/organizationApi';
@@ -8,6 +9,7 @@ import { displayNameFromEmail } from '../../shared/displayName';
 import type { OrgManageDetail, OrgMembership, OrgRole, OrgType, SubOrg } from '../../../../types';
 import { ApiError } from '../../../../api/axiosClient';
 import { useAuth } from '../../../../context/useAuth';
+import { useOrganization } from '../../../../context/useOrganization';
 
 const ROLES: OrgRole[] = ['ADMIN', 'OFFICER', 'CONTRIBUTOR', 'MEMBER'];
 
@@ -33,11 +35,24 @@ export default function OrganizationAdminPage() {
 
 function OrganizationManageView({ orgId }: Readonly<{ orgId: string }>) {
   const { user } = useAuth();
+  const { refreshMemberships } = useOrganization();
   const [org, setOrg] = useState<OrgManageDetail | null>(null);
   const [members, setMembers] = useState<OrgMembership[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyMembershipId, setBusyMembershipId] = useState<string | null>(null);
+
+  // Organization AI Profile fields
+  const [profileDescription, setProfileDescription] = useState('');
+  const [profileFullName, setProfileFullName] = useState('');
+  const [profileAudience, setProfileAudience] = useState('');
+  const [profileFocusAreas, setProfileFocusAreas] = useState('');
+  const [profileLanguagePref, setProfileLanguagePref] = useState('');
+  const [profileOfficialHashtags, setProfileOfficialHashtags] = useState('');
+  const [profileCaptionAvoid, setProfileCaptionAvoid] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSuccess, setProfileSuccess] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   const [regenerateTarget, setRegenerateTarget] = useState<RegenerateTarget | null>(null);
   const [regenerating, setRegenerating] = useState(false);
@@ -72,6 +87,13 @@ function OrganizationManageView({ orgId }: Readonly<{ orgId: string }>) {
       .then(([details, memberList]) => {
         if (cancelled) return;
         setOrg(details);
+        setProfileDescription(details.description ?? '');
+        setProfileFullName(details.fullName ?? '');
+        setProfileAudience(details.audience ?? '');
+        setProfileFocusAreas(details.focusAreas ?? '');
+        setProfileLanguagePref(details.languagePref ?? '');
+        setProfileOfficialHashtags(details.officialHashtags ?? '');
+        setProfileCaptionAvoid(details.captionAvoid ?? '');
         setMembers(memberList);
         if (details.type === 'UNIVERSITY') void loadSubOrgs();
       })
@@ -79,6 +101,32 @@ function OrganizationManageView({ orgId }: Readonly<{ orgId: string }>) {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [orgId, loadSubOrgs]);
+
+  const handleSaveProfile = async (e: FormEvent) => {
+    e.preventDefault();
+    setProfileSaving(true);
+    setProfileError(null);
+    setProfileSuccess(false);
+    try {
+      const updated = await organizationAdminApi.updateProfile(orgId, {
+        description: profileDescription.trim() || null,
+        fullName: profileFullName.trim() || null,
+        audience: profileAudience.trim() || null,
+        focusAreas: profileFocusAreas.trim() || null,
+        languagePref: profileLanguagePref.trim() || null,
+        officialHashtags: profileOfficialHashtags.trim() || null,
+        captionAvoid: profileCaptionAvoid.trim() || null,
+      });
+      setOrg(updated);
+      setProfileSuccess(true);
+      void refreshMemberships();
+      setTimeout(() => setProfileSuccess(false), 4000);
+    } catch (err) {
+      setProfileError(errorText(err, 'Failed to update organization profile.'));
+    } finally {
+      setProfileSaving(false);
+    }
+  };
 
   const pending = members.filter(m => m.status === 'PENDING');
   const decided = members.filter(m => m.status !== 'PENDING');
@@ -221,6 +269,163 @@ function OrganizationManageView({ orgId }: Readonly<{ orgId: string }>) {
                   </div>
                 )}
               </div>
+            </section>
+
+            {/* ── Organization Profile & AI Settings ── */}
+            <section className="oa-card" aria-labelledby="oa-profile-title">
+              <div className="oa-card-head" style={{ marginBottom: '14px' }}>
+                <div>
+                  <h3 id="oa-profile-title" className="oa-card-title">
+                    Organization Profile &amp; AI Settings
+                  </h3>
+                  <p className="oa-hint" style={{ marginTop: '2px' }}>
+                    UGNAY's AI uses this profile to frame posts, set brand voice, and avoid mistakes in generated captions.
+                  </p>
+                </div>
+              </div>
+
+              {profileSuccess && (
+                <div style={{
+                  marginBottom: '14px',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  color: '#166534',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <span aria-hidden="true">✓</span> Organization profile saved successfully.
+                </div>
+              )}
+              {profileError && <div className="oa-alert oa-alert-error" role="alert">{profileError}</div>}
+
+              <form onSubmit={handleSaveProfile} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label htmlFor="oa-prof-desc" style={{ fontSize: '12.5px', fontWeight: 600, color: '#334155' }}>
+                    Description / Mission <span style={{ color: '#0C447C', fontWeight: 400 }}>(Key for AI captions)</span>
+                  </label>
+                  <textarea
+                    id="oa-prof-desc"
+                    rows={3}
+                    className="oa-input"
+                    style={{ height: 'auto', padding: '8px 10px', resize: 'vertical' }}
+                    value={profileDescription}
+                    onChange={e => setProfileDescription(e.target.value)}
+                    placeholder="e.g. Official student organization for CS majors at University X, promoting software craftsmanship, hackathons, and academic excellence."
+                  />
+                  <span className="oa-hint" style={{ fontSize: '11.5px' }}>
+                    Describe what your organization is and does. The AI uses this as framing (20–30%) while grounding facts in your image.
+                  </span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label htmlFor="oa-prof-fullname" style={{ fontSize: '12.5px', fontWeight: 600, color: '#334155' }}>
+                      Full Formal Name
+                    </label>
+                    <input
+                      id="oa-prof-fullname"
+                      type="text"
+                      className="oa-input"
+                      value={profileFullName}
+                      onChange={e => setProfileFullName(e.target.value)}
+                      placeholder="e.g. Association for Computing Machinery"
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label htmlFor="oa-prof-audience" style={{ fontSize: '12.5px', fontWeight: 600, color: '#334155' }}>
+                      Target Audience
+                    </label>
+                    <input
+                      id="oa-prof-audience"
+                      type="text"
+                      className="oa-input"
+                      value={profileAudience}
+                      onChange={e => setProfileAudience(e.target.value)}
+                      placeholder="e.g. CS students, faculty, alumni, tech recruiters"
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label htmlFor="oa-prof-focus" style={{ fontSize: '12.5px', fontWeight: 600, color: '#334155' }}>
+                      Key Focus Areas
+                    </label>
+                    <input
+                      id="oa-prof-focus"
+                      type="text"
+                      className="oa-input"
+                      value={profileFocusAreas}
+                      onChange={e => setProfileFocusAreas(e.target.value)}
+                      placeholder="e.g. Hackathons, coding workshops, tech talks"
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label htmlFor="oa-prof-lang" style={{ fontSize: '12.5px', fontWeight: 600, color: '#334155' }}>
+                      Language Preference
+                    </label>
+                    <input
+                      id="oa-prof-lang"
+                      type="text"
+                      className="oa-input"
+                      value={profileLanguagePref}
+                      onChange={e => setProfileLanguagePref(e.target.value)}
+                      placeholder="e.g. English, Filipino, Taglish"
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label htmlFor="oa-prof-tags" style={{ fontSize: '12.5px', fontWeight: 600, color: '#334155' }}>
+                      Official Hashtags
+                    </label>
+                    <input
+                      id="oa-prof-tags"
+                      type="text"
+                      className="oa-input"
+                      value={profileOfficialHashtags}
+                      onChange={e => setProfileOfficialHashtags(e.target.value)}
+                      placeholder="e.g. #OneCCS #CodeTheFuture #Innovate2026"
+                    />
+                    <span className="oa-hint" style={{ fontSize: '11.5px' }}>
+                      Automatically prioritized when generating hashtags.
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label htmlFor="oa-prof-avoid" style={{ fontSize: '12.5px', fontWeight: 600, color: '#334155' }}>
+                      Things to Avoid in Captions
+                    </label>
+                    <input
+                      id="oa-prof-avoid"
+                      type="text"
+                      className="oa-input"
+                      value={profileCaptionAvoid}
+                      onChange={e => setProfileCaptionAvoid(e.target.value)}
+                      placeholder="e.g. slang, unverified dates, exaggerated claims"
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                  <button
+                    type="submit"
+                    className="oa-btn-primary"
+                    disabled={profileSaving}
+                    style={{ minWidth: '130px' }}
+                  >
+                    {profileSaving ? 'Saving…' : 'Save Profile'}
+                  </button>
+                </div>
+              </form>
             </section>
 
             {/* ── Pending requests ── */}

@@ -35,6 +35,27 @@ public class User {
     @Column(name = "fb_access_token")
     private String fbAccessToken;
 
+    @Column(columnDefinition = "TEXT")
+    private String description;
+
+    @Column(name = "full_name")
+    private String fullName;
+
+    @Column
+    private String audience;
+
+    @Column(name = "focus_areas", columnDefinition = "TEXT")
+    private String focusAreas;
+
+    @Column(name = "language_pref")
+    private String languagePref;
+
+    @Column(name = "official_hashtags")
+    private String officialHashtags;
+
+    @Column(name = "caption_avoid", columnDefinition = "TEXT")
+    private String captionAvoid;
+
     public enum TonePreference {
         FORMAL, ENERGETIC, CELEBRATORY, URGENT
     }

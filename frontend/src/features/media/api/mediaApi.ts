@@ -36,8 +36,13 @@ export const mediaApi = {
       .then((r: ApiResponse<MediaRecommendation[]>) => r.data),
 
   // Caption Studio: multi-image selection made in Media Repository
-  generateCaptionFromAssets: (assetIds: string[], tone: string) =>
+  generateCaptionFromAssets: (assetIds: string[], tone: string, orgId?: string | null, notes?: string) =>
     axiosClient
-      .post<string[]>('/api/media/assets/generate-caption', { assetIds, tone })
+      .post<string[]>('/api/media/assets/generate-caption', {
+        assetIds,
+        tone,
+        orgId: orgId ?? null,
+        notes: notes?.trim() || undefined,
+      })
       .then((r: ApiResponse<string[]>) => r.data),
 };

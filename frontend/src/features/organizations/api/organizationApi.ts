@@ -1,7 +1,7 @@
 import axiosClient from '../../../api/axiosClient';
 import type { ApiResponse } from '../../../api/axiosClient';
 import type {
-  MyMembership, OrgSummary, OrgDetail, OrgManageDetail, SubOrg, OrgMember, OrgMembership, OrgType, OrgRole,
+  MyMembership, OrgSummary, OrgDetail, OrgManageDetail, SubOrg, OrgMember, OrgMembership, OrgType, OrgRole, OrgProfileUpdatePayload,
 } from '../../../types';
 
 // Member-facing (/api/app/organizations/**)
@@ -25,9 +25,13 @@ export const organizationApi = {
 // Officer/Admin-only (/api/admin/organizations/**)
 export const organizationAdminApi = {
   /** `parentJoinId` (optional, departments/programs only) links the new org under that university. */
-  create: (name: string, type: OrgType, parentJoinId: string | null, openJoin: boolean) =>
-    axiosClient.post<OrgDetail>('/api/admin/organizations', { name, type, parentJoinId, openJoin })
+  create: (name: string, type: OrgType, parentJoinId: string | null, openJoin: boolean, profile?: OrgProfileUpdatePayload) =>
+    axiosClient.post<OrgDetail>('/api/admin/organizations', { name, type, parentJoinId, openJoin, ...profile })
       .then((r: ApiResponse<OrgDetail>) => r.data),
+
+  updateProfile: (orgId: string, profile: OrgProfileUpdatePayload) =>
+    axiosClient.patch<OrgManageDetail>(`/api/admin/organizations/${orgId}/profile`, profile)
+      .then((r: ApiResponse<OrgManageDetail>) => r.data),
 
   getDetails: (orgId: string) =>
     axiosClient.get<OrgManageDetail>(`/api/admin/organizations/${orgId}`)

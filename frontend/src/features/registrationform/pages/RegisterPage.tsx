@@ -10,6 +10,11 @@ function RegistrationFormContent() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [orgName, setOrgName] = useState('');
+  const [description, setDescription] = useState('');
+  const [showOptionalFields, setShowOptionalFields] = useState(false);
+  const [fullName, setFullName] = useState('');
+  const [audience, setAudience] = useState('');
+  const [officialHashtags, setOfficialHashtags] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -46,7 +51,12 @@ function RegistrationFormContent() {
     setLoading(true);
 
     try {
-      await register(email, password, orgName, turnstileToken);
+      await register(email, password, orgName, turnstileToken, {
+        description: description.trim() || undefined,
+        fullName: fullName.trim() || undefined,
+        audience: audience.trim() || undefined,
+        officialHashtags: officialHashtags.trim() || undefined,
+      });
       navigate('/setup');
     } catch (err: any) {
       // Always reset after a failed attempt — tokens are single-use
@@ -136,6 +146,83 @@ function RegistrationFormContent() {
                     className="modern-input"
                   />
                 </div>
+              </div>
+
+              {/* Organization Description / Mission */}
+              <div className="input-group stagger-2">
+                <label>
+                  Organization Description / Mission <span style={{ fontWeight: 400, color: 'var(--text-muted, #94a3b8)', fontSize: '0.8rem' }}>(Recommended for AI captions)</span>
+                </label>
+                <div className="input-wrapper" style={{ alignItems: 'flex-start' }}>
+                  <textarea
+                    placeholder="e.g. Dedicated to empowering students through tech workshops, coding competitions, and community projects."
+                    value={description}
+                    onChange={e => setDescription(e.target.value)}
+                    rows={2}
+                    className="modern-input"
+                    style={{ height: 'auto', minHeight: '62px', padding: '10px 14px', resize: 'vertical', width: '100%' }}
+                  />
+                </div>
+              </div>
+
+              {/* Collapsible advanced profile fields */}
+              <div style={{ marginBottom: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowOptionalFields(v => !v)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#3b82f6',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    padding: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <span>{showOptionalFields ? '− Hide additional org details' : '+ Add more organization details (optional)'}</span>
+                </button>
+
+                {showOptionalFields && (
+                  <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                    <div className="input-group">
+                      <label style={{ fontSize: '0.78rem' }}>Full Formal Name</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Society of Computer Science Students"
+                        value={fullName}
+                        onChange={e => setFullName(e.target.value)}
+                        className="modern-input"
+                        style={{ height: '38px', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label style={{ fontSize: '0.78rem' }}>Target Audience</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. CS students, faculty, tech innovators"
+                        value={audience}
+                        onChange={e => setAudience(e.target.value)}
+                        className="modern-input"
+                        style={{ height: '38px', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label style={{ fontSize: '0.78rem' }}>Official Hashtags</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. #CodeTheFuture #OneCCS"
+                        value={officialHashtags}
+                        onChange={e => setOfficialHashtags(e.target.value)}
+                        className="modern-input"
+                        style={{ height: '38px', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Email */}

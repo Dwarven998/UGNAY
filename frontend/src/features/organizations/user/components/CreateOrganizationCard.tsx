@@ -21,6 +21,7 @@ interface Props {
 
 export default function CreateOrganizationCard({ onClose, onCreated }: Readonly<Props>) {
   const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
   const [type, setType] = useState<OrgType>('UNIVERSITY');
   const [joinId, setJoinId] = useState('');
   const [openJoin, setOpenJoin] = useState(false);
@@ -47,6 +48,7 @@ export default function CreateOrganizationCard({ onClose, onCreated }: Readonly<
         type,
         isSubOrg && joinId.trim() ? joinId.trim().toUpperCase() : null,
         openJoin,
+        { description: description.trim() || undefined }
       );
       setCreated(org);
       await onCreated(org);
@@ -60,6 +62,7 @@ export default function CreateOrganizationCard({ onClose, onCreated }: Readonly<
   const startAnother = () => {
     setCreated(null);
     setName('');
+    setDescription('');
     setJoinId('');
     setOpenJoin(false);
     setError(null);
@@ -133,6 +136,22 @@ export default function CreateOrganizationCard({ onClose, onCreated }: Readonly<
           autoComplete="organization"
           className="coc-input"
         />
+      </div>
+
+      <div className="coc-field">
+        <label htmlFor="coc-org-desc" className="coc-label">
+          Description / Mission <span className="coc-optional">(optional)</span>
+        </label>
+        <textarea
+          id="coc-org-desc"
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          placeholder="e.g. Empowering students through tech innovation and community events."
+          rows={2}
+          className="coc-input"
+          style={{ height: 'auto', minHeight: '52px', padding: '8px 12px', resize: 'vertical' }}
+        />
+        <p className="coc-hint">The AI uses your description to set the brand tone and avoid generic output.</p>
       </div>
 
       <div className="coc-field">

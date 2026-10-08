@@ -44,7 +44,19 @@ export type OrgType = 'UNIVERSITY' | 'DEPARTMENT' | 'PROGRAM';
 export type OrgRole = 'ADMIN' | 'OFFICER' | 'CONTRIBUTOR' | 'MEMBER';
 export type MembershipStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
-export interface MyMembership {
+export interface OrgProfileFields {
+  description?: string | null;
+  fullName?: string | null;
+  audience?: string | null;
+  focusAreas?: string | null;
+  languagePref?: string | null;
+  officialHashtags?: string | null;
+  captionAvoid?: string | null;
+}
+
+export type OrgProfileUpdatePayload = Partial<OrgProfileFields>;
+
+export interface MyMembership extends OrgProfileFields {
   orgId: string;
   orgName: string;
   orgType: OrgType;
@@ -52,14 +64,14 @@ export interface MyMembership {
   status: MembershipStatus;
 }
 
-export interface OrgSummary {
+export interface OrgSummary extends OrgProfileFields {
   id: string;
   name: string;
   type: OrgType;
   parentOrgId: string | null;
 }
 
-export interface OrgDetail {
+export interface OrgDetail extends OrgProfileFields {
   id: string;
   name: string;
   type: OrgType;

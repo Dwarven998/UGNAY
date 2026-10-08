@@ -58,9 +58,14 @@ public class OrganizationController {
 
     public record MyMembershipDto(UUID orgId, String orgName, Organization.OrgType orgType,
                                    OrganizationMembership.OrgRole role,
-                                   OrganizationMembership.MembershipStatus status) {}
+                                   OrganizationMembership.MembershipStatus status,
+                                   String description, String fullName, String audience,
+                                   String focusAreas, String languagePref, String officialHashtags,
+                                   String captionAvoid) {}
 
     public record OrgMemberDto(UUID userId, String email, OrganizationMembership.OrgRole role) {}
 
-    public record OrgSummaryDto(UUID id, String name, Organization.OrgType type, UUID parentOrgId) {}
+    public record OrgSummaryDto(UUID id, String name, Organization.OrgType type, UUID parentOrgId,
+                                String description, String fullName, String audience, String focusAreas,
+                                String languagePref, String officialHashtags, String captionAvoid) {}
 }

@@ -13,6 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.ugnay.ugnay.caption.GeminiClient;
+import com.ugnay.ugnay.caption.OrgAiProfile;
+import com.ugnay.ugnay.caption.OrgAiProfileResolver;
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.org.ConnectedPageResolver;
 import com.ugnay.ugnay.org.Organization;
@@ -37,6 +39,7 @@ public class MediaService {
     private final GeminiClient geminiClient;
     private final SupabaseStorageService supabaseStorageService;
     private final PostRepository postRepository;
+    private final OrgAiProfileResolver orgAiProfileResolver;
 
     /**
      * Personal folders (orgId == null) list the caller's own; org folders list that org's, visible to approved
@@ -165,7 +168,7 @@ public class MediaService {
      * this resolves them (with access checks) and generates 3 caption options
      * treating them as one cohesive post.
      */
-    public List<String> generateCaptionsFromAssets(User user, List<UUID> assetIds, String tone) {
+    public List<String> generateCaptionsFromAssets(User user, List<UUID> assetIds, String tone, UUID orgId, String notes) {
         if (assetIds == null || assetIds.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No images selected");
         }
@@ -194,7 +197,12 @@ public class MediaService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No image assets in selection");
         }
 
-        return geminiClient.generateCaptionsMultiImage(imageUrls, tone, user.getOrgName());
+        OrgAiProfile profile = orgAiProfileResolver.resolveProfile(user, orgId);
+        return geminiClient.generateCaptionsMultiImage(imageUrls, tone, profile, notes);
+    }
+
+    public List<String> generateCaptionsFromAssets(User user, List<UUID> assetIds, String tone) {
+        return generateCaptionsFromAssets(user, assetIds, tone, null, null);
     }
 
     /** Org folders: must be an approved member of the owning org. Personal folders: must be the owner. */

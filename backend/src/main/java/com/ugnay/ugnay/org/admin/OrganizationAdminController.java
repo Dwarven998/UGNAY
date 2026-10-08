@@ -134,6 +134,13 @@ public class OrganizationAdminController {
         return ResponseEntity.noContent().build();
     }
 
+    @PatchMapping("/{orgId}/profile")
+    public ResponseEntity<OrgManageDto> updateProfile(@AuthenticationPrincipal User user,
+                                                       @PathVariable UUID orgId,
+                                                       @Valid @RequestBody UpdateOrgProfileRequest req) {
+        return ResponseEntity.ok(service.updateProfile(user, orgId, req));
+    }
+
     // --- DTOs ---
 
     /**
@@ -144,16 +151,38 @@ public class OrganizationAdminController {
         @NotBlank @Size(max = 255) String name,
         @NotNull Organization.OrgType type,
         @Size(max = 32) String parentJoinId,
-        boolean openJoin
+        boolean openJoin,
+        String description,
+        String fullName,
+        String audience,
+        String focusAreas,
+        String languagePref,
+        String officialHashtags,
+        String captionAvoid
     ) {}
 
     public record OrgDto(UUID id, String name, Organization.OrgType type, UUID parentOrgId, String parentOrgName,
-                          String joinCode, String joinId, boolean openJoin) {}
+                          String joinCode, String joinId, boolean openJoin,
+                          String description, String fullName, String audience, String focusAreas,
+                          String languagePref, String officialHashtags, String captionAvoid) {}
 
     public record OrgManageDto(UUID id, String name, Organization.OrgType type,
                                 UUID parentOrgId, String parentOrgName,
                                 String joinCode, String joinId, boolean openJoin,
-                                boolean canAdminister, boolean canManageParent) {}
+                                boolean canAdminister, boolean canManageParent,
+                                String description, String fullName, String audience, String focusAreas,
+                                String languagePref, String officialHashtags, String captionAvoid) {}
+
+    public record UpdateOrgProfileRequest(
+        @Size(max = 255) String name,
+        String description,
+        @Size(max = 255) String fullName,
+        @Size(max = 255) String audience,
+        String focusAreas,
+        @Size(max = 100) String languagePref,
+        @Size(max = 255) String officialHashtags,
+        String captionAvoid
+    ) {}
 
     public record JoinCodeDto(String joinCode) {}
 

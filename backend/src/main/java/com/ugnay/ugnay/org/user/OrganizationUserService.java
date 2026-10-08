@@ -26,7 +26,14 @@ public class OrganizationUserService {
         return membershipRepository.findByUserId(user.getId()).stream()
             .map(m -> new OrganizationController.MyMembershipDto(
                 m.getOrganization().getId(), m.getOrganization().getName(),
-                m.getOrganization().getType(), m.getRole(), m.getStatus()))
+                m.getOrganization().getType(), m.getRole(), m.getStatus(),
+                m.getOrganization().getDescription(),
+                m.getOrganization().getFullName(),
+                m.getOrganization().getAudience(),
+                m.getOrganization().getFocusAreas(),
+                m.getOrganization().getLanguagePref(),
+                m.getOrganization().getOfficialHashtags(),
+                m.getOrganization().getCaptionAvoid()))
             .toList();
     }
 
@@ -55,7 +62,11 @@ public class OrganizationUserService {
             .build();
         membershipRepository.save(membership);
 
-        return new OrganizationController.MyMembershipDto(org.getId(), org.getName(), org.getType(), membership.getRole(), membership.getStatus());
+        return new OrganizationController.MyMembershipDto(
+            org.getId(), org.getName(), org.getType(), membership.getRole(), membership.getStatus(),
+            org.getDescription(), org.getFullName(), org.getAudience(),
+            org.getFocusAreas(), org.getLanguagePref(), org.getOfficialHashtags(),
+            org.getCaptionAvoid());
     }
 
     public OrganizationController.OrgSummaryDto getOrgIfMember(User user, UUID orgId) {
@@ -66,7 +77,10 @@ public class OrganizationUserService {
         Organization org = organizationRepository.findById(orgId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Organization not found"));
         UUID parentId = org.getParentOrganization() != null ? org.getParentOrganization().getId() : null;
-        return new OrganizationController.OrgSummaryDto(org.getId(), org.getName(), org.getType(), parentId);
+        return new OrganizationController.OrgSummaryDto(
+            org.getId(), org.getName(), org.getType(), parentId,
+            org.getDescription(), org.getFullName(), org.getAudience(), org.getFocusAreas(),
+            org.getLanguagePref(), org.getOfficialHashtags(), org.getCaptionAvoid());
     }
 
     @Transactional(readOnly = true)

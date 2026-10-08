@@ -74,6 +74,7 @@ export default function CreatePost() {
   const [hashtags, setHashtags] = useState<string[]>(initial.hashtags);
   const [hashtagInput, setHashtagInput] = useState('');
   const [tone, setTone] = useState<Tone>(initial.tone);
+  const [notes, setNotes] = useState('');
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [aiBusy, setAiBusy] = useState<AiBusy>(null);
   const [aiError, setAiError] = useState('');
@@ -199,17 +200,19 @@ export default function CreatePost() {
      background as soon as the Caption step is shown; "Generate" then picks up that request, often already done.
      Requests are keyed by tone + images, so changing either never shows suggestions for something else. */
   const multiImage = attachableMedia.length > 1;
-  const captionRequestKey = multiImage
-    ? `ids:${attachableMedia.slice(0, MAX_AI_IMAGES).map(item => item.id).join(',')}`
-    : `url:${imageUrls[0] ?? ''}`;
+  const captionRequestKey = `${activeOrgId ?? 'personal'}|${notes.trim()}|${
+    multiImage
+      ? `ids:${attachableMedia.slice(0, MAX_AI_IMAGES).map(item => item.id).join(',')}`
+      : `url:${imageUrls[0] ?? ''}`
+  }`;
   const captionRequests = useRef(new Map<string, Promise<string[]>>());
   const requestCaptions = (forTone: Tone) => {
     const key = `${forTone}|${captionRequestKey}`;
     const existing = captionRequests.current.get(key);
     if (existing) return existing;
     const request = multiImage
-      ? mediaApi.generateCaptionFromAssets(attachableMedia.slice(0, MAX_AI_IMAGES).map(item => item.id), forTone)
-      : captionApi.generate(imageUrls[0], forTone);
+      ? mediaApi.generateCaptionFromAssets(attachableMedia.slice(0, MAX_AI_IMAGES).map(item => item.id), forTone, activeOrgId, notes)
+      : captionApi.generate(imageUrls[0], forTone, activeOrgId, notes);
     captionRequests.current.set(key, request);
     request.catch(() => captionRequests.current.delete(key));
     return request;
@@ -238,16 +241,16 @@ export default function CreatePost() {
   }, 'Caption generation failed. Please try again.');
 
   const rewriteCaption = () => runAi('rewrite', async () => {
-    setCaption(await captionApi.rewrite(caption, tone));
+    setCaption(await captionApi.rewrite(caption, tone, activeOrgId, notes, imageUrls[0]));
   }, 'Could not rewrite the caption. Please try again.');
 
   const rewriteSuggestion = (index: number) => runAi(index, async () => {
-    const rewritten = await captionApi.rewrite(suggestions[index], tone);
+    const rewritten = await captionApi.rewrite(suggestions[index], tone, activeOrgId, notes, imageUrls[0]);
     setSuggestions(prev => prev.map((item, i) => (i === index ? rewritten : item)));
   }, 'Could not rewrite that suggestion. Please try again.');
 
   const suggestHashtags = () => runAi('hashtags', async () => {
-    const tags = await captionApi.hashtags(caption);
+    const tags = await captionApi.hashtags(caption, activeOrgId, imageUrls[0]);
     setHashtags(prev => normalizeHashtags([...prev, ...tags]));
   }, 'Could not generate hashtags. Please try again.');
 
@@ -624,6 +627,24 @@ export default function CreatePost() {
                   <h3 id="cp-ai-title" className="cp-ai-title">AI Assistant</h3>
                 </div>
 
+                {activeOrg && !activeOrg.description && (
+                  <div style={{
+                    marginBottom: '0.85rem',
+                    padding: '0.6rem 0.75rem',
+                    borderRadius: '6px',
+                    backgroundColor: '#fffbeb',
+                    border: '1px solid #fef3c7',
+                    fontSize: '0.78rem',
+                    color: '#92400e',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                  }}>
+                    <span aria-hidden="true">💡</span>
+                    <span>Add an org description in settings for more tailored captions.</span>
+                  </div>
+                )}
+
                 <div className="cp-field">
                   <span className="cp-label" id="cp-tone-label">Tone</span>
                   <div className="cp-tones" role="radiogroup" aria-labelledby="cp-tone-label">
@@ -642,6 +663,23 @@ export default function CreatePost() {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                <div className="cp-field" style={{ marginTop: '0.5rem', marginBottom: '0.75rem' }}>
+                  <label htmlFor="cp-notes" className="cp-label" style={{ fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>What's this post about?</span>
+                    <span style={{ fontWeight: 400, color: '#64748b' }}>(Optional)</span>
+                  </label>
+                  <textarea
+                    id="cp-notes"
+                    className="cp-textarea"
+                    rows={2}
+                    value={notes}
+                    onChange={e => setNotes(e.target.value)}
+                    placeholder="e.g. Free admission, starts at 4 PM"
+                    disabled={aiBusy !== null}
+                    style={{ minHeight: '52px', fontSize: '0.82rem', padding: '0.45rem 0.6rem' }}
+                  />
                 </div>
 
                 <button

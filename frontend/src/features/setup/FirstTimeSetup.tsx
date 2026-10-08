@@ -42,6 +42,7 @@ export default function FirstTimeSetup() {
   const [busy, setBusy] = useState(false);
 
   const [orgName, setOrgName] = useState('');
+  const [description, setDescription] = useState('');
   const [orgType, setOrgType] = useState<OrgType>('UNIVERSITY');
   const [parentJoinId, setParentJoinId] = useState('');
   const [openJoin, setOpenJoin] = useState(false);
@@ -81,7 +82,13 @@ export default function FirstTimeSetup() {
     setBusy(true);
     setError('');
     try {
-      const org = await organizationAdminApi.create(orgName.trim(), orgType, orgType !== 'UNIVERSITY' && parentJoinId.trim() ? parentJoinId.trim().toUpperCase() : null, openJoin);
+      const org = await organizationAdminApi.create(
+        orgName.trim(),
+        orgType,
+        orgType !== 'UNIVERSITY' && parentJoinId.trim() ? parentJoinId.trim().toUpperCase() : null,
+        openJoin,
+        { description: description.trim() || undefined }
+      );
       await refreshMemberships();
       setActiveOrgId(org.id);
       setInfo(org.joinId
@@ -205,6 +212,27 @@ export default function FirstTimeSetup() {
                 <div className="su-field">
                   <label htmlFor="su-org-name">Organization name</label>
                   <input id="su-org-name" type="text" value={orgName} onChange={e => setOrgName(e.target.value)} placeholder="e.g. College of Engineering" required autoComplete="organization" />
+                </div>
+                <div className="su-field">
+                  <label htmlFor="su-org-desc">Description / Mission (optional)</label>
+                  <textarea
+                    id="su-org-desc"
+                    value={description}
+                    onChange={e => setDescription(e.target.value)}
+                    placeholder="e.g. Academic and leadership organization for engineering students. Helps AI tailor captions."
+                    rows={2}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      border: '1.5px solid #e2e8f0',
+                      fontSize: '13px',
+                      fontFamily: 'inherit',
+                      resize: 'vertical',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <p className="su-hint">Used by UGNAY's AI to frame captions and match your voice.</p>
                 </div>
                 <div className="su-field">
                   <label htmlFor="su-org-type">Type</label>

@@ -17,6 +17,7 @@ function LoginFormContent() {
   // Set when Google sign-in found no account for this email: we ask for an organization name before creating it.
   const [googleSignup, setGoogleSignup] = useState<{ accessToken: string; email: string } | null>(null);
   const [orgName, setOrgName] = useState('');
+  const [orgDescription, setOrgDescription] = useState('');
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const { token: turnstileToken, isVerified: turnstileVerified, reset: resetTurnstile, containerRef: turnstileRef } = useTurnstile();
@@ -36,6 +37,7 @@ function LoginFormContent() {
       const result = await loginWithGoogle(accessToken);
       if (result.needsOrgName) {
         setOrgName('');
+        setOrgDescription('');
         setGoogleSignup({ accessToken, email: result.email });
       } else {
         navigate('/');
@@ -53,7 +55,9 @@ function LoginFormContent() {
     setError('');
     setGoogleLoading(true);
     try {
-      const result = await loginWithGoogle(googleSignup.accessToken, orgName.trim());
+      const result = await loginWithGoogle(googleSignup.accessToken, orgName.trim(), {
+        description: orgDescription.trim() || undefined,
+      });
       navigate(result.newAccount ? '/setup' : '/');
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
@@ -186,6 +190,23 @@ function LoginFormContent() {
                         required
                         autoFocus
                         className="modern-input"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="input-group">
+                    <label htmlFor="google-org-desc">
+                      Description / Mission <span style={{ fontWeight: 400, color: 'var(--text-muted, #94a3b8)', fontSize: '0.8rem' }}>(Recommended for AI captions)</span>
+                    </label>
+                    <div className="input-wrapper" style={{ alignItems: 'flex-start' }}>
+                      <textarea
+                        id="google-org-desc"
+                        placeholder="e.g. Dedicated to empowering students through tech workshops, hackathons, and community projects."
+                        value={orgDescription}
+                        onChange={e => setOrgDescription(e.target.value)}
+                        rows={2}
+                        className="modern-input"
+                        style={{ height: 'auto', minHeight: '56px', padding: '10px 14px', resize: 'vertical', width: '100%' }}
                       />
                     </div>
                   </div>

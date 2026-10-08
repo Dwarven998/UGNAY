@@ -53,6 +53,27 @@ public class Organization {
     @Builder.Default
     private Instant createdAt = Instant.now();
 
+    @Column(columnDefinition = "TEXT")
+    private String description;
+
+    @Column(name = "full_name")
+    private String fullName;
+
+    @Column
+    private String audience;
+
+    @Column(name = "focus_areas", columnDefinition = "TEXT")
+    private String focusAreas;
+
+    @Column(name = "language_pref")
+    private String languagePref;
+
+    @Column(name = "official_hashtags")
+    private String officialHashtags;
+
+    @Column(name = "caption_avoid", columnDefinition = "TEXT")
+    private String captionAvoid;
+
     /**
      * A UNIVERSITY is always top-level. A DEPARTMENT or PROGRAM may stand alone, or be linked under a
      * UNIVERSITY by entering that university's Join ID when it is created.
