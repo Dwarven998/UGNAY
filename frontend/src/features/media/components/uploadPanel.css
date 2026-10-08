@@ -1,0 +1,74 @@
+/* Media Repository: floating upload progress */
+.up-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 40;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 16px 40px rgba(15,23,42,0.18);
+  animation: fadeUp 0.2s cubic-bezier(0.16,1,0.3,1);
+  transition: bottom 0.2s;
+}
+.up-panel-raised { bottom: 96px; }
+.up-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 10px 10px 16px;
+  background: #0f172a;
+  color: #ffffff;
+}
+.up-title { flex: 1; font-size: 13px; font-weight: 600; }
+.up-icon-btn {
+  width: 28px; height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+.up-icon-btn:hover:not(:disabled) { background: rgba(255,255,255,0.12); color: #ffffff; }
+.up-icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.up-icon-btn:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }
+.up-list { list-style: none; margin: 0; padding: 6px 0; max-height: 280px; overflow-y: auto; }
+.up-item { padding: 8px 16px; }
+.up-item + .up-item { border-top: 1px solid #f1f5f9; }
+.up-item-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.up-name {
+  min-width: 0;
+  font-size: 13px;
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.up-status { flex-shrink: 0; font-size: 12px; color: #64748b; font-variant-numeric: tabular-nums; }
+.up-item-done .up-status { color: #059669; display: inline-flex; }
+.up-bar { height: 4px; margin-top: 6px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+.up-bar-fill { height: 100%; border-radius: inherit; background: #0C447C; transition: width 0.2s; }
+.up-error { margin: 4px 0 0; font-size: 12px; line-height: 1.4; color: #b91c1c; overflow-wrap: anywhere; }
+.up-folder { margin: 2px 0 0; font-size: 11px; color: #94a3b8; }
+.up-retry {
+  padding: 3px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 7px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.up-retry:hover { background: #fee2e2; }
+
+@media (max-width: 640px) {
+  .up-panel { right: 16px; bottom: 16px; }
+  .up-panel-raised { bottom: 150px; }
+}

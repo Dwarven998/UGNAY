@@ -1,15 +1,22 @@
 package com.ugnay.ugnay.media;
 
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.ugnay.ugnay.caption.GeminiClient;
@@ -30,6 +37,10 @@ public class MediaService {
 
     // Bounds how many images from a folder are sent to Gemini in one ranking call.
     private static final int MAX_RANK_CANDIDATES = 12;
+    private static final int MAX_BULK_DELETE = 200;
+    private static final int MAX_FOLDER_NAME = 100;
+    private static final String ASSET_IN_USE_MESSAGE =
+        "Used by a draft or scheduled post. Remove it from that post or publish the post first.";
 
     private final MediaFolderRepository folderRepository;
     private final MediaAssetRepository assetRepository;
@@ -76,18 +87,20 @@ public class MediaService {
         if (folder == null) return;
         requireManageAccess(user, folder);
         // Posts hold a FK to their asset; deleting underneath a pending post would fail (or strip its image).
-        if (postRepository.existsByMediaAsset_Folder_Id(folderId)) {
+        if (postRepository.existsByMediaAsset_Folder_Id(folderId) || postRepository.existsByMediaAssets_Folder_Id(folderId)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "This folder has media used by a draft or scheduled post. Remove or publish those posts first.");
         }
-        folder.getAssets().forEach(a -> supabaseStorageService.deletePublicObject(a.getFileUrl()));
+        List<String> fileUrls = folder.getAssets().stream().map(MediaAsset::getFileUrl).toList();
         folderRepository.delete(folder);
+        deleteStoredFilesAfterCommit(fileUrls);
     }
 
+    @Transactional(readOnly = true)
     public List<MediaController.AssetDto> getAssets(User user, UUID folderId) {
         requireViewAccess(user, folderId);
         return assetRepository.findByFolder_Id(folderId).stream()
-            .map(a -> new MediaController.AssetDto(a.getId(), a.getFileName(), a.getFileUrl(), a.getFileType()))
+            .map(MediaService::toAssetDto)
             .collect(Collectors.toList());
     }
 
@@ -98,9 +111,21 @@ public class MediaService {
         MediaAsset asset = MediaAsset.builder()
             .user(user).folder(folder)
             .fileName(req.fileName()).fileUrl(req.fileUrl()).fileType(req.fileType())
+            .fileSize(req.fileSize() != null && req.fileSize() >= 0 ? req.fileSize() : null)
             .build();
         assetRepository.save(asset);
-        return new MediaController.AssetDto(asset.getId(), asset.getFileName(), asset.getFileUrl(), asset.getFileType());
+        return toAssetDto(asset);
+    }
+
+    private static MediaController.AssetDto toAssetDto(MediaAsset a) {
+        return new MediaController.AssetDto(a.getId(), a.getFileName(), a.getFileUrl(), a.getFileType(),
+            a.getFileSize(), a.getCreatedAt(), uploaderName(a.getUser()));
+    }
+
+    private static String uploaderName(User u) {
+        if (u == null) return null;
+        if (u.getFullName() != null && !u.getFullName().isBlank()) return u.getFullName();
+        return u.getEmail();
     }
 
     @Transactional
@@ -114,8 +139,97 @@ public class MediaService {
         if (!isUploader) {
             requireManageAccess(user, asset.getFolder());
         }
-        supabaseStorageService.deletePublicObject(asset.getFileUrl());
+        if (!assetIdsInUse(List.of(assetId)).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ASSET_IN_USE_MESSAGE);
+        }
         assetRepository.delete(asset);
+        deleteStoredFilesAfterCommit(List.of(asset.getFileUrl()));
+    }
+
+    /**
+     * Deletes every asset the caller may delete and reports the rest instead of failing the whole batch:
+     * files a not-yet-published post still uses, and (for non-managers) files someone else uploaded.
+     */
+    @Transactional
+    public MediaController.BulkDeleteResult deleteAssets(User user, List<UUID> assetIds) {
+        if (assetIds == null || assetIds.isEmpty()) {
+            return new MediaController.BulkDeleteResult(List.of(), List.of());
+        }
+        if (assetIds.size() > MAX_BULK_DELETE) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "You can delete up to " + MAX_BULK_DELETE + " files at a time.");
+        }
+        Set<UUID> requested = new LinkedHashSet<>(assetIds);
+        Set<UUID> inUse = assetIdsInUse(requested);
+        List<MediaAsset> toDelete = new ArrayList<>();
+        List<UUID> deleted = new ArrayList<>();
+        List<MediaController.SkippedAsset> skipped = new ArrayList<>();
+
+        for (MediaAsset asset : assetRepository.findAllById(requested)) {
+            if (!canDeleteAsset(user, asset)) {
+                skipped.add(new MediaController.SkippedAsset(asset.getId(), asset.getFileName(),
+                    "You can only delete files you uploaded."));
+            } else if (inUse.contains(asset.getId())) {
+                skipped.add(new MediaController.SkippedAsset(asset.getId(), asset.getFileName(), ASSET_IN_USE_MESSAGE));
+            } else {
+                toDelete.add(asset);
+                deleted.add(asset.getId());
+            }
+        }
+        // Ids that no longer exist count as deleted, so a stale screen simply drops them.
+        requested.stream().filter(id -> !deleted.contains(id) && skipped.stream().noneMatch(s -> s.id().equals(id)))
+            .forEach(deleted::add);
+
+        assetRepository.deleteAll(toDelete);
+        deleteStoredFilesAfterCommit(toDelete.stream().map(MediaAsset::getFileUrl).toList());
+        return new MediaController.BulkDeleteResult(deleted, skipped);
+    }
+
+    /** Uploaders may delete their own files; officers/admins (or the owner of a personal folder) may delete any. */
+    private boolean canDeleteAsset(User user, MediaAsset asset) {
+        MediaFolder folder = asset.getFolder();
+        if (folder == null) return false;
+        String current = ConnectedPageResolver.pageIdOf(folder.getOrganization(), folder.getUser());
+        if (!Objects.equals(ConnectedPageResolver.normalize(folder.getFbPageId()), current)) return false;
+        if (asset.getUser() != null && asset.getUser().getId().equals(user.getId())) return true;
+        if (folder.getOrganization() != null) {
+            return organizationPermissionService.isOfficerOrAdmin(user.getId(), folder.getOrganization().getId());
+        }
+        return folder.getUser() != null && folder.getUser().getId().equals(user.getId());
+    }
+
+    /** Assets that a draft/scheduled post still points at, as its single image or in its multi-image set. */
+    private Set<UUID> assetIdsInUse(Collection<UUID> assetIds) {
+        Set<UUID> inUse = new HashSet<>(postRepository.findSingleMediaAssetIdsInUse(assetIds));
+        inUse.addAll(postRepository.findMultiMediaAssetIdsInUse(assetIds));
+        return inUse;
+    }
+
+    /** Storage objects go only once the rows are gone for good, so a rolled-back delete never leaves broken links. */
+    private void deleteStoredFilesAfterCommit(List<String> fileUrls) {
+        if (fileUrls.isEmpty()) return;
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            fileUrls.forEach(supabaseStorageService::deletePublicObject);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                fileUrls.forEach(supabaseStorageService::deletePublicObject);
+            }
+        });
+    }
+
+    @Transactional
+    public MediaController.FolderDto renameFolder(User user, UUID folderId, String rawName) {
+        String name = rawName == null ? "" : rawName.trim();
+        if (name.isEmpty() || name.length() > MAX_FOLDER_NAME) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Folder name must be 1–" + MAX_FOLDER_NAME + " characters.");
+        }
+        MediaFolder folder = folderRepository.findById(folderId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Folder not found"));
+        requireManageAccess(user, folder);
+        folder.setName(name);
+        return new MediaController.FolderDto(folder.getId(), folder.getName(), folder.getAssets().size());
     }
 
     /**

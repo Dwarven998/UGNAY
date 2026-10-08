@@ -36,6 +36,17 @@ export interface MediaAsset {
   fileName: string;
   fileUrl: string;
   fileType: string;
+  /** Bytes; null for assets uploaded before sizes were recorded. */
+  fileSize?: number | null;
+  /** ISO timestamp of the upload. */
+  createdAt?: string | null;
+  /** Display name (or email) of whoever uploaded it. */
+  uploadedBy?: string | null;
+}
+
+export interface MediaBulkDeleteResult {
+  deleted: string[];
+  skipped: { id: string; fileName: string; reason: string }[];
 }
 
 export type Tone = 'FORMAL' | 'ENERGETIC' | 'CELEBRATORY' | 'URGENT';

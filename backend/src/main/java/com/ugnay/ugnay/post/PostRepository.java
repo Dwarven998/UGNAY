@@ -97,6 +97,17 @@ public interface PostRepository extends JpaRepository<Post, UUID> {
     /** True while any post (draft/scheduled — published posts release their asset) still points at an asset in the folder. */
     boolean existsByMediaAsset_Folder_Id(UUID folderId);
 
+    /** Same, for posts that carry the folder's assets in their multi-image set. */
+    boolean existsByMediaAssets_Folder_Id(UUID folderId);
+
+    /** Of the given assets, the ones a not-yet-published post uses as its single image. */
+    @Query("select distinct p.mediaAsset.id from Post p where p.mediaAsset.id in :ids")
+    List<UUID> findSingleMediaAssetIdsInUse(@Param("ids") java.util.Collection<UUID> ids);
+
+    /** Of the given assets, the ones a not-yet-published post uses in its multi-image set. */
+    @Query("select distinct a.id from Post p join p.mediaAssets a where a.id in :ids")
+    List<UUID> findMultiMediaAssetIdsInUse(@Param("ids") java.util.Collection<UUID> ids);
+
     boolean existsByUserAndScheduledAtBetween(User user, Instant start, Instant end);
 
     List<Post> findByStatusAndScheduledAtBefore(Post.PostStatus status, Instant before);

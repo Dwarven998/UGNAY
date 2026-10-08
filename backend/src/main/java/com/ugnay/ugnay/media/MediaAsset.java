@@ -25,6 +25,8 @@ public class MediaAsset {
     @Column(name = "file_name") private String fileName;
     @Column(name = "file_url") private String fileUrl;
     @Column(name = "file_type") private String fileType;
+    /** Bytes; null for assets uploaded before sizes were recorded. */
+    @Column(name = "file_size") private Long fileSize;
 
     @Column(name = "created_at")
     @Builder.Default
