@@ -1,6 +1,5 @@
 package com.ugnay.ugnay.analytics;
 
-
 import java.util.UUID;
 
 import org.springframework.http.ResponseEntity;
@@ -55,8 +54,9 @@ public class AnalyticsController {
     }
 
     @GetMapping("/recommendation")
-    public ResponseEntity<?> getRecommendation(@AuthenticationPrincipal User user,
-                                               @RequestParam(required = false) UUID orgId) {
+    public ResponseEntity<AnalyticsService.RecommendationDto> getRecommendation(
+            @AuthenticationPrincipal User user,
+            @RequestParam(required = false) UUID orgId) {
         return ResponseEntity.ok(analyticsService.getPostingRecommendation(user, orgId));
     }
 }

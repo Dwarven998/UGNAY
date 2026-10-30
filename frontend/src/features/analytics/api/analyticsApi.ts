@@ -89,6 +89,12 @@ export interface PostDetail {
   fetchedAt: number;
 }
 
+export interface Recommendation {
+  headline: string;
+  detail: string;
+  personalized: boolean;
+}
+
 const withOrg = (path: string, orgId?: string | null, extra = '') => {
   const params = [orgId ? `orgId=${encodeURIComponent(orgId)}` : '', extra].filter(Boolean).join('&');
   return params ? `${path}?${params}` : path;
@@ -103,4 +109,8 @@ export const analyticsApi = {
     axiosClient
       .get<PostDetail>(withOrg(`/api/analytics/posts/${encodeURIComponent(fbPostId)}`, orgId))
       .then((r: ApiResponse<PostDetail>) => r.data),
+  getRecommendation: (orgId: string | null | undefined) =>
+    axiosClient
+      .get<Recommendation>(withOrg('/api/analytics/recommendation', orgId))
+      .then((r: ApiResponse<Recommendation>) => r.data),
 };

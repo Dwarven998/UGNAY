@@ -1,13 +1,14 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { analyticsApi } from '../api/analyticsApi.ts';
-import type { ContentItem, DayPoint, Dashboard, FormatStat, Trend } from '../api/analyticsApi.ts';
+import type { ContentItem, DayPoint, Dashboard, FormatStat, Recommendation, Trend } from '../api/analyticsApi.ts';
 import { useOrganization } from '../../../context/useOrganization';
 import { useFacebookConnection } from '../../posts/hooks/useFacebookConnection';
 import { usePolling } from '../usePolling.ts';
 import TimeChart from '../components/TimeChart.tsx';
 import { Icon } from '../components/icons.tsx';
 import { SyncBadge, SyncingPanel } from '../components/SyncIndicator.tsx';
+import RecommendationCard from '../components/RecommendationCard.tsx';
 import type { IconName } from '../components/icons.tsx';
 import { dayToMs, formatCount, formatDate, formatDay, formatDuration, formatLongDay } from '../format.ts';
 import '../analytics.css';
@@ -134,6 +135,7 @@ function DashboardSkeleton() {
     <div aria-busy="true" aria-label="Loading analytics">
       <SyncingPanel />
       <div className="an-kpi-grid">{[0, 1, 2, 3].map(i => <div key={i} className="an-skel" style={{ height: 104 }} />)}</div>
+      <div className="an-skel" style={{ height: 140, marginBottom: 24, borderRadius: 20 }} />
       <div className="an-skel" style={{ height: 420, marginBottom: 24, borderRadius: 20 }} />
       <div className="an-skel" style={{ height: 300, borderRadius: 20 }} />
     </div>
@@ -228,6 +230,36 @@ export default function Analytics() {
     () => analyticsApi.getDashboard(activeOrgId, days),
   );
 
+  const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
+  const [recLoading, setRecLoading] = useState(true);
+  const [recError, setRecError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isResolvingOrg || !pageResolved) return;
+    let cancelled = false;
+    setRecLoading(true);
+    setRecError(null);
+
+    analyticsApi
+      .getRecommendation(activeOrgId)
+      .then(res => {
+        if (!cancelled) {
+          setRecommendation(res);
+          setRecLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRecError("Couldn't load the posting recommendation.");
+          setRecLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeOrgId, scopeKey, isResolvingOrg, pageResolved]);
+
   const scopeName = activeOrg ? activeOrg.orgName : 'your Page';
   const loading = isResolvingOrg || !data;
   const carouselItems = data ? data.content.slice(0, 12) : [];
@@ -298,6 +330,13 @@ export default function Analytics() {
               </div>
             ))}
           </div>
+
+          <RecommendationCard
+            recommendation={recommendation}
+            data={recommendation}
+            loading={recLoading}
+            error={recError}
+          />
 
           {data.connected && <OverviewCard data={data} />}
 

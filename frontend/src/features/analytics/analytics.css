@@ -224,3 +224,41 @@
 @media (prefers-reduced-motion: reduce) {
   .an-spinner, .an-progress i, .an-skel, .an-pulse-dot { animation-duration: 3s; }
 }
+
+/* ── Recommendation card ── */
+.an-rec-card { animation-delay: 0.08s; }
+.an-rec-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 11px;
+  border-radius: 9999px;
+  letter-spacing: 0.01em;
+}
+.an-rec-badge.personalized {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+.an-rec-badge.general {
+  background: rgba(12, 68, 124, 0.08);
+  color: #0C447C;
+  border: 1px solid rgba(12, 68, 124, 0.18);
+}
+.an-rec-headline {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 6px;
+  line-height: 1.35;
+}
+.an-rec-detail {
+  font-size: 14px;
+  color: #475569;
+  margin: 0;
+  line-height: 1.5;
+}
+.an-rec-error {
+  margin-bottom: 24px;
+}
