@@ -1,8 +1,8 @@
 # UGNAY
 
-**AI-powered social media management for Philippine college organizations.**
+**AI-powered social media management for Philippine academic organizations.**
 
-UGNAY helps college organizations manage their social media workflow in one place—from creating AI-assisted captions and organizing media assets to scheduling Facebook content and reviewing engagement performance.
+UGNAY helps academic organizations manage their social media workflow in one place—from creating AI-assisted captions and organizing media assets to scheduling Facebook content and reviewing engagement performance.
 
 ## Project at a Glance
 
@@ -299,5 +299,5 @@ Do not commit production `.env` files or secrets.
 ---
 
 <p align="center">
-  Built for Philippine college organizations.
+  Built for Philippine academic organizations.
 </p>
