@@ -76,6 +76,13 @@
   color: #475569;
 }
 
+.upe-fb-connect-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .upe-fb-connect-btn {
   display: inline-flex;
   align-items: center;

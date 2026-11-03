@@ -7,6 +7,13 @@ import { useOrganization } from '../../context/useOrganization';
 import type { OrgType } from '../../types';
 import { organizationAdminApi, organizationApi } from '../organizations/api/organizationApi';
 import { useFacebookConnection } from '../posts/hooks/useFacebookConnection';
+import GuideTooltip from '../../components/ui/GuideTooltip';
+import {
+  FACEBOOK_OAUTH_GUIDE_STEPS,
+  FacebookOAuthPermissionCard,
+  FacebookOAuthGuideModal,
+  FacebookOAuthHelpButton,
+} from '../posts/components/FacebookOAuthGuide';
 import { markSetupDone, SETUP_FACEBOOK_RETURN_KEY } from './setupStatus';
 import '../../components/ui/dialog.css';
 import './setup.css';
@@ -40,6 +47,8 @@ export default function FirstTimeSetup() {
   const [error, setError] = useState(facebookParam === 'failed' ? (searchParams.get('message') || 'Facebook connection failed.') : '');
   const [info, setInfo] = useState('');
   const [busy, setBusy] = useState(false);
+  const [guideModalOpen, setGuideModalOpen] = useState(false);
+  const [guideKey, setGuideKey] = useState(0);
 
   const [orgName, setOrgName] = useState('');
   const [description, setDescription] = useState('');
@@ -165,7 +174,21 @@ export default function FirstTimeSetup() {
         </ol>
 
         <section className="su-card" aria-labelledby="su-title">
-          {error && <div className="su-alert su-alert-error" role="alert">{error}</div>}
+          {error && (
+            <div className="su-alert su-alert-error" role="alert">
+              <div>{error}</div>
+              {step === 'facebook' && (
+                <button
+                  type="button"
+                  className="fog-link-btn"
+                  style={{ marginTop: '6px', display: 'inline-block' }}
+                  onClick={() => setGuideModalOpen(true)}
+                >
+                  Missing Page or Permissions? View Troubleshooting Guide →
+                </button>
+              )}
+            </div>
+          )}
           {info && step !== 'workspace' && <div className="su-alert su-alert-info" role="status">{info}</div>}
 
           {step === 'workspace' && mode === 'choose' && (
@@ -312,13 +335,52 @@ export default function FirstTimeSetup() {
               ) : canManageFacebook ? (
                 <>
                   <p className="su-lead">Connect a Page to start publishing {activeOrg ? `${workspaceName}’s` : 'your'} content.</p>
+
+                  {/* Pre-flight Permission Guide Card */}
+                  <FacebookOAuthPermissionCard onOpenDetailedGuide={() => setGuideModalOpen(true)} />
+
                   <div className="su-actions su-actions-stack">
-                    <button type="button" className="su-fb-btn" onClick={() => void connectFacebook()} disabled={facebook.isBusy}>
-                      {facebook.isBusy && <span className="ug-spinner" aria-hidden="true" />}
-                      Connect Facebook
-                    </button>
+                    <GuideTooltip
+                      key={guideKey}
+                      steps={FACEBOOK_OAUTH_GUIDE_STEPS}
+                      storageKey="setup_fb_connect"
+                      delay={400}
+                    >
+                      {(setRef) => (
+                        <button
+                          ref={setRef}
+                          type="button"
+                          className="su-fb-btn"
+                          onClick={() => void connectFacebook()}
+                          disabled={facebook.isBusy}
+                        >
+                          {facebook.isBusy && <span className="ug-spinner" aria-hidden="true" />}
+                          Connect Facebook
+                        </button>
+                      )}
+                    </GuideTooltip>
+
                     <button type="button" className="ug-btn ug-btn-ghost" onClick={() => goTo('done')}>Skip for now</button>
                   </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: '12px', gap: '10px' }}>
+                    <FacebookOAuthHelpButton
+                      onClick={() => setGuideModalOpen(true)}
+                      label="View Meta Permission Guide"
+                    />
+                    <button
+                      type="button"
+                      className="fog-link-btn"
+                      style={{ fontSize: '12px' }}
+                      onClick={() => {
+                        try { localStorage.removeItem('ugnay_guide_setup_fb_connect'); } catch { /* noop */ }
+                        setGuideKey(k => k + 1);
+                      }}
+                    >
+                      Replay Guided Tour
+                    </button>
+                  </div>
+
                   <p className="su-hint su-center">You’ll be taken to Facebook and brought back here.</p>
                 </>
               ) : (
@@ -357,6 +419,12 @@ export default function FirstTimeSetup() {
           )}
         </section>
       </main>
+
+      {/* Meta OAuth Permission Guide Modal */}
+      <FacebookOAuthGuideModal
+        open={guideModalOpen}
+        onClose={() => setGuideModalOpen(false)}
+      />
     </div>
   );
 }

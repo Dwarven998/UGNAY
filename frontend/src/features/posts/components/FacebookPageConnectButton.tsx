@@ -1,5 +1,10 @@
+import { useState } from 'react';
 import { useOrganization } from '../../../context/useOrganization';
 import { useFacebookConnection } from '../hooks/useFacebookConnection';
+import {
+  FacebookOAuthGuideModal,
+  FacebookOAuthHelpButton,
+} from './FacebookOAuthGuide';
 
 /** Mask a page ID by showing only the last 4 characters. */
 function maskPageId(id: string): string {
@@ -7,9 +12,14 @@ function maskPageId(id: string): string {
   return '••••' + id.slice(-4);
 }
 
-export default function FacebookPageConnectButton() {
+export default function FacebookPageConnectButton({
+  showHelp = true,
+}: Readonly<{
+  showHelp?: boolean;
+}>) {
   const { activeOrg } = useOrganization();
   const { connected, pageId, pageName, pagePictureUrl, isBusy, connect, disconnect } = useFacebookConnection();
+  const [guideModalOpen, setGuideModalOpen] = useState(false);
 
   const scopeLabel = activeOrg ? activeOrg.orgName : 'your personal workspace';
 
@@ -37,11 +47,27 @@ export default function FacebookPageConnectButton() {
   }
 
   return (
-    <button type="button" className="upe-fb-connect-btn" onClick={connect} disabled={isBusy}>
-      <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
-        <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-      </svg>
-      Connect Facebook Page for {scopeLabel}
-    </button>
+    <>
+      <div className="upe-fb-connect-wrap">
+        <button type="button" className="upe-fb-connect-btn" onClick={connect} disabled={isBusy}>
+          <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+          </svg>
+          Connect Facebook Page for {scopeLabel}
+        </button>
+
+        {showHelp && (
+          <FacebookOAuthHelpButton
+            onClick={() => setGuideModalOpen(true)}
+            label="Meta Permissions Guide"
+          />
+        )}
+      </div>
+
+      <FacebookOAuthGuideModal
+        open={guideModalOpen}
+        onClose={() => setGuideModalOpen(false)}
+      />
+    </>
   );
 }
