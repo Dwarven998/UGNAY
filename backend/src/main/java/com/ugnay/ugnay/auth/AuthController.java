@@ -3,12 +3,16 @@ package com.ugnay.ugnay.auth;
 import com.ugnay.ugnay.core.*;
 import com.ugnay.ugnay.facebook.FacebookOAuthService;
 import lombok.*;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 
 import java.util.Map;
@@ -28,9 +32,54 @@ public class AuthController {
     private final TurnstileService turnstileService;
     private final PasswordResetService passwordResetService;
 
+    @Value("${jwt.expiration:86400000}")
+    private long jwtExpiration;
+
+    @Value("${app.frontend.url:}")
+    private String frontendUrl;
+
+    private void setAuthCookie(HttpServletResponse response, HttpServletRequest request, String token) {
+        boolean isHttps = request.isSecure() 
+            || "https".equalsIgnoreCase(request.getHeader("X-Forwarded-Proto"))
+            || (frontendUrl != null && frontendUrl.startsWith("https"));
+
+        ResponseCookie.ResponseCookieBuilder builder = ResponseCookie.from("ugnay_token", token)
+            .httpOnly(true)
+            .path("/")
+            .maxAge(jwtExpiration / 1000);
+
+        if (isHttps) {
+            builder.secure(true).sameSite("None");
+        } else {
+            builder.secure(false).sameSite("Lax");
+        }
+
+        response.addHeader(HttpHeaders.SET_COOKIE, builder.build().toString());
+    }
+
+    private void clearAuthCookie(HttpServletResponse response, HttpServletRequest request) {
+        boolean isHttps = request.isSecure() 
+            || "https".equalsIgnoreCase(request.getHeader("X-Forwarded-Proto"))
+            || (frontendUrl != null && frontendUrl.startsWith("https"));
+
+        ResponseCookie.ResponseCookieBuilder builder = ResponseCookie.from("ugnay_token", "")
+            .httpOnly(true)
+            .path("/")
+            .maxAge(0);
+
+        if (isHttps) {
+            builder.secure(true).sameSite("None");
+        } else {
+            builder.secure(false).sameSite("Lax");
+        }
+
+        response.addHeader(HttpHeaders.SET_COOKIE, builder.build().toString());
+    }
+
     @PostMapping("/register")
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest req,
-                                      HttpServletRequest httpRequest) {
+                                      HttpServletRequest httpRequest,
+                                      HttpServletResponse httpResponse) {
         // 1. Turnstile verification — must happen before any business logic
         String clientIp = extractClientIp(httpRequest);
         if (!turnstileService.verify(req.turnstileToken(), clientIp)) {
@@ -61,12 +110,14 @@ public class AuthController {
             .build();
         userRepository.save(user);
         String token = jwtUtil.generateToken(user.getEmail(), user.getId().toString());
+        setAuthCookie(httpResponse, httpRequest, token);
         return ResponseEntity.ok(new AuthResponse(token, user.getId(), user.getOrgName()));
     }
 
     @PostMapping("/login")
     public ResponseEntity<?> login(@Valid @RequestBody LoginRequest req,
-                                   HttpServletRequest httpRequest) {
+                                   HttpServletRequest httpRequest,
+                                   HttpServletResponse httpResponse) {
         String email = req.email();
 
         // 1. Turnstile verification — must happen before any business logic
@@ -105,6 +156,7 @@ public class AuthController {
 
         // 5. Issue Token
         String token = jwtUtil.generateToken(user.getEmail(), user.getId().toString());
+        setAuthCookie(httpResponse, httpRequest, token);
         return ResponseEntity.ok(new AuthResponse(token, user.getId(), user.getOrgName()));
     }
 
@@ -113,7 +165,9 @@ public class AuthController {
      * replies with needsOrgName so the client can ask for an organization name and call again with it.
      */
     @PostMapping("/google")
-    public ResponseEntity<?> google(@Valid @RequestBody GoogleAuthRequest req) {
+    public ResponseEntity<?> google(@Valid @RequestBody GoogleAuthRequest req,
+                                    HttpServletRequest httpRequest,
+                                    HttpServletResponse httpResponse) {
         GoogleAuthService.GoogleIdentity identity;
         try {
             identity = googleAuthService.verify(req.accessToken());
@@ -128,6 +182,7 @@ public class AuthController {
         if (existing.isPresent()) {
             User user = existing.get();
             String token = jwtUtil.generateToken(user.getEmail(), user.getId().toString());
+            setAuthCookie(httpResponse, httpRequest, token);
             return ResponseEntity.ok(new GoogleAuthResponse(token, user.getId(), user.getOrgName(), false, false, user.getEmail()));
         }
 
@@ -152,7 +207,14 @@ public class AuthController {
             .build();
         userRepository.save(user);
         String token = jwtUtil.generateToken(user.getEmail(), user.getId().toString());
+        setAuthCookie(httpResponse, httpRequest, token);
         return ResponseEntity.ok(new GoogleAuthResponse(token, user.getId(), user.getOrgName(), false, true, user.getEmail()));
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(HttpServletRequest httpRequest, HttpServletResponse httpResponse) {
+        clearAuthCookie(httpResponse, httpRequest);
+        return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
     }
 
     private String extractClientIp(HttpServletRequest request) {

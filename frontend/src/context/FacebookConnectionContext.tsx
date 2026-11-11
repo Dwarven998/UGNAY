@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import axiosClient from '../api/axiosClient';
 import { useAuth } from './useAuth';
 import { useOrganization } from './useOrganization';
+import { secureStorage } from '../utils/secureStorage';
 
 export interface FacebookConnectionState {
   connected: boolean;
@@ -46,13 +47,14 @@ interface OrgConnection { orgId: string; state: FacebookConnectionState }
  * The last status seen for each organization is remembered, so on a reload the screens can start loading
  * that Page's data at once instead of waiting for the status request first. The status is still refreshed
  * every time, and a changed Page changes the scopeKey, which makes every screen reload for the new Page.
+ *
+ * Stored with anti-tamper signature via secureStorage.
  */
 const STATUS_CACHE_KEY = 'ugnay_fb_status_cache';
 
 function readStatusCache(orgId: string): FacebookConnectionState | null {
   try {
-    const raw = localStorage.getItem(STATUS_CACHE_KEY);
-    const all = raw ? (JSON.parse(raw) as Record<string, FacebookConnectionState>) : null;
+    const all = secureStorage.getItem<Record<string, FacebookConnectionState>>(STATUS_CACHE_KEY);
     const state = all?.[orgId];
     return state && typeof state.connected === 'boolean' ? state : null;
   } catch {
@@ -62,10 +64,9 @@ function readStatusCache(orgId: string): FacebookConnectionState | null {
 
 function writeStatusCache(orgId: string, state: FacebookConnectionState) {
   try {
-    const raw = localStorage.getItem(STATUS_CACHE_KEY);
-    const all = raw ? (JSON.parse(raw) as Record<string, FacebookConnectionState>) : {};
+    const all = secureStorage.getItem<Record<string, FacebookConnectionState>>(STATUS_CACHE_KEY) ?? {};
     all[orgId] = state;
-    localStorage.setItem(STATUS_CACHE_KEY, JSON.stringify(all));
+    secureStorage.setItem(STATUS_CACHE_KEY, all);
   } catch {
     // ignore: only a start-up shortcut
   }

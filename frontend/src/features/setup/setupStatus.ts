@@ -1,9 +1,11 @@
+import { secureStorage } from '../../utils/secureStorage';
+
 /** Whether this user has finished (or skipped) first-time setup on this browser. */
 const keyFor = (userId: string) => `ugnay_setup_done_${userId}`;
 
 export function isSetupDone(userId: string): boolean {
   try {
-    return localStorage.getItem(keyFor(userId)) === 'true';
+    return secureStorage.getItem<boolean>(keyFor(userId)) === true;
   } catch {
     return true; // No storage — never trap the user in setup.
   }
@@ -11,7 +13,7 @@ export function isSetupDone(userId: string): boolean {
 
 export function markSetupDone(userId: string) {
   try {
-    localStorage.setItem(keyFor(userId), 'true');
+    secureStorage.setItem(keyFor(userId), true);
   } catch {
     // ignore
   }

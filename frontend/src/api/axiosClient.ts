@@ -1,3 +1,5 @@
+import { secureStorage } from '../utils/secureStorage';
+
 type ApiResponse<T> = { data: T };
 
 const baseUrl = (
@@ -24,12 +26,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse
   if (!(init?.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
+  // If legacy token exists, attach it as Bearer; otherwise HttpOnly cookie handles auth
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const formattedPath = path.startsWith('/') ? path : `/${path}`;
-  const res = await fetch(`${baseUrl}${formattedPath}`, { ...init, headers });
-  if (res.status === 401 && !formattedPath.endsWith('/api/auth/login')) {
-    localStorage.removeItem('ugnay_token');
-    if (window.location.pathname !== '/login') {
+  const res = await fetch(`${baseUrl}${formattedPath}`, {
+    ...init,
+    headers,
+    credentials: 'include', // Send and receive HttpOnly session cookies
+  });
+
+  if (res.status === 401 && !formattedPath.endsWith('/api/auth/login') && !formattedPath.endsWith('/api/auth/me')) {
+    secureStorage.purgeSensitiveKeys();
+    const publicPaths = ['/login', '/register', '/forgot-password', '/reset-password'];
+    if (!publicPaths.includes(window.location.pathname)) {
       window.location.href = '/login';
     }
   }

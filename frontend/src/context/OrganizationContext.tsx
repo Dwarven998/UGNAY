@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import { useAuth } from '../context/useAuth';
 import { organizationApi } from '../features/organizations/api/organizationApi';
+import { secureStorage } from '../utils/secureStorage';
 import type { MyMembership } from '../types';
 
 interface OrganizationContextType {
@@ -26,45 +27,29 @@ const MEMBERSHIPS_CACHE_KEY = 'ugnay_memberships_cache';
  * The last membership list is remembered per user, so a reload can pick the active workspace (and start
  * loading its data) right away instead of waiting for the list first. It is refreshed on every load, and the
  * server checks membership on every request regardless.
+ *
+ * Stored with anti-tamper signature via secureStorage.
  */
 function readCachedMemberships(userId: string | null): MyMembership[] | null {
   if (!userId) return null;
-  try {
-    const raw = localStorage.getItem(MEMBERSHIPS_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { userId?: string; items?: MyMembership[] };
-    return parsed.userId === userId && Array.isArray(parsed.items) ? parsed.items : null;
-  } catch {
-    return null;
-  }
+  const parsed = secureStorage.getItem<{ userId?: string; items?: MyMembership[] }>(MEMBERSHIPS_CACHE_KEY);
+  return parsed?.userId === userId && Array.isArray(parsed.items) ? parsed.items : null;
 }
 
 function writeCachedMemberships(userId: string, items: MyMembership[]) {
-  try {
-    localStorage.setItem(MEMBERSHIPS_CACHE_KEY, JSON.stringify({ userId, items }));
-  } catch {
-    // ignore: only a start-up shortcut
-  }
-}
-
-function storedUserId() {
-  try {
-    return localStorage.getItem('ugnay_userId');
-  } catch {
-    return null;
-  }
+  secureStorage.setItem(MEMBERSHIPS_CACHE_KEY, { userId, items });
 }
 
 export function OrganizationProvider({ children }: Readonly<{ children: ReactNode }>) {
   const { user, isLoading: authLoading } = useAuth();
   const userId = user?.userId ?? null;
-  const [memberships, setMemberships] = useState<MyMembership[]>(() => readCachedMemberships(storedUserId()) ?? []);
-  const [activeOrgId, setActiveOrgIdState] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY));
-  const [loading, setLoading] = useState(() => readCachedMemberships(storedUserId()) === null);
+  const [memberships, setMemberships] = useState<MyMembership[]>(() => readCachedMemberships(userId) ?? []);
+  const [activeOrgId, setActiveOrgIdState] = useState<string | null>(() => secureStorage.getItem<string>(STORAGE_KEY));
+  const [loading, setLoading] = useState(() => readCachedMemberships(userId) === null);
   const [loadError, setLoadError] = useState(false);
 
   // A different account (or signing out): start from that account's remembered list, or from nothing.
-  const [listUserId, setListUserId] = useState<string | null>(() => (readCachedMemberships(storedUserId()) ? storedUserId() : null));
+  const [listUserId, setListUserId] = useState<string | null>(() => (readCachedMemberships(userId) ? userId : null));
   if (userId && listUserId !== userId) {
     const cached = readCachedMemberships(userId);
     setListUserId(userId);
@@ -107,15 +92,15 @@ export function OrganizationProvider({ children }: Readonly<{ children: ReactNod
     if (stillApproved) return;
     const first = memberships.find(m => m.status === 'APPROVED');
     setActiveOrgIdState(first ? first.orgId : null);
-    if (first) localStorage.setItem(STORAGE_KEY, first.orgId);
-    else localStorage.removeItem(STORAGE_KEY);
+    if (first) secureStorage.setItem(STORAGE_KEY, first.orgId);
+    else secureStorage.removeItem(STORAGE_KEY);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memberships, loading, authLoading]);
 
   const setActiveOrgId = (orgId: string | null) => {
     setActiveOrgIdState(orgId);
-    if (orgId) localStorage.setItem(STORAGE_KEY, orgId);
-    else localStorage.removeItem(STORAGE_KEY);
+    if (orgId) secureStorage.setItem(STORAGE_KEY, orgId);
+    else secureStorage.removeItem(STORAGE_KEY);
   };
 
   const activeOrg = memberships.find(m => m.orgId === activeOrgId && m.status === 'APPROVED') ?? null;

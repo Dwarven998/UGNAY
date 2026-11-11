@@ -28,18 +28,27 @@ public class JwtFilter extends OncePerRequestFilter {
                                     HttpServletResponse res,
                                     FilterChain chain) throws ServletException, IOException {
 
+        String token = null;
         String header = req.getHeader("Authorization");
         if (header != null && header.startsWith("Bearer ")) {
-            String token = header.substring(7);
-            if (jwtUtil.isValid(token)) {
-                String email = jwtUtil.extractEmail(token);
-                userRepository.findByEmail(email).ifPresent(user -> {
-                    UsernamePasswordAuthenticationToken auth =
-                        new UsernamePasswordAuthenticationToken(user, null, List.of());
-                    auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(req));
-                    SecurityContextHolder.getContext().setAuthentication(auth);
-                });
+            token = header.substring(7);
+        } else if (req.getCookies() != null) {
+            for (jakarta.servlet.http.Cookie cookie : req.getCookies()) {
+                if ("ugnay_token".equals(cookie.getName())) {
+                    token = cookie.getValue();
+                    break;
+                }
             }
+        }
+
+        if (token != null && jwtUtil.isValid(token)) {
+            String email = jwtUtil.extractEmail(token);
+            userRepository.findByEmail(email).ifPresent(user -> {
+                UsernamePasswordAuthenticationToken auth =
+                    new UsernamePasswordAuthenticationToken(user, null, List.of());
+                auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(req));
+                SecurityContextHolder.getContext().setAuthentication(auth);
+            });
         }
         chain.doFilter(req, res);
     }

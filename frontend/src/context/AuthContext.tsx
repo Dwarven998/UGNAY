@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import axiosClient from '../api/axiosClient.ts';
 import { scopedCache } from '../features/posts/postCache';
+import { secureStorage } from '../utils/secureStorage';
 
 import type { OrgProfileFields } from '../types';
 
@@ -58,32 +59,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Install active storage protection and purge legacy sensitive credentials from localStorage
+  useEffect(() => {
+    const cleanup = secureStorage.initStorageProtection();
+    return cleanup;
+  }, []);
+
   const refreshUserProfile = async () => {
-    const token = localStorage.getItem('ugnay_token');
-    const userId = localStorage.getItem('ugnay_userId');
-    const orgName = localStorage.getItem('ugnay_orgName');
-
-    if (!token || !userId || !orgName) {
-      setUser(null);
-      setIsLoading(false);
-      return;
-    }
-
-    const baseUser: AuthUser = {
-      token,
-      userId,
-      orgName,
-      facebookConnected: false,
-      facebookPageId: null,
-      facebookPageName: null,
-      facebookPagePictureUrl: null,
-    };
-
     try {
       const { data } = await axiosClient.get<CurrentUserProfile>('/api/auth/me');
-      setUser({ ...baseUser, ...data, token });
+      if (data && data.userId) {
+        setUser({
+          ...data,
+          token: '', // Session is managed via HttpOnly cookie
+        });
+      } else {
+        setUser(null);
+      }
     } catch {
-      setUser(baseUser);
+      setUser(null);
     } finally {
       setIsLoading(false);
     }
@@ -95,10 +89,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string, turnstileToken: string) => {
     try {
-      const { data } = await axiosClient.post<AuthUser>('/api/auth/login', { email, password, turnstileToken });
-      localStorage.setItem('ugnay_token', data.token);
-      localStorage.setItem('ugnay_userId', data.userId);
-      localStorage.setItem('ugnay_orgName', data.orgName);
+      await axiosClient.post<AuthUser>('/api/auth/login', { email, password, turnstileToken });
+      secureStorage.purgeSensitiveKeys();
       await refreshUserProfile();
     } catch (error) {
       throw error;
@@ -113,16 +105,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     profile?: Partial<OrgProfileFields>
   ) => {
     try {
-      const { data } = await axiosClient.post<AuthUser>('/api/auth/register', {
+      await axiosClient.post<AuthUser>('/api/auth/register', {
         email,
         password,
         orgName,
         turnstileToken,
         ...profile,
       });
-      localStorage.setItem('ugnay_token', data.token);
-      localStorage.setItem('ugnay_userId', data.userId);
-      localStorage.setItem('ugnay_orgName', data.orgName);
+      secureStorage.purgeSensitiveKeys();
       await refreshUserProfile();
     } catch (error) {
       throw error;
@@ -139,10 +129,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       orgName,
       ...profile,
     });
-    if (data.token && data.userId && data.orgName) {
-      localStorage.setItem('ugnay_token', data.token);
-      localStorage.setItem('ugnay_userId', data.userId);
-      localStorage.setItem('ugnay_orgName', data.orgName);
+    secureStorage.purgeSensitiveKeys();
+    if (data.userId && data.orgName) {
       await refreshUserProfile();
     }
     return { needsOrgName: data.needsOrgName, newAccount: data.newAccount, email: data.email };
@@ -154,7 +142,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
-    localStorage.clear();
+    void axiosClient.post('/api/auth/logout').catch(() => { /* ignore */ });
+    secureStorage.clear();
     scopedCache.clear();
     setUser(null);
   };
