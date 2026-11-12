@@ -44,10 +44,18 @@ public class FacebookOAuthController {
     public ResponseEntity<Void> callback(@RequestParam(required = false) String code,
                                         @RequestParam(required = false) String state) {
         try {
-            facebookOAuthService.completeAuthorization(code, state);
-            URI success = UriComponentsBuilder.fromHttpUrl(frontendUrl)
+            FacebookOAuthService.ConnectionResult result = facebookOAuthService.completeAuthorization(code, state);
+            UriComponentsBuilder successBuilder = UriComponentsBuilder.fromHttpUrl(frontendUrl)
                 .path("/posts")
-                .queryParam("facebook", "connected")
+                .queryParam("facebook", "connected");
+            // Names only (no IDs or tokens), so the app can say "<user> has been connected to <Page>".
+            if (result.details().facebookPageName() != null) {
+                successBuilder.queryParam("page", result.details().facebookPageName());
+            }
+            if (result.facebookUserName() != null) {
+                successBuilder.queryParam("fbUser", result.facebookUserName());
+            }
+            URI success = successBuilder
                 .build()
                 .encode()
                 .toUri();

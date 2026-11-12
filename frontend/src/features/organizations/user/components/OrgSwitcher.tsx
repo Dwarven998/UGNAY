@@ -2,10 +2,14 @@ import { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../../../context/useAuth';
 import { useOrganization } from '../../../../context/useOrganization';
+import { readStatusCache } from '../../../../context/facebookStatusCache';
+import PageAvatar from '../../../../components/ui/PageAvatar';
+import { useFacebookConnection } from '../../../posts/hooks/useFacebookConnection';
 
 export default function OrgSwitcher() {
   const { user } = useAuth();
   const { memberships, activeOrgId, activeOrg, setActiveOrgId } = useOrganization();
+  const facebook = useFacebookConnection();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -20,11 +24,24 @@ export default function OrgSwitcher() {
   const approved = memberships.filter(m => m.status === 'APPROVED');
   const currentName = activeOrg ? activeOrg.orgName : (user?.orgName || 'Personal Workspace');
   const currentRole = activeOrg ? activeOrg.role : 'Personal';
+  const personalName = user?.orgName || 'Personal Workspace';
+
+  // Each workspace shows the logo of its connected Facebook Page: live for the active one, otherwise the
+  // last status remembered for that organization (the letter avatar stays when no Page is connected).
+  const activePicture = facebook.connected ? facebook.pagePictureUrl : null;
+  const personalPicture = !activeOrgId
+    ? activePicture
+    : (user?.facebookConnected ? user.facebookPagePictureUrl ?? null : null);
+  const orgPicture = (orgId: string) => {
+    if (orgId === activeOrgId) return activePicture;
+    const cached = readStatusCache(orgId);
+    return cached?.connected ? cached.pagePictureUrl : null;
+  };
 
   return (
     <div className="org-switcher" ref={rootRef}>
       <button type="button" className="org-switcher-trigger" onClick={() => setOpen(v => !v)}>
-        <div className="org-switcher-avatar">{currentName.charAt(0).toUpperCase()}</div>
+        <PageAvatar src={activePicture} name={currentName} className="org-switcher-avatar" />
         <div className="org-switcher-info">
           <span className="org-switcher-name">{currentName}</span>
           <span className="org-switcher-role">{currentRole}</span>
@@ -41,7 +58,10 @@ export default function OrgSwitcher() {
             className={`org-switcher-item ${!activeOrgId ? 'is-active' : ''}`}
             onClick={() => { setActiveOrgId(null); setOpen(false); }}
           >
-            <span>{user?.orgName || 'Personal Workspace'}</span>
+            <span className="org-switcher-item-label">
+              <PageAvatar src={personalPicture} name={personalName} className="org-switcher-item-avatar" />
+              <span className="org-switcher-item-name">{personalName}</span>
+            </span>
             {!activeOrgId && <span className="org-switcher-check">✓</span>}
           </button>
 
@@ -54,7 +74,10 @@ export default function OrgSwitcher() {
               className={`org-switcher-item ${activeOrgId === m.orgId ? 'is-active' : ''}`}
               onClick={() => { setActiveOrgId(m.orgId); setOpen(false); }}
             >
-              <span>{m.orgName}</span>
+              <span className="org-switcher-item-label">
+                <PageAvatar src={orgPicture(m.orgId)} name={m.orgName} className="org-switcher-item-avatar" />
+                <span className="org-switcher-item-name">{m.orgName}</span>
+              </span>
               {activeOrgId === m.orgId && <span className="org-switcher-check">✓</span>}
             </button>
           ))}
@@ -89,6 +112,17 @@ export default function OrgSwitcher() {
           border-radius: 10px;
           display: flex; align-items: center; justify-content: center;
           color: white; font-weight: 700; font-size: 14px; flex-shrink: 0;
+          overflow: hidden;
+        }
+        .org-switcher-item-label { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .org-switcher-item-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .org-switcher-item-avatar {
+          width: 22px; height: 22px;
+          background: linear-gradient(135deg, #0C447C, #3b82f6);
+          border-radius: 6px;
+          display: flex; align-items: center; justify-content: center;
+          color: white; font-weight: 700; font-size: 10px; flex-shrink: 0;
+          overflow: hidden;
         }
         .org-switcher-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
         .org-switcher-name {

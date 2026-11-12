@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import ConfirmDialog from '../../../components/ui/ConfirmDialog';
+import PageAvatar from '../../../components/ui/PageAvatar';
 import { useOrganization } from '../../../context/useOrganization';
 import { useFacebookConnection } from '../hooks/useFacebookConnection';
 import {
@@ -6,43 +8,80 @@ import {
   FacebookOAuthHelpButton,
 } from './FacebookOAuthGuide';
 
-/** Mask a page ID by showing only the last 4 characters. */
-function maskPageId(id: string): string {
-  if (id.length <= 4) return '••••';
-  return '••••' + id.slice(-4);
-}
-
 export default function FacebookPageConnectButton({
   showHelp = true,
 }: Readonly<{
   showHelp?: boolean;
 }>) {
   const { activeOrg } = useOrganization();
-  const { connected, pageId, pageName, pagePictureUrl, isBusy, connect, disconnect } = useFacebookConnection();
+  const { connected, pageName, pagePictureUrl, isBusy, connect, disconnect } = useFacebookConnection();
   const [guideModalOpen, setGuideModalOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectError, setDisconnectError] = useState('');
 
   const scopeLabel = activeOrg ? activeOrg.orgName : 'your personal workspace';
 
+  const closeConfirm = () => {
+    setConfirmOpen(false);
+    setDisconnectError('');
+  };
+
+  const confirmDisconnect = async () => {
+    setDisconnecting(true);
+    setDisconnectError('');
+    try {
+      await disconnect();
+      setConfirmOpen(false);
+    } catch (err) {
+      console.error('Failed to disconnect Facebook Page:', err);
+      setDisconnectError('Could not disconnect the Page. Please try again.');
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
   if (connected) {
-    const displayName = pageName ?? (pageId ? maskPageId(pageId) : 'Facebook Page');
+    const displayName = pageName ?? 'Facebook Page';
 
     return (
-      <div className="upe-fb-connection-card">
-        <div className="upe-fb-connection-meta">
-          {pagePictureUrl ? (
-            <img src={pagePictureUrl} alt={pageName ?? 'Facebook Page'} />
-          ) : (
-            <div className="upe-fb-connection-avatar">FB</div>
-          )}
-          <div>
-            <div className="upe-fb-connection-label">Connected for {scopeLabel}</div>
-            <strong>{displayName}</strong>
+      <>
+        <div className="upe-fb-connection-card">
+          <div className="upe-fb-connection-meta">
+            <PageAvatar src={pagePictureUrl} name={displayName} className="upe-fb-connection-avatar" />
+            <div>
+              <div className="upe-fb-connection-label">Connected for {scopeLabel}</div>
+              <strong>{displayName}</strong>
+            </div>
           </div>
+          <button
+            type="button"
+            className="upe-fb-disconnect-btn"
+            onClick={() => setConfirmOpen(true)}
+            disabled={isBusy || disconnecting}
+          >
+            Disconnect
+          </button>
         </div>
-        <button type="button" className="upe-fb-disconnect-btn" onClick={disconnect} disabled={isBusy}>
-          Disconnect
-        </button>
-      </div>
+
+        <ConfirmDialog
+          open={confirmOpen}
+          tone="danger"
+          title={`Disconnect ${displayName}?`}
+          description={
+            <>
+              Ugnay will no longer be able to publish, schedule, or read insights for this Page in {scopeLabel}.
+              Scheduled posts will not go out until a Page is connected again.
+            </>
+          }
+          confirmLabel="Disconnect"
+          busyLabel="Disconnecting…"
+          busy={disconnecting}
+          error={disconnectError}
+          onConfirm={() => void confirmDisconnect()}
+          onCancel={closeConfirm}
+        />
+      </>
     );
   }
 

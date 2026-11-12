@@ -80,6 +80,13 @@ public class FacebookOAuthService {
     private record CachedPageDetails(FacebookPageDetails details, long fetchedAt) {
     }
 
+    /*
+     * Field expansion for the Page's profile picture. Do not use the "picture{url}" form: WebClient treats a
+     * String URI as a template, so "{url}" was read as a missing template variable and every lookup failed,
+     * which left the UI showing only the masked Page ID and a placeholder "FB" icon.
+     */
+    private static final String PAGE_PICTURE_FIELD = "picture.type(large)";
+
     private final Map<String, CachedPageDetails> pageDetailsCache = new ConcurrentHashMap<>();
 
     /**
@@ -105,7 +112,7 @@ public class FacebookOAuthService {
     }
 
     @Transactional
-    public FacebookConnectionDetails completeAuthorization(String code, String state) {
+    public ConnectionResult completeAuthorization(String code, String state) {
         if (code == null || code.isBlank()) {
             throw new IllegalArgumentException("Missing Facebook authorization code");
         }
@@ -120,6 +127,7 @@ public class FacebookOAuthService {
         UUID orgId = orgIdStr != null ? UUID.fromString(orgIdStr) : null;
 
         FacebookPageAccount pageAccount;
+        String facebookUserName;
         try {
             log.info("Completing Facebook OAuth for user={}, org={}, codePresent={}, statePresent={}", user.getId(),
                     orgId, code != null, state != null);
@@ -130,7 +138,12 @@ public class FacebookOAuthService {
             String longLivedToken = exchangeForLongLivedToken(shortLivedToken);
             log.debug("Exchanged for long-lived token for user={}", user.getId());
 
+            facebookUserName = fetchUserName(longLivedToken);
             pageAccount = fetchPrimaryPage(longLivedToken);
+            // Prime the details cache so the first status check after the redirect already has the name and logo.
+            pageDetailsCache.put(pageAccount.pageId(), new CachedPageDetails(new FacebookPageDetails(
+                    pageAccount.pageId(), pageAccount.pageName(), pageAccount.pagePictureUrl()),
+                    System.currentTimeMillis()));
             log.info("Fetched primary Facebook Page for user={} org={} pageId={}", user.getId(), orgId, pageAccount.pageId());
 
             if (orgId != null) {
@@ -157,12 +170,30 @@ public class FacebookOAuthService {
 
         eventPublisher.publishEvent(new FacebookConnectionChangedEvent(user.getId(), orgId));
 
-        return new FacebookConnectionDetails(
+        return new ConnectionResult(new FacebookConnectionDetails(
                 true,
                 pageAccount.pageId(),
                 pageAccount.pageName(),
                 pageAccount.pagePictureUrl()
-        );
+        ), facebookUserName);
+    }
+
+    /** Name of the Facebook user who approved the connection, shown in the "connected" message. Cosmetic only. */
+    private String fetchUserName(String userAccessToken) {
+        String uri = UriComponentsBuilder.fromHttpUrl(facebookApiUrl)
+                .path("/me")
+                .queryParam("fields", "name")
+                .queryParam("access_token", userAccessToken)
+                .build()
+                .encode()
+                .toUriString();
+        try {
+            Map<String, Object> response = executeGraphGet(uri, PAGE_DETAILS_TIMEOUT, 1, Duration.ofMillis(300));
+            return response != null ? stringValue(response.get("name")) : null;
+        } catch (RuntimeException ex) {
+            log.warn("Could not read the Facebook user's name: {}", ex.getMessage());
+            return null;
+        }
     }
 
     /** Legacy per-user personal connection (used when no organization is active). */
@@ -256,7 +287,7 @@ public class FacebookOAuthService {
     private FacebookPageAccount fetchPrimaryPage(String userAccessToken) {
         String uri = UriComponentsBuilder.fromHttpUrl(facebookApiUrl)
                 .path("/me/accounts")
-                .queryParam("fields", "id,name,access_token")
+                .queryParam("fields", "id,name,access_token," + PAGE_PICTURE_FIELD)
                 .queryParam("access_token", userAccessToken)
                 .build()
                 .encode()
@@ -274,9 +305,10 @@ public class FacebookOAuthService {
     private FacebookPageDetails fetchPageDetails(String pageId, String accessToken) {
         String uri = UriComponentsBuilder.fromHttpUrl(facebookApiUrl)
                 .pathSegment(pageId)
-                .queryParam("fields", "id,name,picture{url}")
+                .queryParam("fields", "id,name," + PAGE_PICTURE_FIELD)
                 .queryParam("access_token", accessToken)
-                .build(false) // false = don't re-encode, prevents %7B%7D double-encoding of { }
+                .build()
+                .encode()
                 .toUriString();
 
         // Cosmetic lookup: one quick retry at most, never the long OAuth back-off.
@@ -297,7 +329,7 @@ public class FacebookOAuthService {
                 stringValue(pageData.get("id")),
                 stringValue(pageData.get("name")),
                 stringValue(pageData.get("access_token")),
-                null
+                nestedPictureUrl(pageData.get("picture"))
         );
     }
 
@@ -381,6 +413,10 @@ public class FacebookOAuthService {
             String facebookPagePictureUrl
             ) {
 
+    }
+
+    /** Outcome of a completed OAuth flow: the connected Page plus the Facebook user who approved it. */
+    public record ConnectionResult(FacebookConnectionDetails details, String facebookUserName) {
     }
 
     private record FacebookPageAccount(

@@ -9,6 +9,7 @@ import type { Post, PostConflict } from '../../../types';
 import { SETUP_FACEBOOK_RETURN_KEY } from '../../setup/setupStatus';
 import { postApi, type PostUpsertPayload } from '../api/postApi';
 import { prefillFromPost } from '../composerHandoff';
+import { facebookConnectedMessage } from '../facebookConnectedMessage';
 import FacebookPageConnectButton from '../components/FacebookPageConnectButton';
 import { useFacebookConnection } from '../hooks/useFacebookConnection';
 import PostEditorModal, { type PostEditorDraft } from '../components/PostEditorModal';
@@ -245,6 +246,10 @@ export default function PostManager() {
     if (returnToSetup) {
       const query = new URLSearchParams({ facebook: facebookState });
       if (message) query.set('message', message);
+      for (const key of ['page', 'fbUser']) {
+        const value = searchParams.get(key);
+        if (value) query.set(key, value);
+      }
       navigate(`/setup?${query.toString()}`, { replace: true });
       return;
     }
@@ -254,7 +259,7 @@ export default function PostManager() {
       setError(message || 'Facebook connection failed.');
     } else {
       setError('');
-      setInfo('Facebook Page connected. You can now publish and schedule posts.');
+      setInfo(facebookConnectedMessage(searchParams));
     }
 
     navigate('/posts', { replace: true });

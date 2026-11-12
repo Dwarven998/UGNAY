@@ -32,7 +32,8 @@
 .upe-fb-connection-avatar {
   width: 36px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: 50%;
+  overflow: hidden;
   background: linear-gradient(135deg, #1877f2, #42a5f5);
   display: grid;
   place-items: center;
