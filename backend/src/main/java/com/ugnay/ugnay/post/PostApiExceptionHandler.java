@@ -24,6 +24,12 @@ public class PostApiExceptionHandler {
     // instead of being swallowed by Spring's default "No message available" error body.
     // 423 Locked (not 409) so this doesn't collide with the frontend's scheduling-conflict handling,
     // which specifically expects a PostConflict body on 409.
+    // Missing or out-of-scope posts/organizations: a 404 with a readable message instead of a 500.
+    @ExceptionHandler(java.util.NoSuchElementException.class)
+    public ResponseEntity<Map<String, String>> handleNotFound(java.util.NoSuchElementException exception) {
+        return ResponseEntity.status(404).body(Map.of("message", exception.getMessage()));
+    }
+
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<Map<String, String>> handleIllegalState(IllegalStateException exception) {
         return ResponseEntity.status(423).body(Map.of("message", exception.getMessage()));

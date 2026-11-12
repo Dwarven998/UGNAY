@@ -68,8 +68,10 @@ public class PostSchedulerService {
 
     @Transactional
     public PostController.PostDto updatePost(User user, UUID postId, PostController.CreatePostRequest req) {
+        // The author, or an officer/admin of the post's organization (e.g. adjusting a member's
+        // post from the approval queue), may edit it.
         Post post = postRepository.findDetailedById(postId)
-            .filter(existing -> existing.getUser().getId().equals(user.getId()))
+            .filter(existing -> canManage(user, existing))
             .filter(this::isOnConnectedPage)
             .orElseThrow(() -> new NoSuchElementException("Post not found"));
 
@@ -78,9 +80,28 @@ public class PostSchedulerService {
                 "This post is already scheduled — request an edit appeal for officer/admin approval before changing it.");
         }
 
+        User author = post.getUser();
+        boolean moderatorEdit = !author.getId().equals(user.getId());
+        if (moderatorEdit) {
+            UUID postOrgId = post.getOrganization().getId();
+            if (req.orgId() != null && !req.orgId().equals(postOrgId)) {
+                throw new IllegalStateException("This post belongs to a different organization.");
+            }
+        }
+        boolean wasPendingReview = post.getStatus() == Post.PostStatus.PENDING_REVIEW;
+
         cancelScheduledTask(post.getId());
 
-        applyRequest(post, user, req, post.getId());
+        PostController.CreatePostRequest effectiveReq = moderatorEdit
+            ? new PostController.CreatePostRequest(req.caption(), req.hashtags(), req.tone(),
+                req.mediaAssetId(), req.mediaAssetIds(), req.scheduledAt(), post.getOrganization().getId())
+            : req;
+        applyRequest(post, user, author, effectiveReq, post.getId());
+        // An officer/admin editing a member's pending post doesn't approve it implicitly —
+        // it stays in the approval queue until they press Approve.
+        if (moderatorEdit && wasPendingReview) {
+            post.setStatus(Post.PostStatus.PENDING_REVIEW);
+        }
         // An unlocked edit is one-time: consume it (and any resolved appeal marker) on save.
         post.setEditUnlocked(false);
         post.setAppealType(null);
@@ -242,21 +263,31 @@ public class PostSchedulerService {
 
     private Post buildPost(User user, PostController.CreatePostRequest req, UUID excludePostId) {
         Post post = new Post();
-        applyRequest(post, user, req, excludePostId);
+        applyRequest(post, user, user, req, excludePostId);
         return post;
     }
 
-    private void applyRequest(Post post, User user, PostController.CreatePostRequest req, UUID excludePostId) {
-        Organization organization = resolveOrganization(user, req.orgId());
+    /**
+     * @param actor the user making this change (whose rights decide whether approval is needed)
+     * @param user  the post's author, who stays its owner even when an officer/admin edits it
+     */
+    private void applyRequest(Post post, User actor, User user, PostController.CreatePostRequest req, UUID excludePostId) {
+        Organization organization = resolveOrganization(actor, req.orgId());
         // Org members without officer/admin rights can still create/schedule/caption posts,
         // but those posts stay under officer/creator control until approved.
         boolean requiresApproval = organization != null
-            && !organizationPermissionService.isOfficerOrAdmin(user.getId(), organization.getId());
+            && !organizationPermissionService.isOfficerOrAdmin(actor.getId(), organization.getId());
 
         String pageId = ConnectedPageResolver.pageIdOf(organization, user);
 
         Instant scheduledAt = parseScheduledAt(req.scheduledAt());
         if (scheduledAt != null) {
+            // Only the present or the future can be scheduled (one minute of slack for clock skew
+            // and the time it takes to submit the form).
+            if (scheduledAt.isBefore(Instant.now().minusSeconds(60))) {
+                throw new IllegalStateException(
+                    "You can't schedule a post in the past. Pick a date and time from now onward.");
+            }
             requireFacebookConnection(user, organization);
             conflictDetectionService.findConflict(user, organization, pageId, scheduledAt, excludePostId)
                 .ifPresent(conflict -> { throw new SchedulingConflictException(conflict); });

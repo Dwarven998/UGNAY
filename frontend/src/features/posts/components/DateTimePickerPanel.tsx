@@ -33,6 +33,11 @@ export default function DateTimePickerPanel({
 }: DateTimePickerPanelProps) {
   const [useSuggestedTime, setUseSuggestedTime] = useState(false);
 
+  /* Posts can only be scheduled for the present or the future: past days are greyed out
+     (minDate defaults to today) and, on any day, time slots that have already passed are hidden. */
+  const earliestDay = minDate ?? new Date();
+  const isFutureTime = (time: Date) => time.getTime() >= Date.now() - 60_000;
+
   /* Toggle handler — directly applies or clears the suggested time.
      No useEffect needed, which avoids stale-closure re-fire issues
      that were overriding manual time selections. */
@@ -55,7 +60,8 @@ export default function DateTimePickerPanel({
         }}
         showTimeSelect
         timeIntervals={15}
-        minDate={minDate}
+        minDate={earliestDay}
+        filterTime={isFutureTime}
         dateFormat="MMM d, yyyy h:mm aa"
         placeholderText="Select date and time"
         className={`upe-datepicker${invalid ? ' is-invalid' : ''}`}

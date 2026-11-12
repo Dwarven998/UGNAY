@@ -37,6 +37,9 @@ export interface PostEditorModalProps {
   onClearConflict?: () => void;
 }
 
+const PAST_SCHEDULE_MESSAGE =
+  'You can’t schedule a post in the past. Pick a date and time from now onward.';
+
 function getDefaultSuggestedTime() {
   const next = new Date();
   next.setDate(next.getDate() + 1);
@@ -72,6 +75,7 @@ export default function PostEditorModal({
   const [scheduledAt, setScheduledAt] = useState<Date | null>(suggestedTime);
   const [hashtagInput, setHashtagInput] = useState('');
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [scheduleError, setScheduleError] = useState('');
   const [initialSnapshot, setInitialSnapshot] = useState('');
   const submittingRef = useRef(false);
   const captionRef = useRef<HTMLTextAreaElement>(null);
@@ -135,6 +139,7 @@ export default function PostEditorModal({
     setHashtagInput('');
     setPickerOpen(false);
     setConfirmDiscard(false);
+    setScheduleError('');
     setInitialSnapshot(snapshot(nextCaption, mergedHashtags, nextTone, combined, nextScheduledAt));
   }, [initialDraft, initialPost, open, suggestedTime]);
 
@@ -239,6 +244,10 @@ export default function PostEditorModal({
 
   const submit = async () => {
     if (submittingRef.current || loading) return;
+    if (scheduledAt && scheduledAt.getTime() < Date.now() - 60_000) {
+      setScheduleError(PAST_SCHEDULE_MESSAGE);
+      return;
+    }
     submittingRef.current = true;
     const assetIds = selectedAssets.map(a => a.id).filter(Boolean);
     const urls = selectedAssets.map(a => a.url).filter(Boolean);
@@ -476,10 +485,23 @@ export default function PostEditorModal({
             <DateTimePickerPanel
               inputId={ids.schedule}
               value={scheduledAt}
-              onChange={v => { setScheduledAt(v); onClearConflict?.(); }}
+              onChange={v => {
+                setScheduledAt(v);
+                setScheduleError(v && v.getTime() < Date.now() - 60_000 ? PAST_SCHEDULE_MESSAGE : '');
+                onClearConflict?.();
+              }}
               suggestedValue={suggestedTime}
-              invalid={Boolean(conflict)}
+              invalid={Boolean(conflict) || Boolean(scheduleError)}
+              describedBy={scheduleError ? `${ids.schedule}-error` : undefined}
             />
+            {scheduleError && (
+              <div id={`${ids.schedule}-error`} className="upe-modal-error-banner" role="alert">
+                <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{scheduleError}</span>
+              </div>
+            )}
             {conflict && <ConflictAlertBanner conflict={conflict} />}
           </div>
 
@@ -519,7 +541,7 @@ export default function PostEditorModal({
                 type="button"
                 className="upe-primary-btn"
                 onClick={() => void submit()}
-                disabled={Boolean(conflict) || loading}
+                disabled={Boolean(conflict) || Boolean(scheduleError) || loading}
                 aria-busy={loading || undefined}
               >
                 {loading && <span className="upe-btn-spinner" aria-hidden="true" />}
