@@ -21,13 +21,13 @@ class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
-  const token = localStorage.getItem('ugnay_token');
   const headers: Record<string, string> = { ...((init?.headers as Record<string, string>) || {}) };
   if (!(init?.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
-  // If legacy token exists, attach it as Bearer; otherwise HttpOnly cookie handles auth
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  // Authentication is carried only by the HttpOnly session cookie. A token is never read from browser
+  // storage: one planted there (by injected script or by hand) could otherwise sign requests in as
+  // another account.
   const formattedPath = path.startsWith('/') ? path : `/${path}`;
   const res = await fetch(`${baseUrl}${formattedPath}`, {
     ...init,

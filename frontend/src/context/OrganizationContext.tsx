@@ -40,11 +40,34 @@ function writeCachedMemberships(userId: string, items: MyMembership[]) {
   secureStorage.setItem(MEMBERSHIPS_CACHE_KEY, { userId, items });
 }
 
+/*
+ * The workspace the user last picked, remembered per user (signed, via secureStorage) so a page refresh
+ * keeps them where they were. PERSONAL_CHOICE records an explicit "Personal" pick, so it is not mistaken for
+ * "nothing picked yet" and replaced by the first organization. A stored org id is only used while it is one
+ * of the user's approved memberships, and the server checks membership on every request regardless.
+ */
+const PERSONAL_CHOICE = '__personal__';
+
+// An earlier build kept this choice unsigned directly under STORAGE_KEY; drop that copy.
+try { localStorage.removeItem(STORAGE_KEY); } catch { /* noop */ }
+
+function readStoredChoice(userId: string | null): string | null {
+  if (!userId) return null;
+  const stored = secureStorage.getItem<{ userId?: unknown; choice?: unknown }>(STORAGE_KEY);
+  return stored && stored.userId === userId && typeof stored.choice === 'string' ? stored.choice : null;
+}
+
+function writeStoredChoice(userId: string | null, choice: string | null) {
+  if (userId && choice) secureStorage.setItem(STORAGE_KEY, { userId, choice });
+  else secureStorage.removeItem(STORAGE_KEY);
+}
+
 export function OrganizationProvider({ children }: Readonly<{ children: ReactNode }>) {
   const { user, isLoading: authLoading } = useAuth();
   const userId = user?.userId ?? null;
   const [memberships, setMemberships] = useState<MyMembership[]>(() => readCachedMemberships(userId) ?? []);
-  const [activeOrgId, setActiveOrgIdState] = useState<string | null>(() => secureStorage.getItem<string>(STORAGE_KEY));
+  // The stored pick: an org id, PERSONAL_CHOICE, or null when nothing has been picked yet.
+  const [choice, setChoice] = useState<string | null>(() => readStoredChoice(userId));
   const [loading, setLoading] = useState(() => readCachedMemberships(userId) === null);
   const [loadError, setLoadError] = useState(false);
 
@@ -55,7 +78,11 @@ export function OrganizationProvider({ children }: Readonly<{ children: ReactNod
     setListUserId(userId);
     setMemberships(cached ?? []);
     setLoading(cached === null);
+    setChoice(readStoredChoice(userId));
   }
+
+  const isPersonalChoice = choice === PERSONAL_CHOICE;
+  const activeOrgId = choice && !isPersonalChoice ? choice : null;
 
   const refreshMemberships = useCallback(async () => {
     if (!userId) {
@@ -84,28 +111,34 @@ export function OrganizationProvider({ children }: Readonly<{ children: ReactNod
     void refreshMemberships();
   }, [authLoading, refreshMemberships]);
 
-  // Once memberships are known: keep the stored active org if it's still approved,
-  // otherwise fall back to the first approved membership, otherwise "Personal" mode.
+  // Once memberships are known: keep the stored pick if it is "Personal" or a still-approved org.
+  // Only when nothing was picked (or the picked org is no longer approved) fall back to the first
+  // approved membership, otherwise "Personal" mode.
   useEffect(() => {
     if (loading || authLoading) return;
-    const stillApproved = activeOrgId && memberships.some(m => m.orgId === activeOrgId && m.status === 'APPROVED');
+    if (choice === PERSONAL_CHOICE) return;
+    const stillApproved = choice && memberships.some(m => m.orgId === choice && m.status === 'APPROVED');
     if (stillApproved) return;
     const first = memberships.find(m => m.status === 'APPROVED');
-    setActiveOrgIdState(first ? first.orgId : null);
-    if (first) secureStorage.setItem(STORAGE_KEY, first.orgId);
-    else secureStorage.removeItem(STORAGE_KEY);
+    const next = first ? first.orgId : null;
+    setChoice(next);
+    writeStoredChoice(userId, next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memberships, loading, authLoading]);
 
   const setActiveOrgId = (orgId: string | null) => {
-    setActiveOrgIdState(orgId);
-    if (orgId) secureStorage.setItem(STORAGE_KEY, orgId);
-    else secureStorage.removeItem(STORAGE_KEY);
+    // Choosing "Personal" is remembered explicitly so a refresh does not switch to an organization.
+    const next = orgId ?? PERSONAL_CHOICE;
+    setChoice(next);
+    writeStoredChoice(userId, next);
   };
 
   const activeOrg = memberships.find(m => m.orgId === activeOrgId && m.status === 'APPROVED') ?? null;
-  // Settled once the active org is an approved membership, or "Personal" with no approved membership to pick.
-  const settled = activeOrgId ? activeOrg !== null : !memberships.some(m => m.status === 'APPROVED');
+  // Settled once the active org is an approved membership, or "Personal" was picked,
+  // or "Personal" by default because there is no approved membership to pick.
+  const settled = activeOrgId
+    ? activeOrg !== null
+    : isPersonalChoice || !memberships.some(m => m.status === 'APPROVED');
   const isInitializing = loading || !settled;
 
   return (

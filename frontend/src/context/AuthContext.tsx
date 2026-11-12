@@ -59,9 +59,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Install active storage protection and purge legacy sensitive credentials from localStorage
+  // Install active storage protection and purge legacy sensitive credentials from localStorage.
+  // When another tab signs out, confirm with the server (the HttpOnly session cookie is shared by all tabs)
+  // and sign this tab out too if the session is gone.
   useEffect(() => {
-    const cleanup = secureStorage.initStorageProtection();
+    const cleanup = secureStorage.initStorageProtection({
+      onSignedOutElsewhere: () => {
+        axiosClient.get<CurrentUserProfile>('/api/auth/me')
+          .then(({ data }) => {
+            if (!data?.userId) throw new Error('signed out');
+          })
+          .catch(() => {
+            scopedCache.clear();
+            setUser(null);
+          });
+      },
+    });
     return cleanup;
   }, []);
 
@@ -142,10 +155,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
-    void axiosClient.post('/api/auth/logout').catch(() => { /* ignore */ });
-    secureStorage.clear();
+    // This tab forgets the user at once.
     scopedCache.clear();
+    secureStorage.purgeSensitiveKeys();
     setUser(null);
+    // Storage (and its signing secret) is cleared only after the server has ended the session, because
+    // clearing it is what tells the other open tabs to sign out, and they check the session when told.
+    void axiosClient.post('/api/auth/logout')
+      .catch(() => { /* ignore: the local sign-out still happens */ })
+      .finally(() => secureStorage.clear());
   };
 
   return (
