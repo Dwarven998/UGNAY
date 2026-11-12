@@ -53,6 +53,22 @@ public class SupabaseStorageService {
             .subscribe();
     }
 
+    /**
+     * True when {@code fileUrl} is a public object of this project's bucket whose path starts with
+     * {@code pathPrefix} (e.g. "caption-studio/"). Used to accept only files the app itself uploaded.
+     */
+    public boolean isOwnPublicObject(String fileUrl, String pathPrefix) {
+        if (fileUrl == null || storageUrl == null || storageUrl.isBlank()) {
+            return false;
+        }
+        String base = storageUrl.replaceAll("/+$", "") + "/storage/v1/object/public/" + bucket + "/";
+        if (!fileUrl.startsWith(base)) {
+            return false;
+        }
+        String path = fileUrl.substring(base.length());
+        return path.startsWith(pathPrefix) && path.length() > pathPrefix.length() && !path.contains("..");
+    }
+
     private String extractObjectPath(String fileUrl) {
         if (fileUrl == null) {
             return null;

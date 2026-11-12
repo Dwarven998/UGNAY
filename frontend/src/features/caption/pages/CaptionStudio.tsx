@@ -1,24 +1,170 @@
 // features/caption/pages/CaptionStudio.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { ChangeEvent, DragEvent, KeyboardEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { uploadToSupabase } from '../../../api/supabaseClient';
+import { ACCEPTED_UPLOAD_TYPES, formatBytes } from '../../media/components/assetView';
+
+/** The AI assistant rejects videos above this size, so stop them here instead of after the upload. */
+const MAX_VIDEO_BYTES = 15 * 1024 * 1024;
+
+type Status = 'idle' | 'uploading' | 'ready' | 'error';
+
+interface PickedMedia {
+  name: string;
+  size: number | null;
+  isVideo: boolean;
+  /** Local object URL (instant preview) or, when returning from step 2, the stored file's URL. */
+  previewUrl: string;
+}
+
+/** Dropped files go straight to storage (not into a repository folder) so step 2 has a URL the AI can read. */
+const storagePath = (file: File) =>
+  `caption-studio/${Date.now()}_${file.name.replace(/[^\w.-]+/g, '_')}`;
+
+function mediaFromUrl(url: string): PickedMedia {
+  const rawName = url.split('?')[0].split('/').pop() ?? '';
+  let name = rawName;
+  try { name = decodeURIComponent(rawName); } catch { /* keep the raw name */ }
+  return {
+    name: name.replace(/^\d+_/, '') || 'Selected media',
+    size: null,
+    isVideo: url.toLowerCase().includes('.mp4'),
+    previewUrl: url,
+  };
+}
 
 export default function CaptionStudio() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [imageUrl, setImageUrl] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
+  const uploadToken = useRef(0);
+  const dragDepth = useRef(0);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
 
-  useEffect(() => {
-    const urlFromQuery = searchParams.get('imageUrl');
-    const urlFromSession = sessionStorage.getItem('caption_image_url');
-    setImageUrl(urlFromQuery ?? urlFromSession ?? '');
-  }, [searchParams]);
+  // Coming back from step 2 ("Back"), the already-uploaded file is passed along so the user keeps it.
+  const [returnedUrl] = useState(() => searchParams.get('imageUrl') ?? '');
+  const [media, setMedia] = useState<PickedMedia | null>(() => (returnedUrl ? mediaFromUrl(returnedUrl) : null));
+  const [mediaUrl, setMediaUrl] = useState(returnedUrl);
+  const [status, setStatus] = useState<Status>(returnedUrl ? 'ready' : 'idle');
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState('');
+  const [dragging, setDragging] = useState(false);
+
+  // Release the local preview when it's replaced or the page unmounts.
+  const previewUrl = media?.previewUrl;
+  useEffect(() => () => {
+    if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  // Ignore any upload that finishes after leaving the page.
+  useEffect(() => () => { uploadToken.current += 1; }, []);
+
+  const upload = async (file: File) => {
+    const token = ++uploadToken.current;
+    setPendingFile(file);
+    setStatus('uploading');
+    setProgress(0);
+    setError('');
+    setMediaUrl('');
+    try {
+      const url = await uploadToSupabase(file, storagePath(file), fraction => {
+        if (token === uploadToken.current) setProgress(Math.round(fraction * 100));
+      });
+      if (token !== uploadToken.current) return; // replaced or removed meanwhile
+      if (url.startsWith('blob:')) {
+        // supabaseClient falls back to a browser-only link when storage isn't configured; the AI and Facebook can't use it.
+        throw new Error('File storage is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are empty), so this file can’t be used for captions or posts.');
+      }
+      setMediaUrl(url);
+      setStatus('ready');
+      setPendingFile(null);
+    } catch (err) {
+      if (token !== uploadToken.current) return;
+      setStatus('error');
+      setError(err instanceof Error && err.message ? err.message : 'Upload failed. Check your connection and try again.');
+    }
+  };
+
+  const acceptFiles = (files: File[]) => {
+    if (files.length === 0) return;
+    const file = files[0];
+    if (!ACCEPTED_UPLOAD_TYPES.includes(file.type)) {
+      setError(`"${file.name}" isn't supported. Use a PNG, JPG, WebP or MP4 file.`);
+      return;
+    }
+    if (file.type === 'video/mp4' && file.size > MAX_VIDEO_BYTES) {
+      setError(`"${file.name}" is ${formatBytes(file.size)}. Videos must be under 15 MB for AI captions.`);
+      return;
+    }
+    setMedia({ name: file.name, size: file.size, isVideo: file.type === 'video/mp4', previewUrl: URL.createObjectURL(file) });
+    void upload(file);
+    if (files.length > 1) setError(`Caption Studio captions one file at a time, so only "${file.name}" was added.`);
+  };
+
+  const removeMedia = () => {
+    uploadToken.current += 1;
+    setPendingFile(null);
+    setMedia(null);
+    setMediaUrl('');
+    setStatus('idle');
+    setProgress(0);
+    setError('');
+  };
+
+  const openPicker = () => fileRef.current?.click();
+
+  const handleFilePick = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    acceptFiles(files);
+  };
+
+  // ── Drag and drop ──
+  const isFileDrag = (e: DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
+  const onDragEnter = (e: DragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setDragging(true);
+  };
+  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+  const onDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(e)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  };
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    acceptFiles(Array.from(e.dataTransfer.files));
+  };
+  const onZoneKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker(); }
+  };
 
   const handleContinue = () => {
-    const nextImageUrl = imageUrl.trim();
-    if (!nextImageUrl) return;
+    if (status !== 'ready' || !mediaUrl) return;
+    // Single-file flow: clear any multi-select or repository asset left over from an earlier visit.
+    sessionStorage.removeItem('caption_image_urls');
+    sessionStorage.removeItem('caption_asset_ids');
+    sessionStorage.removeItem('caption_asset_id');
+    sessionStorage.setItem('caption_image_url', mediaUrl);
+    navigate(`/caption/select-tone?imageUrl=${encodeURIComponent(mediaUrl)}`);
+  };
 
-    sessionStorage.setItem('caption_image_url', nextImageUrl);
-    navigate(`/caption/select-tone?imageUrl=${encodeURIComponent(nextImageUrl)}`);
+  const emptyZoneProps = media ? {} : {
+    role: 'button',
+    tabIndex: 0,
+    'aria-label': 'Upload media: drop a file here or press Enter to browse',
+    onClick: openPicker,
+    onKeyDown: onZoneKeyDown,
   };
 
   return (
@@ -46,60 +192,93 @@ export default function CaptionStudio() {
               <div>
                 <h2 className="cs-card-title">Provide Media</h2>
                 <p className="cs-card-desc">
-                  Paste the public URL of an uploaded media asset, or select one from your repository.
+                  Drag and drop a photo or video, or select one from your repository.
                 </p>
               </div>
             </div>
           </div>
 
           <div className="cs-card-body">
-            {/* URL input */}
-            <div className="cs-field">
-              <label className="cs-label" htmlFor="cs-media-url">
-                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                </svg>
-                Media URL
-              </label>
-              <div className="cs-input-wrapper">
-                <input
-                  id="cs-media-url"
-                  type="url"
-                  placeholder="https://your-supabase-url/storage/v1/..."
-                  value={imageUrl}
-                  onChange={e => setImageUrl(e.target.value)}
-                  className="cs-input"
-                />
-              </div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept={ACCEPTED_UPLOAD_TYPES.join(',')}
+              onChange={handleFilePick}
+              style={{ display: 'none' }}
+            />
+
+            {/* Drop zone (also the preview once a file is chosen) */}
+            <div
+              className={`cs-dropzone${dragging ? ' cs-dropzone-active' : ''}${media ? ' cs-dropzone-filled' : ''}`}
+              onDragEnter={onDragEnter}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onDrop={onDrop}
+              {...emptyZoneProps}
+            >
+              {media ? (
+                <div className="cs-media">
+                  <div className="cs-preview">
+                    {media.isVideo ? (
+                      <video src={media.previewUrl} controls preload="metadata" className="cs-preview-img" aria-label={media.name}>
+                        <track kind="captions" label="Preview captions" srcLang="en" src="" />
+                      </video>
+                    ) : (
+                      <img src={media.previewUrl} alt={media.name} className="cs-preview-img" />
+                    )}
+                    {dragging && <div className="cs-drop-overlay">Drop to replace</div>}
+                  </div>
+
+                  <div className="cs-media-info">
+                    <p className="cs-media-name" title={media.name}>{media.name}</p>
+                    <p className="cs-media-meta">
+                      {media.isVideo ? 'Video' : 'Image'}
+                      {media.size != null && <> · {formatBytes(media.size)}</>}
+                    </p>
+
+                    {status === 'uploading' && (
+                      <div className="cs-progress">
+                        <div className="cs-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress} aria-label="Upload progress">
+                          <div className="cs-progress-bar" style={{ width: `${progress}%` }} />
+                        </div>
+                        <span className="cs-progress-text">Uploading… {progress}%</span>
+                      </div>
+                    )}
+                    {status === 'ready' && (
+                      <p className="cs-media-status">
+                        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                        Ready for captioning
+                      </p>
+                    )}
+
+                    <div className="cs-media-actions">
+                      {status === 'error' && pendingFile && (
+                        <button type="button" className="cs-btn-link" onClick={() => void upload(pendingFile)}>
+                          Retry upload
+                        </button>
+                      )}
+                      <button type="button" className="cs-btn-link" onClick={openPicker}>Replace</button>
+                      <button type="button" className="cs-btn-link cs-btn-link-danger" onClick={removeMedia}>Remove</button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="cs-drop-empty">
+                  <div className="cs-drop-icon">
+                    <svg width="26" height="26" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                  </div>
+                  <p className="cs-drop-title">{dragging ? 'Drop your file here' : 'Drag and drop your media here'}</p>
+                  <p className="cs-drop-sub">or <span className="cs-drop-browse">browse your files</span></p>
+                  <p className="cs-drop-types">PNG, JPG, WEBP or MP4 · videos up to 15 MB</p>
+                </div>
+              )}
             </div>
 
-            {/* Preview */}
-            {imageUrl ? (
-              <div className="cs-preview">
-                {imageUrl.includes('.mp4') ? (
-                  <video
-                    src={imageUrl}
-                    controls
-                    preload="metadata"
-                    className="cs-preview-img"
-                    style={{ maxHeight: '320px', width: '100%', objectFit: 'contain' }}
-                  />
-                ) : (
-                  <img
-                    src={imageUrl}
-                    alt="preview"
-                    className="cs-preview-img"
-                  />
-                )}
-              </div>
-            ) : (
-              <div className="cs-preview-placeholder">
-                <svg width="32" height="32" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                <span>Media preview will appear here</span>
-              </div>
-            )}
+            {error && <p className="cs-error" role="alert">{error}</p>}
 
             {/* Actions */}
             <div className="cs-actions">
@@ -116,10 +295,10 @@ export default function CaptionStudio() {
               <button
                 type="button"
                 onClick={handleContinue}
-                disabled={!imageUrl.trim()}
+                disabled={status !== 'ready' || !mediaUrl}
                 className="cs-btn-primary"
               >
-                Continue to Step 2
+                {status === 'uploading' ? 'Uploading…' : 'Continue to Step 2'}
                 <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
                 </svg>
@@ -231,48 +410,53 @@ export default function CaptionStudio() {
           padding: 28px;
         }
 
-        /* Input */
-        .cs-field { margin-bottom: 24px; }
-        .cs-label {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          font-size: 12px;
-          font-weight: 600;
-          color: #475569;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-          margin-bottom: 8px;
+        /* Drop zone */
+        .cs-dropzone {
+          border: 2px dashed #cbd5e1;
+          border-radius: 14px;
+          background: #fafbfc;
+          margin-bottom: 24px;
+          transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
         }
-        .cs-input-wrapper { position: relative; }
-        .cs-input {
-          width: 100%;
-          height: 48px;
-          border: 2px solid #e2e8f0;
-          border-radius: 12px;
-          padding: 0 16px;
-          font-size: 14px;
-          color: #0f172a;
-          background: #f8fafc;
-          font-family: inherit;
-          outline: none;
-          transition: all 0.2s;
-        }
-        .cs-input:focus {
-          border-color: #3b82f6;
-          box-shadow: 0 0 0 4px rgba(59,130,246,0.1);
-          background: #ffffff;
-        }
-        .cs-input::placeholder { color: #94a3b8; }
+        .cs-dropzone[role="button"] { cursor: pointer; }
+        .cs-dropzone[role="button"]:hover { border-color: #93c5fd; background: #f5f9ff; }
+        .cs-dropzone:focus-visible { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 4px rgba(59,130,246,0.12); }
+        .cs-dropzone-active { border-color: #3b82f6; background: rgba(59,130,246,0.06); }
+        .cs-dropzone-filled { border-style: solid; border-color: #e2e8f0; background: #ffffff; }
+        .cs-dropzone-filled.cs-dropzone-active { border-style: dashed; border-color: #3b82f6; }
 
-        /* Preview */
+        .cs-drop-empty {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          min-height: 200px;
+          padding: 24px;
+          text-align: center;
+        }
+        .cs-drop-icon {
+          width: 52px; height: 52px;
+          border-radius: 14px;
+          display: flex; align-items: center; justify-content: center;
+          background: rgba(12,68,124,0.06);
+          color: #0C447C;
+          margin-bottom: 6px;
+        }
+        .cs-drop-title { margin: 0; font-size: 15px; font-weight: 700; color: #0f172a; }
+        .cs-drop-sub { margin: 0; font-size: 13px; color: #64748b; }
+        .cs-drop-browse { color: #0C447C; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+        .cs-drop-types { margin: 6px 0 0; font-size: 12px; color: #94a3b8; }
+
+        /* Chosen file */
+        .cs-media { display: flex; align-items: flex-start; gap: 20px; padding: 16px; }
         .cs-preview {
-          display: inline-block;
+          position: relative;
+          flex-shrink: 0;
           padding: 6px;
           background: #f8fafc;
           border: 1px solid #e2e8f0;
           border-radius: 16px;
-          margin-bottom: 24px;
         }
         .cs-preview-img {
           width: 220px;
@@ -281,21 +465,42 @@ export default function CaptionStudio() {
           border-radius: 12px;
           display: block;
         }
-        .cs-preview-placeholder {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 10px;
-          width: 100%;
-          height: 160px;
-          border: 2px dashed #e2e8f0;
-          border-radius: 14px;
-          background: #fafbfc;
-          color: #94a3b8;
+        video.cs-preview-img { object-fit: contain; background: #0f172a; }
+        .cs-drop-overlay {
+          position: absolute; inset: 6px;
+          border-radius: 12px;
+          display: flex; align-items: center; justify-content: center;
+          background: rgba(12,68,124,0.75);
+          color: #fff; font-size: 13px; font-weight: 600;
+          pointer-events: none;
+        }
+        .cs-media-info { min-width: 0; flex: 1; padding-top: 4px; }
+        .cs-media-name {
+          margin: 0 0 2px;
+          font-size: 14px; font-weight: 700; color: #0f172a;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .cs-media-meta { margin: 0 0 14px; font-size: 12px; color: #64748b; }
+        .cs-media-status { display: flex; align-items: center; gap: 6px; margin: 0 0 14px; font-size: 13px; font-weight: 600; color: #15803d; }
+        .cs-progress { margin-bottom: 14px; }
+        .cs-progress-track { height: 6px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+        .cs-progress-bar { height: 100%; background: linear-gradient(90deg, #0C447C, #3b82f6); transition: width 0.2s; }
+        .cs-progress-text { display: block; margin-top: 6px; font-size: 12px; color: #64748b; }
+        .cs-media-actions { display: flex; flex-wrap: wrap; gap: 14px; }
+        .cs-btn-link {
+          padding: 0; border: none; background: none;
+          font: inherit; font-size: 13px; font-weight: 600; color: #0C447C;
+          cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+        }
+        .cs-btn-link-danger { color: #dc2626; }
+        .cs-error {
+          margin: -12px 0 20px;
+          padding: 10px 14px;
+          border-radius: 10px;
+          background: #fef2f2;
+          border: 1px solid #fecaca;
+          color: #b91c1c;
           font-size: 13px;
-          font-weight: 500;
-          margin-bottom: 24px;
         }
 
         /* Actions */
@@ -357,6 +562,8 @@ export default function CaptionStudio() {
           .cs-container { padding: 24px 20px; }
           .cs-actions { flex-direction: column; }
           .cs-btn-secondary, .cs-btn-primary { width: 100%; justify-content: center; }
+          .cs-media { flex-direction: column; align-items: stretch; }
+          .cs-preview-img { width: 100%; height: auto; aspect-ratio: 1; }
         }
       `}</style>
     </>

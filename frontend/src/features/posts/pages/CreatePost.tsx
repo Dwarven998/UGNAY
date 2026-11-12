@@ -30,6 +30,11 @@ const MAX_MEDIA = 10;
 /** Mirrors GeminiClient.MAX_CAPTION_IMAGES — the AI looks at up to this many images at once. */
 const MAX_AI_IMAGES = 6;
 
+/** A file dropped into Caption Studio: uploaded to storage but not yet in the Media Library. */
+function isCaptionStudioFile(item: ComposerMedia) {
+  return !item.id && !!item.url && item.url.includes('/caption-studio/');
+}
+
 type When = 'now' | 'schedule' | 'draft';
 type ResultKind = 'published' | 'scheduled' | 'pending' | 'draft' | 'failed';
 interface Result { kind: ResultKind; post: Post; message?: string }
@@ -130,7 +135,10 @@ export default function CreatePost() {
     document.querySelector('.dash-main')?.scrollTo({ top: 0, behavior: 'smooth' });
   }, [step, result]);
 
-  const attachableMedia = media.filter(item => item.id);
+  /** Media Library files (have an asset id) — the only ones the multi-image AI endpoint can read. */
+  const libraryMedia = media.filter(item => item.id);
+  /** Library files plus Caption Studio drops, which are added to the library when the post is saved. */
+  const attachableMedia = media.filter(item => item.id || isCaptionStudioFile(item));
   const unattachedCount = media.length - attachableMedia.length;
   const imageUrls = media.map(item => item.url).filter(Boolean);
 
@@ -182,7 +190,7 @@ export default function CreatePost() {
   };
 
   /* ── AI assistant ── */
-  const canGenerate = imageUrls.length > 0 && (imageUrls.length === 1 || attachableMedia.length > 1);
+  const canGenerate = imageUrls.length > 0 && (imageUrls.length === 1 || libraryMedia.length > 1);
 
   const runAi = async (busy: AiBusy, action: () => Promise<void>, fallback: string) => {
     setAiBusy(busy);
@@ -199,10 +207,10 @@ export default function CreatePost() {
   /* The AI takes several seconds to answer, so suggestions for the chosen image(s) and tone are requested in the
      background as soon as the Caption step is shown; "Generate" then picks up that request, often already done.
      Requests are keyed by tone + images, so changing either never shows suggestions for something else. */
-  const multiImage = attachableMedia.length > 1;
+  const multiImage = libraryMedia.length > 1;
   const captionRequestKey = `${activeOrgId ?? 'personal'}|${notes.trim()}|${
     multiImage
-      ? `ids:${attachableMedia.slice(0, MAX_AI_IMAGES).map(item => item.id).join(',')}`
+      ? `ids:${libraryMedia.slice(0, MAX_AI_IMAGES).map(item => item.id).join(',')}`
       : `url:${imageUrls[0] ?? ''}`
   }`;
   const captionRequests = useRef(new Map<string, Promise<string[]>>());
@@ -211,7 +219,7 @@ export default function CreatePost() {
     const existing = captionRequests.current.get(key);
     if (existing) return existing;
     const request = multiImage
-      ? mediaApi.generateCaptionFromAssets(attachableMedia.slice(0, MAX_AI_IMAGES).map(item => item.id), forTone, activeOrgId, notes)
+      ? mediaApi.generateCaptionFromAssets(libraryMedia.slice(0, MAX_AI_IMAGES).map(item => item.id), forTone, activeOrgId, notes)
       : captionApi.generate(imageUrls[0], forTone, activeOrgId, notes);
     captionRequests.current.set(key, request);
     request.catch(() => captionRequests.current.delete(key));
@@ -310,17 +318,27 @@ export default function CreatePost() {
     setSubmitError('');
     setConflict(null);
 
-    const ids = attachableMedia.map(item => item.id);
-    const payload: PostUpsertPayload = {
-      caption: caption.trim(),
-      hashtags,
-      tone,
-      mediaAssetId: ids[0],
-      mediaAssetIds: ids.length > 0 ? ids : undefined,
-      scheduledAt: effectiveWhen === 'schedule' && scheduledAt ? scheduledAt.toISOString() : undefined,
-    };
-
     try {
+      // Caption Studio drops are only in storage; add them to the Media Library so the post can reference them.
+      const resolved = await Promise.all(attachableMedia.map(async item => {
+        if (item.id) return item;
+        const asset = await mediaApi.importCaptionStudioFile(item.url, activeOrgId);
+        return { id: asset.id, url: asset.fileUrl };
+      }));
+      if (resolved.some((item, i) => item !== attachableMedia[i])) {
+        // Keep the new ids so a retry (e.g. after a scheduling conflict) doesn't import again.
+        setMedia(prev => prev.map(item => resolved.find(r => r.url === item.url && !item.id) ?? item));
+      }
+      const ids = resolved.map(item => item.id);
+      const payload: PostUpsertPayload = {
+        caption: caption.trim(),
+        hashtags,
+        tone,
+        mediaAssetId: ids[0],
+        mediaAssetIds: ids.length > 0 ? ids : undefined,
+        scheduledAt: effectiveWhen === 'schedule' && scheduledAt ? scheduledAt.toISOString() : undefined,
+      };
+
       const created = await postApi.create(payload, activeOrgId);
       if (effectiveWhen === 'now' && canPublishDirectly && created.status === 'DRAFT') {
         try {
@@ -539,7 +557,7 @@ export default function CreatePost() {
                   {media.map((item, index) => {
                     const isVideoThumb = item.url?.includes('.mp4');
                     return (
-                      <li key={`${item.id || item.url}-${index}`} className={`cp-thumb${item.id ? '' : ' is-unattached'}`}>
+                      <li key={`${item.id || item.url}-${index}`} className={`cp-thumb${item.id || isCaptionStudioFile(item) ? '' : ' is-unattached'}`}>
                         {item.url ? (
                           isVideoThumb ? (
                             <video src={item.url} preload="metadata" muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -795,7 +813,7 @@ export default function CreatePost() {
                 pictureUrl={facebook.pagePictureUrl}
                 caption={caption.trim()}
                 hashtags={hashtags}
-                images={media.filter(item => item.id && item.url).map(item => item.url)}
+                images={attachableMedia.filter(item => item.url).map(item => item.url)}
               />
 
               <div className="cp-review">

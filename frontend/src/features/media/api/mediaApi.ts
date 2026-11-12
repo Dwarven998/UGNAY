@@ -28,6 +28,18 @@ export const mediaApi = {
     }).then((r: ApiResponse<MediaAsset>) => r.data);
   },
 
+  /** Adds a Caption Studio upload to the workspace's "Caption Studio" folder (idempotent per URL). */
+  importCaptionStudioFile: (fileUrl: string, orgId?: string | null) => {
+    let fileName = fileUrl.split('?')[0].split('/').pop() ?? '';
+    try { fileName = decodeURIComponent(fileName); } catch { /* keep as-is */ }
+    fileName = fileName.replace(/^\d+_/, '');
+    const types: Record<string, string> = { mp4: 'video/mp4', png: 'image/png', webp: 'image/webp' };
+    const fileType = types[fileName.split('.').pop()?.toLowerCase() ?? ''] ?? 'image/jpeg';
+    return axiosClient
+      .post<MediaAsset>('/api/media/assets/caption-studio', { orgId: orgId ?? null, fileUrl, fileName, fileType })
+      .then((r: ApiResponse<MediaAsset>) => r.data);
+  },
+
   deleteAsset: (id: string) => axiosClient.delete(`/api/media/assets/${id}`),
 
   /** Deletes what it can; files in use by a post (or not the caller's to delete) come back in `skipped`. */

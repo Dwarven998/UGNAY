@@ -31,8 +31,6 @@ export default function AssetPreview({ assets, index, onNavigate, onClose, onCap
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useDialog<HTMLDivElement>({ open: true, onClose, initialFocusRef: closeRef });
   const [meta, setMeta] = useState<MediaMeta | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const copyTimer = useRef<number | undefined>(undefined);
 
   const hasPrev = index > 0;
   const hasNext = index < assets.length - 1;
@@ -51,22 +49,9 @@ export default function AssetPreview({ assets, index, onNavigate, onClose, onCap
     return () => document.removeEventListener('keydown', onKey);
   }, [index, hasPrev, hasNext, onNavigate, dialogRef]);
 
-  useEffect(() => () => window.clearTimeout(copyTimer.current), []);
-
   if (!asset) return null;
   const isImage = isImageAsset(asset);
   const assetMeta = meta?.id === asset.id ? meta : null;
-
-  const copyUrl = async () => {
-    try {
-      await navigator.clipboard.writeText(asset.fileUrl);
-      setCopiedId(asset.id);
-      window.clearTimeout(copyTimer.current);
-      copyTimer.current = window.setTimeout(() => setCopiedId(null), 1800);
-    } catch {
-      // Clipboard blocked (insecure context / permissions): nothing sensible to show beyond the button staying as-is.
-    }
-  };
 
   const details: [string, string][] = [
     ['Type', typeLabel(asset) || asset.fileType],
@@ -161,20 +146,12 @@ export default function AssetPreview({ assets, index, onNavigate, onClose, onCap
               </svg>
               Use in Post
             </button>
-            <div className="ap-actions-row">
-              <button type="button" className="ap-btn" onClick={() => void copyUrl()}>
-                <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d={copiedId === asset.id ? 'M5 13l4 4L19 7' : 'M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3'} />
-                </svg>
-                <span aria-live="polite">{copiedId === asset.id ? 'Copied!' : 'Copy URL'}</span>
-              </button>
-              <a className="ap-btn" href={downloadHref(asset)} download={asset.fileName} target="_blank" rel="noopener noreferrer">
-                <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Download
-              </a>
-            </div>
+            <a className="ap-btn" href={downloadHref(asset)} download={asset.fileName} target="_blank" rel="noopener noreferrer">
+              <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Download
+            </a>
             <button type="button" className="ap-btn ap-btn-danger" onClick={() => onDelete(asset)}>
               <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />

@@ -555,7 +555,7 @@ function MediaRepositoryContent() {
             <>
               <div className="mr-content-header" style={{ animation: 'fadeUp 0.3s cubic-bezier(0.16,1,0.3,1)' }}>
                 <div className="mr-content-heading">
-                  <h2 className="mr-content-title">{selectedFolder.name}</h2>
+                  <h2 className="mr-content-title" title={selectedFolder.name}>{selectedFolder.name}</h2>
                   <p className="mr-content-subtitle">
                     {assets.length} item{assets.length !== 1 ? 's' : ''}
                     {folderBytes !== null && assets.length > 0 && <> · {formatBytes(folderBytes)}</>}
@@ -1108,9 +1108,10 @@ function MediaRepositoryContent() {
           align-items: flex-start;
           justify-content: space-between;
           margin-bottom: 20px;
-          flex-wrap: wrap;
           gap: 16px;
         }
+        /* Long folder names (up to 100 chars, possibly one unbroken word) must shrink, never push the actions away. */
+        .mr-content-heading { flex: 1; min-width: 0; }
         .mr-content-header-actions {
           display: flex;
           align-items: center;
@@ -1123,6 +1124,13 @@ function MediaRepositoryContent() {
           color: #0f172a;
           margin: 0 0 4px;
           letter-spacing: -0.02em;
+          line-height: 1.25;
+          overflow-wrap: anywhere;
+          display: -webkit-box;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: 2;
+          line-clamp: 2;
+          overflow: hidden;
         }
         .mr-content-subtitle {
           font-size: 13px;
@@ -1275,6 +1283,9 @@ function MediaRepositoryContent() {
           background: rgba(255,255,255,0.88);
           color: #0C447C;
           font-size: 15px;
+          padding: 0 24px;
+          text-align: center;
+          overflow-wrap: anywhere;
         }
         .mr-dropzone {
           width: 100%;

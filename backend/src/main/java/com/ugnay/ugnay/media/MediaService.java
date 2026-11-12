@@ -39,6 +39,9 @@ public class MediaService {
     private static final int MAX_RANK_CANDIDATES = 12;
     private static final int MAX_BULK_DELETE = 200;
     private static final int MAX_FOLDER_NAME = 100;
+    private static final String CAPTION_STUDIO_FOLDER = "Caption Studio";
+    private static final String CAPTION_STUDIO_PREFIX = "caption-studio/";
+    private static final Set<String> CAPTION_STUDIO_TYPES = Set.of("image/jpeg", "image/png", "image/webp", "video/mp4");
     private static final String ASSET_IN_USE_MESSAGE =
         "Used by a draft or scheduled post. Remove it from that post or publish the post first.";
 
@@ -115,6 +118,55 @@ public class MediaService {
             .build();
         assetRepository.save(asset);
         return toAssetDto(asset);
+    }
+
+    /**
+     * Caption Studio uploads straight to storage under {@value #CAPTION_STUDIO_PREFIX}. When such a file is used in
+     * a post it is registered here, in a "Caption Studio" folder of the current workspace and Page. The folder is
+     * created on demand for any approved member (it is a system folder, unlike the officer-only org directories).
+     */
+    @Transactional
+    public MediaController.AssetDto importCaptionStudioFile(User user, MediaController.CaptionStudioImportRequest req) {
+        if (req == null || !supabaseStorageService.isOwnPublicObject(req.fileUrl(), CAPTION_STUDIO_PREFIX)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only files uploaded through Caption Studio can be added.");
+        }
+        String fileType = req.fileType() == null ? "" : req.fileType().trim().toLowerCase();
+        if (!CAPTION_STUDIO_TYPES.contains(fileType)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported file type. Use PNG, JPG, WebP or MP4.");
+        }
+
+        Organization org = null;
+        if (req.orgId() != null) {
+            organizationPermissionService.requireApprovedMember(user.getId(), req.orgId());
+            org = organizationRepository.findById(req.orgId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Organization not found"));
+        }
+        Organization workspace = org;
+        String pageId = ConnectedPageResolver.pageIdOf(workspace, user);
+
+        MediaFolder folder = folderRepository.findInScope(req.orgId(), user, pageId).stream()
+            .filter(f -> CAPTION_STUDIO_FOLDER.equalsIgnoreCase(f.getName()))
+            .findFirst()
+            .orElseGet(() -> folderRepository.save(MediaFolder.builder()
+                .name(CAPTION_STUDIO_FOLDER).user(user).organization(workspace).fbPageId(pageId)
+                .build()));
+
+        MediaAsset asset = assetRepository.findFirstByFolder_IdAndFileUrl(folder.getId(), req.fileUrl())
+            .orElseGet(() -> assetRepository.save(MediaAsset.builder()
+                .user(user).folder(folder)
+                .fileName(fileNameOf(req))
+                .fileUrl(req.fileUrl()).fileType(fileType)
+                .fileSize(req.fileSize() != null && req.fileSize() >= 0 ? req.fileSize() : null)
+                .build()));
+        return toAssetDto(asset);
+    }
+
+    private static String fileNameOf(MediaController.CaptionStudioImportRequest req) {
+        String name = req.fileName() == null ? "" : req.fileName().trim();
+        if (name.isEmpty()) {
+            name = req.fileUrl().substring(req.fileUrl().lastIndexOf('/') + 1).replaceFirst("^\\d+_", "");
+        }
+        return name.length() > 255 ? name.substring(0, 255) : name;
     }
 
     private static MediaController.AssetDto toAssetDto(MediaAsset a) {

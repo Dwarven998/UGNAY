@@ -277,7 +277,7 @@
 }
 .cp-picker-main { display: flex; flex-direction: column; min-width: 0; overflow-y: auto; padding: 12px; }
 .cp-picker-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-.cp-picker-toolbar-title { font-size: 13px; font-weight: 700; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-picker-toolbar-title { min-width: 0; font-size: 13px; font-weight: 700; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cp-picker-upload .cp-picker-toolbar .ug-btn-primary { box-shadow: 0 0 0 4px rgba(12, 68, 124, 0.1); }
 .cp-picker-hint {
   flex: 1;

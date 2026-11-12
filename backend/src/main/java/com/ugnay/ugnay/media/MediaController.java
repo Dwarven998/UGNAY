@@ -71,6 +71,16 @@ public class MediaController {
         return ResponseEntity.ok().body(mediaService.saveAsset(user, req));
     }
 
+    /**
+     * Registers a file dropped into Caption Studio (already uploaded to storage) as a Media Library asset in the
+     * workspace's "Caption Studio" folder, so it can be attached to a post. Idempotent per file URL.
+     */
+    @PostMapping("/assets/caption-studio")
+    public ResponseEntity<AssetDto> importCaptionStudioFile(@AuthenticationPrincipal User user,
+                                                            @RequestBody CaptionStudioImportRequest req) {
+        return ResponseEntity.ok(mediaService.importCaptionStudioFile(user, req));
+    }
+
     @DeleteMapping("/assets/{assetId}")
     public ResponseEntity<Void> deleteAsset(@AuthenticationPrincipal User user,
                                             @PathVariable UUID assetId) {
@@ -109,6 +119,7 @@ public class MediaController {
     public record SkippedAsset(UUID id, String fileName, String reason) {}
     public record BulkDeleteResult(List<UUID> deleted, List<SkippedAsset> skipped) {}
     public record AssetMetaRequest(UUID folderId, String fileName, String fileUrl, String fileType, Long fileSize) {}
+    public record CaptionStudioImportRequest(UUID orgId, String fileName, String fileUrl, String fileType, Long fileSize) {}
     public record CreateFolderRequest(String name, UUID orgId) {}
     public record RecommendRequest(String description) {}
     public record RecommendationDto(UUID id, String fileName, String fileUrl, String fileType, int score, String reason) {}
