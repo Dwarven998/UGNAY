@@ -152,4 +152,61 @@ class FacebookPublishingJobTest {
         verify(mediaService, times(1)).releasePublishedAsset(asset1.getId());
         verify(mediaService, times(1)).releasePublishedAsset(asset2.getId());
     }
+
+    @Test
+    void publishScheduledPost_withVideo_publishesVideoToFacebook() {
+        UUID postId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID orgId = UUID.randomUUID();
+
+        Organization org = Organization.builder()
+            .id(orgId)
+            .fbPageId("page_123")
+            .fbAccessToken("token_xyz")
+            .build();
+
+        User user = User.builder().id(userId).build();
+
+        MediaAsset videoAsset = MediaAsset.builder()
+            .id(UUID.randomUUID())
+            .fileUrl("https://supabase.co/clip.mp4")
+            .fileType("video/mp4")
+            .build();
+        List<MediaAsset> assets = new ArrayList<>(List.of(videoAsset));
+
+        Post post = Post.builder()
+            .id(postId)
+            .user(user)
+            .organization(org)
+            .caption("Watch our highlights video!")
+            .hashtags(new String[]{"#highlights"})
+            .mediaAssets(assets)
+            .mediaAsset(videoAsset)
+            .status(Post.PostStatus.SCHEDULED)
+            .build();
+
+        when(postRepository.findDetailedById(postId)).thenReturn(Optional.of(post));
+        when(postRepository.findById(postId)).thenReturn(Optional.of(post));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(facebookService.publishVideoPost(eq("token_xyz"), eq("page_123"), any(), eq("https://supabase.co/clip.mp4")))
+            .thenReturn("fb_video_888");
+
+        job.publishScheduledPost(postId);
+
+        // Verify FacebookService.publishVideoPost was called
+        verify(facebookService).publishVideoPost(
+            eq("token_xyz"),
+            eq("page_123"),
+            eq("Watch our highlights video!\n\n#highlights"),
+            eq("https://supabase.co/clip.mp4")
+        );
+
+        // Verify post status updated
+        assertEquals(Post.PostStatus.PUBLISHED, post.getStatus());
+        assertEquals("fb_video_888", post.getFbPostId());
+        assertNotNull(post.getPublishedAt());
+
+        // Verify video asset released
+        verify(mediaService, times(1)).releasePublishedAsset(videoAsset.getId());
+    }
 }

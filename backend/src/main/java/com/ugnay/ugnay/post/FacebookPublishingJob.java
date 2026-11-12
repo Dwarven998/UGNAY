@@ -96,36 +96,61 @@ public class FacebookPublishingJob {
             return;
         }
 
-        List<String> imageUrls = new ArrayList<>();
+        List<MediaAsset> allAssets = new ArrayList<>();
         if (post.getMediaAssets() != null && !post.getMediaAssets().isEmpty()) {
             for (MediaAsset asset : post.getMediaAssets()) {
                 if (asset != null && asset.getFileUrl() != null && !asset.getFileUrl().isBlank()) {
-                    imageUrls.add(asset.getFileUrl());
+                    allAssets.add(asset);
                 }
             }
         } else if (post.getMediaAsset() != null
             && post.getMediaAsset().getFileUrl() != null
             && !post.getMediaAsset().getFileUrl().isBlank()) {
-            imageUrls.add(post.getMediaAsset().getFileUrl());
+            allAssets.add(post.getMediaAsset());
         }
 
+        boolean hasVideo = allAssets.stream().anyMatch(a -> a.getFileType() != null && a.getFileType().startsWith("video"));
         String message = buildMessage(post);
 
         try {
+            String facebookPostId;
+            if (hasVideo) {
+                MediaAsset videoAsset = allAssets.stream()
+                    .filter(a -> a.getFileType() != null && a.getFileType().startsWith("video"))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("Video asset missing"));
 
-            log.info(
-                "Publishing UGNAY post {} with {} image(s) to Facebook{}",
-                postId,
-                imageUrls.size(),
-                manualTrigger ? " (manual trigger)" : ""
-            );
+                log.info(
+                    "Publishing UGNAY post {} with video to Facebook{}",
+                    postId,
+                    manualTrigger ? " (manual trigger)" : ""
+                );
 
-            String facebookPostId = facebookService.publishPost(
-                credentials.accessToken(),
-                credentials.pageId(),
-                message,
-                imageUrls
-            );
+                facebookPostId = facebookService.publishVideoPost(
+                    credentials.accessToken(),
+                    credentials.pageId(),
+                    message,
+                    videoAsset.getFileUrl()
+                );
+            } else {
+                List<String> imageUrls = allAssets.stream()
+                    .map(MediaAsset::getFileUrl)
+                    .toList();
+
+                log.info(
+                    "Publishing UGNAY post {} with {} image(s) to Facebook{}",
+                    postId,
+                    imageUrls.size(),
+                    manualTrigger ? " (manual trigger)" : ""
+                );
+
+                facebookPostId = facebookService.publishPost(
+                    credentials.accessToken(),
+                    credentials.pageId(),
+                    message,
+                    imageUrls
+                );
+            }
 
             if (facebookPostId == null || facebookPostId.isBlank()) {
                 throw new IllegalStateException(

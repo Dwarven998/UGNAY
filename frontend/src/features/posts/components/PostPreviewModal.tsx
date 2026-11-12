@@ -111,7 +111,11 @@ export default function PostPreviewModal({
             </div>
           ) : post.mediaUrl ? (
             <div className="upe-preview-media">
-              <img src={post.mediaUrl} alt="Post media" />
+              {post.mediaUrl.includes('.mp4') ? (
+                <video src={post.mediaUrl} controls preload="metadata" style={{ width: '100%', maxHeight: '360px', display: 'block', borderRadius: '8px' }} />
+              ) : (
+                <img src={post.mediaUrl} alt="Post media" />
+              )}
             </div>
           ) : null}
 

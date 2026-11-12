@@ -125,8 +125,10 @@ export const MAX_POST_IMAGES = 6;
 
 /** Why the selection can't go to Caption Studio / Create Post, or null when it can. */
 export function postSelectionProblem(selected: MediaAsset[]): string | null {
-  if (selected.length === 0) return 'Select at least one image.';
-  if (selected.some(a => !isImageAsset(a))) return 'Only images can be captioned or posted — deselect videos first.';
+  if (selected.length === 0) return 'Select at least one image or video.';
+  const videos = selected.filter(isVideoAsset);
+  if (videos.length > 1) return 'Select at most 1 video for a post.';
+  if (videos.length === 1 && selected.length > 1) return 'A post cannot mix videos and images.';
   if (selected.length > MAX_POST_IMAGES) return `Select up to ${MAX_POST_IMAGES} images for one post.`;
   return null;
 }

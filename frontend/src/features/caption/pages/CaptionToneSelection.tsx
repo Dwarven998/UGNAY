@@ -184,15 +184,27 @@ export default function CaptionToneSelection() {
         {/* Step 2: Tone + Generate */}
         <section className="cts-card" style={{ animation: 'fadeUp 0.5s cubic-bezier(0.16,1,0.3,1) 0.05s backwards' }}>
           <div className="cts-card-grid">
-            {/* Image preview */}
+            {/* Image/Video preview */}
             <div className="cts-image-wrap">
               {isMulti ? (
                 <div className="cts-image-strip">
                   {imageUrls.map((url, i) => (
-                    <img key={i} src={url} alt={`Selected media ${i + 1}`} className="cts-image-thumb" />
+                    url.includes('.mp4') ? (
+                      <video key={i} src={url} preload="metadata" muted className="cts-image-thumb" />
+                    ) : (
+                      <img key={i} src={url} alt={`Selected media ${i + 1}`} className="cts-image-thumb" />
+                    )
                   ))}
-                  <span className="cts-image-count">{imageUrls.length} images, one caption</span>
+                  <span className="cts-image-count">{imageUrls.length} items, one caption</span>
                 </div>
+              ) : imageUrls[0]?.includes('.mp4') ? (
+                <video
+                  src={imageUrls[0]}
+                  controls
+                  preload="metadata"
+                  className="cts-image"
+                  style={{ maxHeight: '320px', width: '100%', objectFit: 'contain' }}
+                />
               ) : (
                 <img src={imageUrls[0]} alt="Selected media preview" className="cts-image" />
               )}

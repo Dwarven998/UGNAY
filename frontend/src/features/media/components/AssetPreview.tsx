@@ -155,14 +155,12 @@ export default function AssetPreview({ assets, index, onNavigate, onClose, onCap
               </svg>
               Caption Studio
             </button>
-            {isImage && (
-              <button type="button" className="ap-btn ap-btn-primary-outline" onClick={() => onUseInPost(asset)}>
-                <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                Use in Post
-              </button>
-            )}
+            <button type="button" className="ap-btn ap-btn-primary-outline" onClick={() => onUseInPost(asset)}>
+              <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Use in Post
+            </button>
             <div className="ap-actions-row">
               <button type="button" className="ap-btn" onClick={() => void copyUrl()}>
                 <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">

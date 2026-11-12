@@ -167,10 +167,16 @@ public class GeminiClient {
 
     // ───────────────────────── public API ─────────────────────────
 
+    private boolean isVideo(String url) {
+        if (url == null) return false;
+        String lower = url.toLowerCase(Locale.ROOT);
+        return lower.contains(".mp4") || lower.contains("video/mp4");
+    }
+
     /**
-     * Step 1: Look first (factual image analysis).
+     * Step 1: Look first (factual image or video analysis).
      * Extracts scene, setting, visible people, activities, and verbatim visible text/dates/venues via OCR.
-     * Cached by image hash/URL for 30 minutes to make rewrites, hashtags, and tone switches instant.
+     * Cached by media hash/URL for 30 minutes to make rewrites, hashtags, and tone switches instant.
      */
     public String describeImage(String imageUrl, OrgAiProfile profile) {
         String key = cacheKey(imageUrl);
@@ -179,9 +185,10 @@ public class GeminiClient {
             return cached.value;
         }
 
+        boolean video = isVideo(imageUrl);
         List<Map<String, Object>> parts = new ArrayList<>();
-        parts.add(imagePart(imageUrl)); // Image FIRST
-        parts.add(Map.of("text", buildDescribePrompt(profile)));
+        parts.add(imagePart(imageUrl)); // Media FIRST
+        parts.add(Map.of("text", video ? buildVideoDescribePrompt(profile) : buildDescribePrompt(profile)));
 
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("temperature", 0.2);
@@ -191,7 +198,7 @@ public class GeminiClient {
         config.put("thinkingConfig", Map.of("thinkingLevel", "low"));
 
         try {
-            Map<String, Object> response = generate(parts, config, Duration.ofSeconds(25));
+            Map<String, Object> response = generate(parts, config, Duration.ofSeconds(video ? 35 : 25));
             String text = extractText(response);
             if (text != null && !text.isBlank()) {
                 String cleaned = cleanJson(text);
@@ -199,7 +206,7 @@ public class GeminiClient {
                 return cleaned;
             }
         } catch (Exception e) {
-            log.warn("Step 1 image describe failed, proceeding to direct write: {}", e.getMessage());
+            log.warn("Step 1 media describe failed, proceeding to direct write: {}", e.getMessage());
         }
         return null;
     }
@@ -247,19 +254,22 @@ public class GeminiClient {
     }
 
     /**
-     * Generates 3 caption options grounded primarily in the image (70-80%), framed by the organization
+     * Generates 3 caption options grounded primarily in the image or video (70-80%), framed by the organization
      * profile (20-30%), with high priority given to optional poster notes.
      */
     public List<String> generateCaptions(String imageUrl, String tone, OrgAiProfile profile, String notes) {
-        // Step 1: Look first (factual image analysis)
+        boolean video = isVideo(imageUrl);
+        // Step 1: Look first (factual image or video analysis)
         String analysisJson = describeImage(imageUrl, profile);
 
         // Step 2: Write captions
         List<Map<String, Object>> parts = new ArrayList<>();
-        parts.add(imagePart(imageUrl)); // Image FIRST
-        parts.add(Map.of("text", buildCaptionPrompt(tone, profile, notes, analysisJson)));
+        parts.add(imagePart(imageUrl)); // Media FIRST
+        parts.add(Map.of("text", video
+            ? buildVideoCaptionPrompt(tone, profile, notes, analysisJson)
+            : buildCaptionPrompt(tone, profile, notes, analysisJson)));
 
-        return generateStringList(parts, 0.65, 1024, Duration.ofSeconds(20));
+        return generateStringList(parts, 0.65, 1024, Duration.ofSeconds(video ? 35 : 20));
     }
 
     public List<String> generateCaptions(String imageUrl, String tone, String orgName) {
@@ -645,9 +655,13 @@ public class GeminiClient {
 
     /**
      * Downscales to at most {@code maxEdge}px on the long edge as JPEG.
+     * Leaves MP4 videos untouched.
      */
     private ModelImage shrinkForModel(byte[] bytes, String mimeType, int maxEdge) {
         try {
+            if ("video/mp4".equals(mimeType)) {
+                return new ModelImage(mimeType, bytes);
+            }
             BufferedImage source = ImageIO.read(new ByteArrayInputStream(bytes));
             if (source == null) return new ModelImage(mimeType, bytes);
             int width = source.getWidth();
@@ -724,16 +738,22 @@ public class GeminiClient {
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
                     .retrieve()
                     .bodyToMono(byte[].class)
-                    .block(Duration.ofSeconds(25));
+                    .block(Duration.ofSeconds(45));
 
                 if (bytes == null || bytes.length == 0) {
-                    throw new IllegalStateException("Downloaded image is empty");
+                    throw new IllegalStateException("Downloaded media is empty");
+                }
+                if (bytes.length > 15 * 1024 * 1024 && "video/mp4".equals(getMimeType(imageUrl))) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "This video is larger than 15MB. Please choose a video under 15MB for AI caption generation.");
                 }
                 return bytes;
             } catch (WebClientResponseException e) {
                 // 4xx means the file is gone or not public; asking again will not change that.
                 lastError = e;
                 if (e.getStatusCode().is4xxClientError()) break;
+            } catch (ResponseStatusException e) {
+                throw e;
             } catch (Exception e) {
                 lastError = e;
             }
@@ -742,7 +762,7 @@ public class GeminiClient {
             if (attempt < DOWNLOAD_ATTEMPTS) sleepQuietly(400L * attempt);
         }
         throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
-            "Couldn't load the image for the AI assistant. Please try again in a moment.", lastError);
+            "Couldn't load the media for the AI assistant. Please try again in a moment.", lastError);
     }
 
     private String getMimeType(String imageUrl) {
@@ -750,6 +770,7 @@ public class GeminiClient {
         if (lower.contains(".png")) return "image/png";
         if (lower.contains(".webp")) return "image/webp";
         if (lower.contains(".gif")) return "image/gif";
+        if (lower.contains(".mp4")) return "video/mp4";
         return "image/jpeg";
     }
 
@@ -797,6 +818,28 @@ public class GeminiClient {
               "venue": "venue/location or null if none",
               "mood": "atmosphere/mood",
               "postType": "announcement/pubmat | event recap | achievement | reminder | greeting | other",
+              "relationToOrg": "how or whether this visually connects to a school org"
+            }
+            """;
+    }
+
+    private String buildVideoDescribePrompt(OrgAiProfile profile) {
+        return """
+            Analyze this video in detail for a Philippine school organization post.
+            Examine what happens across the video: the scene, visible people, activities, setting, mood, and do an accurate read of any visible text or headlines, dates, venues, or displayed calls to action.
+
+            Return ONLY valid JSON matching this schema:
+            {
+              "scene": "detailed description of what happens in the video",
+              "setting": "location/setting (e.g. indoor gym, classroom, stage, outdoor field)",
+              "people": "count/roles visible without identifying individuals",
+              "activities": ["key activities depicted in the video"],
+              "visibleText": ["exact text segments, headlines, dates, venues read from the video or overlays"],
+              "eventName": "event title or null if none",
+              "date": "event date/time or null if none",
+              "venue": "venue/location or null if none",
+              "mood": "atmosphere/mood",
+              "postType": "announcement/teaser | event recap | achievement | reminder | greeting | other",
               "relationToOrg": "how or whether this visually connects to a school org"
             }
             """;
@@ -897,6 +940,51 @@ public class GeminiClient {
             3. Never invent dates, venues, names, results, or events that are not in the image, the org profile, or the notes.
             4. If the image is unrelated to the org's usual activities, still caption the image faithfully. Do not force the org theme.
             5. Write 3 options that differ in angle (e.g. recap / invitation / appreciation). Each is 2–4 sentences with fitting emojis.
+            6. Return ONLY a valid JSON array of exactly 3 strings (no markdown, no backticks):
+            ["caption 1", "caption 2", "caption 3"]
+            """,
+            analysisBlock, orgBlock, notesBlock, tone
+        );
+    }
+
+    private String buildVideoCaptionPrompt(String tone, OrgAiProfile profile, String notes, String videoAnalysis) {
+        String analysisBlock = (videoAnalysis != null && !videoAnalysis.isBlank())
+            ? videoAnalysis
+            : "A video is attached. Describe what happens, highlights, and visible overlay text.";
+
+        String orgBlock = buildOrgProfileBlock(profile);
+
+        String notesBlock = (notes != null && !notes.isBlank())
+            ? notes.trim()
+            : "None provided.";
+
+        return String.format(
+            """
+            You write Facebook captions for a Philippine school organization.
+            You are captioning a video post.
+            Write engaging Facebook post captions based primarily on what happens in the video and what it announces or highlights.
+
+            PRIMARY SOURCE - THE VIDEO ANALYSIS:
+            %s
+
+            BACKGROUND - THE ORGANIZATION (use for framing and voice, NOT as the main topic):
+            %s
+
+            OPTIONAL NOTES FROM THE POSTER:
+            %s
+
+            TONE: %s - affects wording and energy only, not the facts.
+            - FORMAL: professional, structured, respectful
+            - ENERGETIC: exciting, dynamic, with energy-filled words
+            - CELEBRATORY: festive, warm, joyful, with celebratory emojis
+            - URGENT: time-sensitive, clear call-to-action, concise
+
+            Rules:
+            1. Describe what actually happens or is announced in the video: the activity, highlights, setting, and any visible text (event name, date, venue, call to action). Each caption must mention at least two specific details from the video.
+            2. Mention the organization by name at most once per caption. Connect the video to the org's purpose only where it fits naturally.
+            3. Never invent dates, venues, names, results, or events that are not in the video, the org profile, or the notes.
+            4. If the video is unrelated to the org's usual activities, still caption the video faithfully. Do not force the org theme.
+            5. Write 3 options that differ in angle (e.g. watch recap / announcement teaser / celebration). Each is 2–4 sentences with fitting emojis.
             6. Return ONLY a valid JSON array of exactly 3 strings (no markdown, no backticks):
             ["caption 1", "caption 2", "caption 3"]
             """,

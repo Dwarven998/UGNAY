@@ -284,11 +284,11 @@ public class MediaService {
      */
     public List<String> generateCaptionsFromAssets(User user, List<UUID> assetIds, String tone, UUID orgId, String notes) {
         if (assetIds == null || assetIds.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No images selected");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No assets selected");
         }
         if (assetIds.size() > GeminiClient.MAX_CAPTION_IMAGES) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                "Too many images selected (max " + GeminiClient.MAX_CAPTION_IMAGES + ")");
+                "Too many assets selected (max " + GeminiClient.MAX_CAPTION_IMAGES + ")");
         }
 
         List<MediaAsset> assets = assetRepository.findAllById(assetIds);
@@ -302,6 +302,24 @@ public class MediaService {
             .distinct()
             .forEach(folderId -> requireViewAccess(user, folderId));
 
+        long videoCount = assets.stream().filter(a -> a.getFileType() != null && a.getFileType().startsWith("video")).count();
+        if (videoCount > 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only one video can be captioned at a time");
+        }
+        if (videoCount == 1 && assets.size() > 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot mix video and images for caption generation");
+        }
+
+        OrgAiProfile profile = orgAiProfileResolver.resolveProfile(user, orgId);
+
+        if (videoCount == 1) {
+            MediaAsset videoAsset = assets.stream()
+                .filter(a -> a.getFileType() != null && a.getFileType().startsWith("video"))
+                .findFirst()
+                .orElseThrow();
+            return geminiClient.generateCaptions(videoAsset.getFileUrl(), tone, profile, notes);
+        }
+
         List<String> imageUrls = assets.stream()
             .filter(a -> a.getFileType() != null && a.getFileType().startsWith("image"))
             .map(MediaAsset::getFileUrl)
@@ -311,7 +329,6 @@ public class MediaService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No image assets in selection");
         }
 
-        OrgAiProfile profile = orgAiProfileResolver.resolveProfile(user, orgId);
         return geminiClient.generateCaptionsMultiImage(imageUrls, tone, profile, notes);
     }
 

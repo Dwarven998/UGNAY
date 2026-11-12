@@ -533,24 +533,35 @@ export default function CreatePost() {
                 </span>
               </div>
               {media.length === 0 ? (
-                <p className="cp-muted">No images selected. Your post will be text-only unless you add some.</p>
+                <p className="cp-muted">No media selected. Your post will be text-only unless you add images or a video.</p>
               ) : (
                 <ul className="cp-thumbs">
-                  {media.map((item, index) => (
-                    <li key={`${item.id || item.url}-${index}`} className={`cp-thumb${item.id ? '' : ' is-unattached'}`}>
-                      {item.url ? <img src={item.url} alt={`Selected image ${index + 1}`} /> : <span className="cp-thumb-missing">Image</span>}
-                      <span className="cp-thumb-num" aria-hidden="true">{index + 1}</span>
-                      <div className="cp-thumb-actions">
-                        {media.length > 1 && (
-                          <>
-                            <button type="button" onClick={() => moveMedia(index, -1)} disabled={index === 0} aria-label={`Move image ${index + 1} earlier`}>‹</button>
-                            <button type="button" onClick={() => moveMedia(index, 1)} disabled={index === media.length - 1} aria-label={`Move image ${index + 1} later`}>›</button>
-                          </>
+                  {media.map((item, index) => {
+                    const isVideoThumb = item.url?.includes('.mp4');
+                    return (
+                      <li key={`${item.id || item.url}-${index}`} className={`cp-thumb${item.id ? '' : ' is-unattached'}`}>
+                        {item.url ? (
+                          isVideoThumb ? (
+                            <video src={item.url} preload="metadata" muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          ) : (
+                            <img src={item.url} alt={`Selected image ${index + 1}`} />
+                          )
+                        ) : (
+                          <span className="cp-thumb-missing">{isVideoThumb ? 'Video' : 'Image'}</span>
                         )}
-                        <button type="button" onClick={() => removeMediaAt(index)} aria-label={`Remove image ${index + 1}`}>×</button>
-                      </div>
-                    </li>
-                  ))}
+                        <span className="cp-thumb-num" aria-hidden="true">{index + 1}</span>
+                        <div className="cp-thumb-actions">
+                          {media.length > 1 && (
+                            <>
+                              <button type="button" onClick={() => moveMedia(index, -1)} disabled={index === 0} aria-label={`Move media ${index + 1} earlier`}>‹</button>
+                              <button type="button" onClick={() => moveMedia(index, 1)} disabled={index === media.length - 1} aria-label={`Move media ${index + 1} later`}>›</button>
+                            </>
+                          )}
+                          <button type="button" onClick={() => removeMediaAt(index)} aria-label={`Remove media ${index + 1}`}>×</button>
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
               {unattachedCount > 0 && (
@@ -698,12 +709,14 @@ export default function CreatePost() {
                 </button>
                 <p id="cp-ai-generate-hint" className="cp-hint">
                   {imageUrls.length === 0
-                    ? 'Add an image in step 1 so the AI can write about it.'
+                    ? 'Add media in step 1 so the AI can write about it.'
                     : !canGenerate
-                      ? 'Choose images from your Media Library to generate a caption for several at once.'
-                      : attachableMedia.length > MAX_AI_IMAGES
-                        ? `Captions are based on your first ${MAX_AI_IMAGES} images.`
-                        : `Suggestions are based on your ${imageUrls.length > 1 ? `${imageUrls.length} images` : 'image'}.`}
+                      ? 'Choose media from your Media Library to generate a caption.'
+                      : imageUrls.some(u => u.includes('.mp4'))
+                        ? 'Suggestions are based on your video.'
+                        : attachableMedia.length > MAX_AI_IMAGES
+                          ? `Captions are based on your first ${MAX_AI_IMAGES} images.`
+                          : `Suggestions are based on your ${imageUrls.length > 1 ? `${imageUrls.length} images` : 'image'}.`}
                 </p>
 
                 <div className="cp-ai-secondary">
@@ -800,7 +813,11 @@ export default function CreatePost() {
                   <div>
                     <dt>Media</dt>
                     <dd>
-                      {attachableMedia.length === 0 ? 'Text only' : `${attachableMedia.length} image${attachableMedia.length === 1 ? '' : 's'}`}
+                      {attachableMedia.length === 0
+                        ? 'Text only'
+                        : attachableMedia.some(m => m.url.includes('.mp4'))
+                          ? '1 video'
+                          : `${attachableMedia.length} image${attachableMedia.length === 1 ? '' : 's'}`}
                       <button type="button" className="cp-link" onClick={() => setStep(0)}>Edit</button>
                     </dd>
                   </div>
@@ -1069,12 +1086,18 @@ function FacebookPreview({ pageName, pictureUrl, caption, hashtags, images }: Re
       )}
       {shown.length > 0 && (
         <div className={`cp-fb-media cp-fb-media-${Math.min(shown.length, 4)}`}>
-          {shown.map((url, i) => (
-            <div key={`${url}-${i}`} className="cp-fb-media-cell">
-              <img src={url} alt={`Post image ${i + 1}`} />
-              {i === shown.length - 1 && extra > 0 && <span className="cp-fb-more">+{extra}</span>}
+          {shown[0]?.includes('.mp4') ? (
+            <div className="cp-fb-media-cell cp-fb-video-cell" style={{ width: '100%', maxHeight: '420px', overflow: 'hidden' }}>
+              <video src={shown[0]} controls preload="metadata" style={{ width: '100%', maxHeight: '420px', display: 'block', borderRadius: '4px' }} />
             </div>
-          ))}
+          ) : (
+            shown.map((url, i) => (
+              <div key={`${url}-${i}`} className="cp-fb-media-cell">
+                <img src={url} alt={`Post image ${i + 1}`} />
+                {i === shown.length - 1 && extra > 0 && <span className="cp-fb-more">+{extra}</span>}
+              </div>
+            ))
+          )}
         </div>
       )}
       {!caption && hashtags.length === 0 && shown.length === 0 && (

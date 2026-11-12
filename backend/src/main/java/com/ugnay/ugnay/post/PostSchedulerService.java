@@ -283,6 +283,14 @@ public class PostSchedulerService {
                 || post.getMediaAssets().stream().noneMatch(existing -> existing.getId().equals(asset.getId())))
             .forEach(asset -> requireAssetOnPage(asset, user, organization, pageId));
 
+        long videoCount = assets.stream().filter(a -> a.getFileType() != null && a.getFileType().startsWith("video")).count();
+        if (videoCount > 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A post can contain at most one video");
+        }
+        if (videoCount == 1 && assets.size() > 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A post cannot mix videos and images");
+        }
+
         post.setUser(user);
         post.setOrganization(organization);
         post.setFbPageId(pageId);

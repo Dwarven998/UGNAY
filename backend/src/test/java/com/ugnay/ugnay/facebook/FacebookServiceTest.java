@@ -51,6 +51,8 @@ class FacebookServiceTest {
             if (path.endsWith("/photos")) {
                 // Return photo ID or post_id
                 response = "{\"id\":\"photo_101\",\"post_id\":\"post_photo_101\"}";
+            } else if (path.endsWith("/videos")) {
+                response = "{\"id\":\"video_303\"}";
             } else if (path.endsWith("/feed")) {
                 // Return feed post ID
                 response = "{\"id\":\"feed_post_202\"}";
@@ -92,6 +94,22 @@ class FacebookServiceTest {
         assertEquals("/page_777/photos", recordedRequests.get(0));
         assertEquals("Single image caption", recordedBodies.get(0).get("message").asText());
         assertEquals("https://mycdn.com/test.jpg", recordedBodies.get(0).get("url").asText());
+    }
+
+    @Test
+    void publishVideoPost_postsToVideosEndpoint() {
+        String result = facebookService.publishVideoPost(
+            "access_token_123",
+            "page_777",
+            "Video caption with #tags",
+            "https://mycdn.com/video.mp4"
+        );
+
+        assertEquals("video_303", result);
+        assertEquals(1, recordedRequests.size());
+        assertEquals("/page_777/videos", recordedRequests.get(0));
+        assertEquals("Video caption with #tags", recordedBodies.get(0).get("description").asText());
+        assertEquals("https://mycdn.com/video.mp4", recordedBodies.get(0).get("file_url").asText());
     }
 
     @Test

@@ -216,7 +216,7 @@ const ROW_ICONS = {
 function RowActions({ asset, handlers }: { asset: MediaAsset; handlers: AssetRowHandlers }) {
   const actions: { key: keyof typeof ROW_ICONS; label: string; run: (asset: MediaAsset) => void; tone: string }[] = [
     { key: 'caption', label: 'Caption Studio', run: handlers.onCaption, tone: 'primary' },
-    ...(isImageAsset(asset) ? [{ key: 'post' as const, label: 'Use in Post', run: handlers.onUseInPost, tone: 'primary' }] : []),
+    { key: 'post', label: 'Use in Post', run: handlers.onUseInPost, tone: 'primary' },
     { key: 'delete', label: 'Delete', run: handlers.onDelete, tone: 'danger' },
   ];
   return (

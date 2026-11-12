@@ -20,12 +20,12 @@ export interface MediaLibraryPickerProps {
   onUploaded: (assets: MediaAsset[]) => void;
 }
 
-const isImage = (asset: MediaAsset) => asset.fileType.startsWith('image');
+const isImage = (asset: MediaAsset) => asset.fileType?.startsWith('image') ?? false;
+const isVideo = (asset: MediaAsset) => asset.fileType?.startsWith('video') ?? false;
 
 /**
- * Media Repository browser used inside the post composer: pick a folder, select images, or upload new ones into
- * that folder — without leaving the post being written. Only images can be attached, since that is what
- * the Facebook publisher sends.
+ * Media Repository browser used inside the post composer: pick a folder, select images or a video,
+ * or upload new ones into that folder — without leaving the post being written.
  */
 export default function MediaLibraryPicker({
   orgId,
@@ -131,7 +131,7 @@ export default function MediaLibraryPicker({
     } finally {
       setUploading(false);
       if (uploaded.length > 0) {
-        onUploaded(uploaded.filter(isImage));
+        onUploaded(uploaded.filter(a => isImage(a) || isVideo(a)));
         setFolders(prev => prev.map(f => (f.id === folder.id ? { ...f, assetCount: f.assetCount + uploaded.length } : f)));
       }
     }
@@ -240,13 +240,13 @@ export default function MediaLibraryPicker({
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                   </svg>
                 )}
-                {uploading ? 'Uploading…' : 'Upload images'}
+                {uploading ? 'Uploading…' : 'Upload media'}
               </button>
               <input
                 ref={fileRef}
                 type="file"
                 multiple
-                accept="image/jpg,image/jpeg,image/png,image/webp"
+                accept="image/jpg,image/jpeg,image/png,image/webp,video/mp4"
                 onChange={e => void handleUpload(e)}
                 className="cp-sr-only"
                 tabIndex={-1}
@@ -257,7 +257,7 @@ export default function MediaLibraryPicker({
             {uploadError && <p className="cp-field-error" role="alert">{uploadError}</p>}
 
             {assetsState === 'loading' && (
-              <div className="cp-picker-hint" role="status"><span className="ug-spinner" aria-hidden="true" /> Loading images…</div>
+              <div className="cp-picker-hint" role="status"><span className="ug-spinner" aria-hidden="true" /> Loading media…</div>
             )}
             {assetsState === 'error' && (
               <div className="cp-picker-hint cp-picker-status-error" role="alert">
@@ -266,14 +266,28 @@ export default function MediaLibraryPicker({
               </div>
             )}
             {assetsState === 'ready' && assets.length === 0 && (
-              <div className="cp-picker-hint">This folder is empty — upload images to use them in your post.</div>
+              <div className="cp-picker-hint">This folder is empty — upload images or a video to use them in your post.</div>
             )}
             {assetsState === 'ready' && assets.length > 0 && (
               <div className="cp-picker-grid">
                 {assets.map(asset => {
                   const image = isImage(asset);
+                  const video = isVideo(asset);
                   const chosen = isSelected(asset);
-                  const disabled = !image || (!chosen && atLimit);
+                  const hasSelectedVideo = selected.some(item => item.url?.includes('.mp4'));
+                  const hasSelectedImages = selected.some(item => !item.url?.includes('.mp4'));
+                  const disabled = (!chosen && atLimit)
+                    || (!chosen && image && hasSelectedVideo)
+                    || (!chosen && video && (hasSelectedImages || hasSelectedVideo));
+
+                  let title = asset.fileName;
+                  if (disabled) {
+                    if (video && hasSelectedImages) title = 'Cannot mix video with images in one post';
+                    else if (image && hasSelectedVideo) title = 'A video is already selected for this post';
+                    else if (video && hasSelectedVideo) title = 'Select at most 1 video for a post';
+                    else if (atLimit) title = `Reached ${maxItems}-item limit`;
+                  }
+
                   return (
                     <button
                       key={asset.id}
@@ -282,13 +296,16 @@ export default function MediaLibraryPicker({
                       onClick={() => onToggle(asset)}
                       disabled={disabled}
                       aria-pressed={chosen}
-                      aria-label={`${asset.fileName}${image ? '' : ' (video — not supported in posts)'}`}
-                      title={image ? asset.fileName : 'Videos can’t be attached to posts yet'}
+                      aria-label={`${asset.fileName}${video ? ' (video)' : ''}`}
+                      title={title}
                     >
                       {image ? (
                         <img src={asset.fileUrl} alt="" loading="lazy" />
                       ) : (
-                        <span className="cp-picker-video">Video</span>
+                        <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+                          <video src={asset.fileUrl} preload="metadata" muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          <span className="cp-picker-video">Video</span>
+                        </div>
                       )}
                       {chosen && <span className="cp-picker-check" aria-hidden="true">{selectedIndex(asset) + 1}</span>}
                     </button>

@@ -76,6 +76,41 @@ public class FacebookService {
         }
     }
 
+    /**
+     * Publish a video post with caption to a Facebook Page.
+     * Uses POST /{pageId}/videos with file_url and description.
+     */
+    public String publishVideoPost(
+        String accessToken,
+        String pageId,
+        String message,
+        String videoUrl
+    ) {
+        log.info("Publishing video post to Facebook page {}", pageId);
+        Map<String, Object> body = new HashMap<>();
+        body.put("description", message);
+        body.put("access_token", accessToken);
+        body.put("file_url", sanitizeUrl(videoUrl));
+
+        Map<String, Object> response = webClient.post()
+            .uri(fbApiUrl + "/" + pageId + "/videos")
+            .bodyValue(body)
+            .retrieve()
+            .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+            .timeout(Duration.ofSeconds(60))
+            .retryWhen(Retry.backoff(2, Duration.ofSeconds(1)).filter(this::isRetryable))
+            .doOnError(WebClientResponseException.class, ex ->
+                log.error("Facebook Graph API error publishing video [HTTP {}]: {}",
+                    ex.getStatusCode(), ex.getResponseBodyAsString()))
+            .block();
+
+        if (response == null || response.get("id") == null) {
+            throw new IllegalStateException("Facebook video publish returned empty response");
+        }
+
+        return String.valueOf(response.get("id"));
+    }
+
     private String publishSingleImagePost(
         String accessToken,
         String pageId,

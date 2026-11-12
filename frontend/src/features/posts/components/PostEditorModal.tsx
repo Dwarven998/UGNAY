@@ -321,7 +321,11 @@ export default function PostEditorModal({
                 <ul className="upe-media-strip">
                   {selectedAssets.map((item, idx) => (
                     <li key={`${item.id || item.url}-${idx}`} className="upe-media-thumb">
-                      <img src={item.url} alt={`Media ${idx + 1}`} />
+                      {item.url.includes('.mp4') ? (
+                        <video src={item.url} preload="metadata" muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        <img src={item.url} alt={`Media ${idx + 1}`} />
+                      )}
                       <span className="upe-media-thumb-num" aria-hidden="true">{idx + 1}</span>
                       <button
                         type="button"
@@ -395,7 +399,14 @@ export default function PostEditorModal({
                         aria-pressed={isSelected}
                         aria-label={asset.fileName}
                       >
-                        <img src={asset.fileUrl} alt="" loading="lazy" />
+                        {asset.fileType?.startsWith('video') ? (
+                          <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                            <video src={asset.fileUrl} preload="metadata" muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            <span style={{ position: 'absolute', bottom: 2, right: 2, background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: '9px', padding: '1px 3px', borderRadius: '2px' }}>▶</span>
+                          </div>
+                        ) : (
+                          <img src={asset.fileUrl} alt="" loading="lazy" />
+                        )}
                         {isSelected && (
                           <div className="upe-picker-asset-check" aria-hidden="true">
                             <span>{selectedIndex + 1}</span>
