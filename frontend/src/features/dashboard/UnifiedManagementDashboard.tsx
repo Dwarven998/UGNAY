@@ -48,6 +48,10 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
     label: 'Organization',
     items: [{ to: '/organizations', icon: 'fi-rr-building', label: 'Organizations' }],
   },
+  {
+    label: 'Account',
+    items: [{ to: '/profile', icon: 'fi-rr-user', label: 'Profile' }],
+  },
 ];
 
 const BOTTOM_NAV: NavItem[] = [

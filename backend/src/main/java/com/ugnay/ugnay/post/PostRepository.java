@@ -164,4 +164,34 @@ public interface PostRepository extends JpaRepository<Post, UUID> {
         @Param("windowEnd") Instant windowEnd,
         @Param("excludePostId") UUID excludePostId
     );
+
+    /*
+     * Profile page: the signed-in author's own posts. This is the one listing that spans Pages, because
+     * it is keyed by author, not by workspace. It still stays inside what the author can reach today:
+     * personal posts, plus posts in organizations where they are an APPROVED member. Posts left behind in
+     * an organization the author no longer belongs to remain that organization's data and are excluded.
+     */
+
+    @EntityGraph(attributePaths = {"organization", "mediaAsset"})
+    @Query("""
+        select p from Post p
+        where p.user.id = :userId
+          and (p.organization is null or exists (
+                select 1 from OrganizationMembership m
+                where m.user.id = :userId and m.organization = p.organization
+                  and m.status = com.ugnay.ugnay.org.OrganizationMembership.MembershipStatus.APPROVED))
+        order by p.createdAt desc
+        """)
+    List<Post> findAuthoredByUserInReach(@Param("userId") UUID userId, org.springframework.data.domain.Pageable page);
+
+    @Query("""
+        select p.status, count(p) from Post p
+        where p.user.id = :userId
+          and (p.organization is null or exists (
+                select 1 from OrganizationMembership m
+                where m.user.id = :userId and m.organization = p.organization
+                  and m.status = com.ugnay.ugnay.org.OrganizationMembership.MembershipStatus.APPROVED))
+        group by p.status
+        """)
+    List<Object[]> countAuthoredByUserInReachByStatus(@Param("userId") UUID userId);
 }

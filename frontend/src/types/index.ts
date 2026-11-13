@@ -147,3 +147,45 @@ export interface MediaRecommendation {
   score: number;
   reason: string;
 }
+// ── Profile (signed-in user's own data only) ─────────────────────────────
+
+export interface ProfileMembership {
+  orgId: string;
+  orgName: string;
+  orgType: OrgType;
+  role: OrgRole;
+  status: MembershipStatus;
+  requestedAt: string | null;
+  joinedAt: string | null;
+}
+
+export interface ProfilePostStats {
+  total: number;
+  published: number;
+  scheduled: number;
+  drafts: number;
+  pendingReview: number;
+  rejected: number;
+  failed: number;
+}
+
+export interface ProfilePostSummary {
+  id: string;
+  caption: string;
+  status: Post['status'];
+  orgId: string | null;
+  orgName: string | null;
+  createdAt: string | null;
+  scheduledAt: string | null;
+  publishedAt: string | null;
+  mediaUrl: string | null;
+}
+
+export interface UserProfile {
+  email: string;
+  passwordChangedAt: string | null;
+  memberships: ProfileMembership[];
+  postStats: ProfilePostStats;
+  recentPosts: ProfilePostSummary[];
+  recentPostLimit: number;
+}

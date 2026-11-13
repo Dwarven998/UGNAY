@@ -80,6 +80,9 @@ export default function ForgotPasswordPage() {
                 <p className="form-subtitle">
                   If an account exists for <strong>{email}</strong>, a password reset link has been sent. Check your spam folder if you don't see it.
                 </p>
+                <p className="form-subtitle">
+                  Only the newest link works. If you requested more than once, open the most recent email.
+                </p>
                 <Link to="/login" className="btn-primary modern-btn fp-back-btn">
                   Back to Sign In
                 </Link>

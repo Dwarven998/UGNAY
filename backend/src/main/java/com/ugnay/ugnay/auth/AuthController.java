@@ -3,10 +3,7 @@ package com.ugnay.ugnay.auth;
 import com.ugnay.ugnay.core.*;
 import com.ugnay.ugnay.facebook.FacebookOAuthService;
 import lombok.*;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -32,48 +29,14 @@ public class AuthController {
     private final TurnstileService turnstileService;
     private final PasswordResetService passwordResetService;
 
-    @Value("${jwt.expiration:86400000}")
-    private long jwtExpiration;
-
-    @Value("${app.frontend.url:}")
-    private String frontendUrl;
+    private final AuthCookieWriter authCookieWriter;
 
     private void setAuthCookie(HttpServletResponse response, HttpServletRequest request, String token) {
-        boolean isHttps = request.isSecure() 
-            || "https".equalsIgnoreCase(request.getHeader("X-Forwarded-Proto"))
-            || (frontendUrl != null && frontendUrl.startsWith("https"));
-
-        ResponseCookie.ResponseCookieBuilder builder = ResponseCookie.from("ugnay_token", token)
-            .httpOnly(true)
-            .path("/")
-            .maxAge(jwtExpiration / 1000);
-
-        if (isHttps) {
-            builder.secure(true).sameSite("None");
-        } else {
-            builder.secure(false).sameSite("Lax");
-        }
-
-        response.addHeader(HttpHeaders.SET_COOKIE, builder.build().toString());
+        authCookieWriter.set(response, request, token);
     }
 
     private void clearAuthCookie(HttpServletResponse response, HttpServletRequest request) {
-        boolean isHttps = request.isSecure() 
-            || "https".equalsIgnoreCase(request.getHeader("X-Forwarded-Proto"))
-            || (frontendUrl != null && frontendUrl.startsWith("https"));
-
-        ResponseCookie.ResponseCookieBuilder builder = ResponseCookie.from("ugnay_token", "")
-            .httpOnly(true)
-            .path("/")
-            .maxAge(0);
-
-        if (isHttps) {
-            builder.secure(true).sameSite("None");
-        } else {
-            builder.secure(false).sameSite("Lax");
-        }
-
-        response.addHeader(HttpHeaders.SET_COOKIE, builder.build().toString());
+        authCookieWriter.clear(response, request);
     }
 
     @PostMapping("/register")
@@ -317,7 +280,7 @@ public class AuthController {
     public record ResetPasswordRequest(
         @jakarta.validation.constraints.NotBlank String token,
         @jakarta.validation.constraints.NotBlank
-        @jakarta.validation.constraints.Size(min = 6, message = "Password must be at least 6 characters.")
+        @jakarta.validation.constraints.Size(min = 6, max = 72, message = "Password must be 6 to 72 characters.")
         String newPassword
     ) {}
 

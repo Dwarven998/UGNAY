@@ -56,6 +56,10 @@ public class User {
     @Column(name = "caption_avoid", columnDefinition = "TEXT")
     private String captionAvoid;
 
+    /** When the password last changed. Session tokens issued before this are rejected by {@link JwtFilter}. */
+    @Column(name = "password_changed_at")
+    private java.time.Instant passwordChangedAt;
+
     public enum TonePreference {
         FORMAL, ENERGETIC, CELEBRATORY, URGENT
     }

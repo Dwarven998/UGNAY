@@ -56,6 +56,12 @@ public class JwtUtil {
         return getClaims(token).get("orgId", String.class);
     }
 
+    /** Verified claims of a session token, or empty when the signature or expiry check fails. */
+    public java.util.Optional<Claims> parseValid(String token) {
+        try { return java.util.Optional.of(getClaims(token)); }
+        catch (JwtException | IllegalArgumentException e) { return java.util.Optional.empty(); }
+    }
+
     public boolean isValid(String token) {
         try { getClaims(token); return true; }
         catch (JwtException e) { return false; }

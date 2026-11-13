@@ -21,6 +21,7 @@ import Analytics from './features/analytics/pages/Analytics.tsx';
 import PostInsights from './features/analytics/pages/PostInsights.tsx';
 import OrganizationsPage from './features/organizations/user/pages/OrganizationsPage.tsx';
 import OrganizationAdminPage from './features/organizations/admin/pages/OrganizationAdminPage.tsx';
+import ProfilePage from './features/profile/pages/ProfilePage.tsx';
 
 function ProtectedRoute({ children }: Readonly<{ children: ReactNode }>) {
   const { user, isLoading } = useAuth();
@@ -77,6 +78,7 @@ export default function App() {
             <Route path="analytics/posts/:postId" element={<PostInsights />} />
             <Route path="organizations" element={<OrganizationsPage />} />
             <Route path="organizations/:orgId/manage" element={<OrganizationAdminPage />} />
+            <Route path="profile" element={<ProfilePage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
