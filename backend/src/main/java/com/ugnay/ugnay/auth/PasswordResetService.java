@@ -11,6 +11,8 @@ import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -22,7 +24,9 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -77,16 +81,23 @@ public class PasswordResetService {
     @Value("${spring.mail.password:}")
     private String smtpPassword;
 
-    /** False when SMTP_USERNAME / SMTP_PASSWORD are missing — no email can be sent at all. */
+    /** When set, reset emails go through Brevo's HTTPS API instead of SMTP (needed on Render's free plan). */
+    @Value("${BREVO_API_KEY:}")
+    private String brevoApiKey;
+
+    /** False when neither BREVO_API_KEY nor SMTP_USERNAME / SMTP_PASSWORD is set — no email can be sent at all. */
     public boolean isMailConfigured() {
-        return smtpUsername != null && !smtpUsername.isBlank() && smtpPassword != null && !smtpPassword.isBlank();
+        return useBrevo()
+                || (smtpUsername != null && !smtpUsername.isBlank() && smtpPassword != null && !smtpPassword.isBlank());
     }
 
     @jakarta.annotation.PostConstruct
     void warnIfMailNotConfigured() {
-        if (!isMailConfigured()) {
+        if (useBrevo()) {
+            log.info("Password-reset emails will be sent with the Brevo API (sender: MAIL_FROM).");
+        } else if (!isMailConfigured()) {
             log.warn("SMTP is NOT configured: password-reset emails cannot be sent. "
-                    + "Set SMTP_USERNAME and SMTP_PASSWORD (a Gmail App Password) in backend/.env and restart.");
+                    + "Set BREVO_API_KEY, or SMTP_USERNAME and SMTP_PASSWORD (a Gmail App Password), and restart.");
         }
     }
 
@@ -121,18 +132,22 @@ public class PasswordResetService {
     @Transactional
     public void requestPasswordResetForSignedInUser(UUID userId) {
         User user = userRepository.findById(userId).orElseThrow();
-        // The account is the caller's own, so (unlike the public path) a delivery failure can be reported.
+        // The account is the caller's own, so (unlike the public path) a missing mail setup can be reported.
         if (!issueAndSend(user)) {
-            throw new EmailDeliveryException(isMailConfigured()
-                    ? "We couldn't send the email right now. Please try again in a few minutes."
-                    : "Email sending isn't set up on the server yet, so no link was sent. Please contact the administrator.");
+            throw new EmailDeliveryException(
+                    "Email sending isn't set up on the server yet, so no link was sent. Please contact the administrator.");
         }
     }
 
-    /** @return true when the email was handed to the mail server */
+    /**
+     * Saves a new token and queues the email. The email is sent in the background once the token is
+     * committed, so the request returns at once even when the mail server is slow or unreachable.
+     *
+     * @return false only when mail is not configured at all
+     */
     private boolean issueAndSend(User user) {
         if (!isMailConfigured()) {
-            log.error("Password-reset email for user {} NOT sent: SMTP_USERNAME / SMTP_PASSWORD are not set.", user.getId());
+            log.error("Password-reset email for user {} NOT sent: no mail provider is configured (BREVO_API_KEY or SMTP_USERNAME / SMTP_PASSWORD).", user.getId());
             return false;
         }
 
@@ -151,14 +166,43 @@ public class PasswordResetService {
                 .createdAt(now)
                 .build());
 
-        // Any SMTP failure is logged; the caller still gets the generic response.
-        try {
-            sendResetEmail(user.getEmail(), rawToken, now);
-            return true;
-        } catch (Exception ex) {
-            log.error("Failed to send password-reset email for user {} — SMTP error: {}", user.getId(), ex.getMessage());
-            return false;
+        UUID userId = user.getId();
+        String to = user.getEmail();
+        Runnable send = () -> {
+            try {
+                sendResetEmail(to, rawToken, now);
+            } catch (Exception ex) {
+                log.error("Failed to send password-reset email for user {} — mail error: {}", userId, ex.getMessage());
+            }
+        };
+        // Send only after the token is committed, so the link works the moment the email arrives.
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    mailPool.execute(send);
+                }
+            });
+        } else {
+            mailPool.execute(send);
         }
+        return true;
+    }
+
+    /** Background sender: emails never hold up a web request. Small, bounded queue; extra requests are dropped and logged. */
+    private final java.util.concurrent.ExecutorService mailPool = new java.util.concurrent.ThreadPoolExecutor(
+            2, 2, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+            new java.util.concurrent.ArrayBlockingQueue<>(100),
+            runnable -> {
+                Thread t = new Thread(runnable, "reset-mail");
+                t.setDaemon(true);
+                return t;
+            },
+            (r, pool) -> log.error("Password-reset email dropped: mail queue is full"));
+
+    @jakarta.annotation.PreDestroy
+    void shutdownMailPool() {
+        mailPool.shutdown();
     }
 
     // -----------------------------------------------------------------------
@@ -252,26 +296,68 @@ public class PasswordResetService {
     private void sendResetEmail(String to, String rawToken, Instant requestedAt) throws Exception {
         String resetUrl = frontendUrl.replaceAll("/$", "") + "/reset-password?token=" + rawToken;
         String when = MAIL_TIME.format(requestedAt);
-
-        MimeMessage message = mailSender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(message, false, StandardCharsets.UTF_8.name());
-        helper.setFrom(mailFrom);
-        helper.setTo(to);
         // A distinct subject keeps every request in its own email instead of a Gmail thread.
-        helper.setSubject("Reset your Ugnay password (requested " + when + ")");
-        helper.setText(
+        String subject = "Reset your Ugnay password (requested " + when + ")";
+        String text =
                 "Hello,\n\n" +
                 "We received a request on " + when + " (Philippine time) to reset the password for your Ugnay account.\n\n" +
                 "Click the link below to set a new password. This link expires in " + EXPIRY_MINUTES + " minutes " +
                 "and replaces any reset link we sent you before.\n\n" +
                 resetUrl + "\n\n" +
                 "If you did not request this, you can safely ignore this email. Your password stays the same.\n\n" +
-                "— The Ugnay Team"
-        );
+                "— The Ugnay Team";
         // Unique per message: stops Gmail from grouping repeat requests and hiding the new link.
-        message.setHeader("X-Entity-Ref-ID", UUID.randomUUID().toString());
-        mailSender.send(message);
-        log.info("Password-reset email sent (recipient suppressed for privacy)");
+        String refId = UUID.randomUUID().toString();
+
+        if (useBrevo()) {
+            sendViaBrevo(to, subject, text, refId);
+        } else {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, StandardCharsets.UTF_8.name());
+            helper.setFrom(mailFrom);
+            helper.setTo(to);
+            helper.setSubject(subject);
+            helper.setText(text);
+            message.setHeader("X-Entity-Ref-ID", refId);
+            mailSender.send(message);
+        }
+        log.info("Password-reset email sent via {} (recipient suppressed for privacy)", useBrevo() ? "Brevo API" : "SMTP");
+    }
+
+    /**
+     * Brevo transactional email over HTTPS (port 443). Used on hosts that block SMTP ports, such as
+     * Render's free plan. The sender (MAIL_FROM) must be a verified sender in the Brevo account.
+     */
+    private void sendViaBrevo(String to, String subject, String text, String refId) {
+        Map<String, Object> body = Map.of(
+                "sender", Map.of("name", "Ugnay", "email", mailFrom),
+                "to", List.of(Map.of("email", to)),
+                "subject", subject,
+                "textContent", text,
+                "headers", Map.of("X-Entity-Ref-ID", refId));
+        brevoClient.post()
+                .uri("https://api.brevo.com/v3/smtp/email")
+                .header("api-key", brevoApiKey.trim())
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .accept(org.springframework.http.MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity();
+    }
+
+    private boolean useBrevo() {
+        return brevoApiKey != null && !brevoApiKey.isBlank();
+    }
+
+    private final org.springframework.web.client.RestClient brevoClient = org.springframework.web.client.RestClient.builder()
+            .requestFactory(brevoRequestFactory())
+            .build();
+
+    private static org.springframework.http.client.SimpleClientHttpRequestFactory brevoRequestFactory() {
+        var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(10_000);
+        factory.setReadTimeout(15_000);
+        return factory;
     }
 
     private static String sha256Hex(String input) {
