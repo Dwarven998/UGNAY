@@ -470,7 +470,10 @@ export default function PostManager() {
   const isOwner = (post: Post) => Boolean(user?.userId) && post.ownerId === user?.userId;
   const canEditPost = (post: Post) => post.status !== 'PUBLISHED' && (canManagePosts || isOwner(post));
   const canPublishPost = (post: Post) =>
-    canManagePosts && isOwner(post) && (post.status === 'DRAFT' || post.status === 'SCHEDULED' || post.status === 'FAILED');
+    /* Org posts: any officer/admin may publish directly (even a still-scheduled post by another author).
+       Personal workspace: only the author. Members never see this action. */
+    (post.orgId ? canModerate : isOwner(post)) &&
+    (post.status === 'DRAFT' || post.status === 'SCHEDULED' || post.status === 'FAILED');
   const canDeletePost = (post: Post) =>
     post.status !== 'PUBLISHED' && (canManagePosts || (isOwner(post) && !(post.orgId && post.status === 'SCHEDULED')));
 

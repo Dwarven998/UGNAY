@@ -241,12 +241,27 @@ public class PostSchedulerService {
             && organizationPermissionService.isOfficerOrAdmin(user.getId(), post.getOrganization().getId());
     }
 
+    /**
+     * Direct "Publish now" is an officer/admin action for organization posts (any author's post, including
+     * one that is still SCHEDULED). A personal-workspace post can only be published by its author.
+     */
+    private boolean canPublishNow(User user, Post post) {
+        if (post.getOrganization() != null) {
+            return organizationPermissionService.isOfficerOrAdmin(user.getId(), post.getOrganization().getId());
+        }
+        return post.getUser().getId().equals(user.getId());
+    }
+
     @Transactional
     public void publishNow(User user, UUID postId) {
         Post post = postRepository.findDetailedById(postId)
-            .filter(existing -> existing.getUser().getId().equals(user.getId()))
+            .filter(existing -> canPublishNow(user, existing))
             .filter(this::isOnConnectedPage)
             .orElseThrow(() -> new NoSuchElementException("Post not found"));
+        Post.PostStatus status = post.getStatus();
+        if (status != Post.PostStatus.DRAFT && status != Post.PostStatus.SCHEDULED && status != Post.PostStatus.FAILED) {
+            throw new IllegalStateException("Only draft, scheduled or failed posts can be published now.");
+        }
         cancelScheduledTask(post.getId());
         facebookPublishingJob.publishImmediately(post.getId());
     }
