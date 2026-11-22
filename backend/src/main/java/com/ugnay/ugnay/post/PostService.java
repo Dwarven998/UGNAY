@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.ugnay.ugnay.core.User;
+import com.ugnay.ugnay.core.error.ResourceNotFoundException;
 import com.ugnay.ugnay.media.MediaAsset;
 import com.ugnay.ugnay.org.ConnectedPageResolver;
 
@@ -74,7 +75,7 @@ public class PostService {
         // Return the latest state after publish attempt
         return postRepository.findDetailedById(postId)
             .map(this::toDto)
-            .orElseThrow();
+            .orElseThrow(() -> new ResourceNotFoundException("Post not found"));
     }
 
     @Transactional

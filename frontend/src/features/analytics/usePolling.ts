@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { getErrorMessage, isAbortError } from '../../api/errors';
 
 // Analytics stays live while a page is open: the interval is kept under the 5s freshness target.
 export const POLL_INTERVAL_MS = 4_000;
@@ -37,8 +38,8 @@ export function usePolling<T>(key: string, enabled: boolean, load: () => Promise
         lastGood.set(key, { data, syncedAt });
         if (!cancelled) setState({ key, data, error: null, syncedAt });
       } catch (err) {
-        if (!cancelled) {
-          const message = err instanceof Error ? err.message : 'Request failed';
+        if (!cancelled && !isAbortError(err)) {
+          const message = getErrorMessage(err, "Couldn't load the latest data. Retrying shortly.");
           setState(prev => ({ key, data: prev.key === key ? prev.data : null, syncedAt: prev.key === key ? prev.syncedAt : null, error: message }));
         }
       } finally {

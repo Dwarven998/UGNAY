@@ -5,6 +5,8 @@ import { Outlet, NavLink, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/useAuth';
 import { useOrganization } from '../../context/useOrganization';
 import OrgSwitcher from '../organizations/user/components/OrgSwitcher';
+import { ErrorBoundary } from '../../components/errors/ErrorBoundary';
+import { RouteErrorFallback } from '../../components/errors/ErrorFallbacks';
 import '@flaticon/flaticon-uicons/css/regular/rounded.css';
 import '../../components/ui/dialog.css';
 import './shell.css';
@@ -301,7 +303,15 @@ export default function Dashboard() {
             <div className="dash-main-orb dash-main-orb-1"></div>
             <div className="dash-main-orb dash-main-orb-2"></div>
             <div className="dash-main-content">
-              <Outlet />
+              {/* A page that fails to render shows a fallback here; the sidebar stays usable and navigating
+                  to another page clears the error. */}
+              <ErrorBoundary
+                name="route"
+                resetKeys={[location.pathname]}
+                fallback={props => <RouteErrorFallback {...props} />}
+              >
+                <Outlet />
+              </ErrorBoundary>
             </div>
           </main>
         </div>

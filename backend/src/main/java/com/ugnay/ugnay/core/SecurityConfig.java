@@ -19,6 +19,9 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.OncePerRequestFilter;
 import com.ugnay.ugnay.auth.LoginRateLimitFilter;
+import com.ugnay.ugnay.core.error.CorrelationIdFilter;
+import com.ugnay.ugnay.core.error.JsonAccessDeniedHandler;
+import com.ugnay.ugnay.core.error.JsonAuthenticationEntryPoint;
 
 import lombok.RequiredArgsConstructor;
 
@@ -29,6 +32,8 @@ public class SecurityConfig {
 
     private final OncePerRequestFilter jwtFilter;
     private final LoginRateLimitFilter loginRateLimitFilter;
+    private final JsonAuthenticationEntryPoint authenticationEntryPoint;
+    private final JsonAccessDeniedHandler accessDeniedHandler;
 
     @Value("${app.cors.allowed-origins:http://localhost:5173}")
     private String allowedOrigins;
@@ -46,6 +51,11 @@ public class SecurityConfig {
                 .requestMatchers("/error").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/health").permitAll()
                 .anyRequest().authenticated()
+            )
+            // No session → 401 (not Spring's default 403); signed in but denied → 403. Both as JSON.
+            .exceptionHandling(e -> e
+                .authenticationEntryPoint(authenticationEntryPoint)
+                .accessDeniedHandler(accessDeniedHandler)
             )
             // Execute rate limiting filter before JWT processing and authentication
             .addFilterBefore(loginRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
@@ -70,7 +80,8 @@ public class SecurityConfig {
         config.setAllowedOriginPatterns(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
-        config.setExposedHeaders(List.of("Authorization"));
+        // X-Request-Id: correlation id for support/diagnostics; Retry-After: how long to back off after a 429.
+        config.setExposedHeaders(List.of("Authorization", CorrelationIdFilter.HEADER, "Retry-After"));
         config.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

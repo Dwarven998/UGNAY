@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../../context/useAuth';
 import { ApiError } from '../../../api/axiosClient';
+import { safeReturnPath } from '../safeReturnPath';
 import { preloadGoogleIdentity, requestGoogleAccessToken } from '../api/googleIdentity';
 import { FloatingParticles, FeatureShowcase, AuthenticationBackground } from './AuthVisuals';
 import { useTurnstile } from '../hooks/useTurnstile';
@@ -22,8 +23,10 @@ function LoginFormContent() {
 
   const { token: turnstileToken, isVerified: turnstileVerified, reset: resetTurnstile, containerRef: turnstileRef } = useTurnstile();
 
-  const { login, loginWithGoogle } = useAuth();
+  const { login, loginWithGoogle, sessionEndReason } = useAuth();
   const navigate = useNavigate();
+  // Where the user was when they were sent to sign in (set by ProtectedRoute); defaults to the dashboard.
+  const returnTo = safeReturnPath(useLocation().state);
 
   useEffect(() => {
     preloadGoogleIdentity();
@@ -40,7 +43,7 @@ function LoginFormContent() {
         setOrgDescription('');
         setGoogleSignup({ accessToken, email: result.email });
       } else {
-        navigate('/');
+        navigate(returnTo);
       }
     } catch (err) {
       setError(err instanceof Error && err.message ? err.message : 'Google sign-in failed. Please try again.');
@@ -58,7 +61,7 @@ function LoginFormContent() {
       const result = await loginWithGoogle(googleSignup.accessToken, orgName.trim(), {
         description: orgDescription.trim() || undefined,
       });
-      navigate(result.newAccount ? '/setup' : '/');
+      navigate(result.newAccount ? '/setup' : returnTo);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         // The Google token expired while the form was open; send them through Google again.
@@ -85,7 +88,7 @@ function LoginFormContent() {
     setLoading(true);
     try {
       await login(email, password, turnstileToken);
-      navigate('/');
+      navigate(returnTo);
     } catch (err: any) {
       // Always reset after a failed attempt — tokens are single-use
       resetTurnstile();
@@ -329,6 +332,16 @@ function LoginFormContent() {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   <span>{error}</span>
+                </div>
+              )}
+
+              {/* Signed out because the session expired (not by the user) */}
+              {!error && sessionEndReason === 'expired' && (
+                <div className="error-card" role="status">
+                  <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Your session has expired. Please sign in again to continue where you left off.</span>
                 </div>
               )}
 

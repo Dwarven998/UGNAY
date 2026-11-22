@@ -5,6 +5,9 @@ import com.ugnay.ugnay.auth.PasswordResetService.PasswordChangeException;
 import com.ugnay.ugnay.core.AuthCookieWriter;
 import com.ugnay.ugnay.core.JwtUtil;
 import com.ugnay.ugnay.core.User;
+import com.ugnay.ugnay.core.error.ApiException;
+import com.ugnay.ugnay.core.error.ErrorCode;
+import com.ugnay.ugnay.core.error.ExternalServiceException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -12,7 +15,6 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -55,8 +57,8 @@ public class ProfileController {
             passwordService.changePassword(user.getId(), req.currentPassword(), req.newPassword());
         } catch (PasswordChangeException e) {
             // 400/423, never 401: the client treats 401 as "signed out" and would drop the session.
-            HttpStatus status = e.getReason() == PasswordChangeException.Reason.LOCKED ? HttpStatus.LOCKED : HttpStatus.BAD_REQUEST;
-            return ResponseEntity.status(status).body(Map.of("error", "Password Not Changed", "message", e.getMessage()));
+            throw new ApiException(e.getReason() == PasswordChangeException.Reason.LOCKED
+                ? ErrorCode.ACCOUNT_LOCKED : ErrorCode.BAD_REQUEST, e.getMessage());
         }
         authCookieWriter.set(httpResponse, httpRequest, jwtUtil.generateToken(user.getEmail(), user.getId().toString()));
         return ResponseEntity.ok(Map.of(
@@ -69,23 +71,15 @@ public class ProfileController {
         try {
             passwordService.requestPasswordResetForSignedInUser(user.getId());
         } catch (PasswordResetService.EmailDeliveryException e) {
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .body(Map.of("error", "Email Not Sent", "message", e.getMessage()));
+            throw new ExternalServiceException(ExternalServiceException.Service.EMAIL,
+                ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE, e.getMessage());
         }
         return ResponseEntity.ok(Map.of(
             "message", "We sent a password reset link to your email. It expires in 30 minutes."));
     }
 
-    /** Returns the first validation message (e.g. "New password must be 6 to 72 characters.") as JSON. */
-    @ExceptionHandler(org.springframework.web.bind.MethodArgumentNotValidException.class)
-    public ResponseEntity<Map<String, String>> invalid(org.springframework.web.bind.MethodArgumentNotValidException e) {
-        String message = e.getBindingResult().getFieldErrors().stream()
-            .map(org.springframework.validation.FieldError::getDefaultMessage)
-            .filter(java.util.Objects::nonNull)
-            .findFirst()
-            .orElse("Please check the form and try again.");
-        return ResponseEntity.badRequest().body(Map.of("error", "Invalid Request", "message", message));
-    }
+    // Validation failures ("New password must be 6 to 72 characters.") are answered by GlobalExceptionHandler,
+    // which returns the constraint's own message as "message".
 
     public record ChangePasswordRequest(
         @NotBlank(message = "Enter your current password.")

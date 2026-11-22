@@ -8,6 +8,7 @@ import ConfirmDialog from '../../../components/ui/ConfirmDialog';
 import { useDialog } from '../../../components/ui/useDialog';
 import { AssetCollection, AssetToolbar } from '../components/AssetBrowser';
 import AssetPreview from '../components/AssetPreview';
+import { SectionErrorBoundary } from '../../../components/errors/SectionErrorBoundary';
 import BulkActionBar from '../components/BulkActionBar';
 import UploadPanel from '../components/UploadPanel';
 import ActionMenu from '../components/ActionMenu';
@@ -760,15 +761,17 @@ function MediaRepositoryContent() {
       )}
 
       {previewIndex >= 0 && (
-        <AssetPreview
-          assets={visibleAssets}
-          index={previewIndex}
-          onNavigate={i => setPreviewId(visibleAssets[i]?.id ?? null)}
-          onClose={() => setPreviewId(null)}
-          onCaption={openCaptionStudio}
-          onUseInPost={asset => startPostWith([asset])}
-          onDelete={setAssetToDelete}
-        />
+        <SectionErrorBoundary name="media-preview" title="This file's preview couldn't be displayed." resetKeys={[previewIndex]}>
+          <AssetPreview
+            assets={visibleAssets}
+            index={previewIndex}
+            onNavigate={i => setPreviewId(visibleAssets[i]?.id ?? null)}
+            onClose={() => setPreviewId(null)}
+            onCaption={openCaptionStudio}
+            onUseInPost={asset => startPostWith([asset])}
+            onDelete={setAssetToDelete}
+          />
+        </SectionErrorBoundary>
       )}
 
       <FolderNameDialog

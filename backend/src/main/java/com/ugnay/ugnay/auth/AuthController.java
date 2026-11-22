@@ -1,9 +1,13 @@
 package com.ugnay.ugnay.auth;
 
 import com.ugnay.ugnay.core.*;
+import com.ugnay.ugnay.core.error.ApiException;
+import com.ugnay.ugnay.core.error.AuthenticationRequiredException;
+import com.ugnay.ugnay.core.error.ErrorCode;
+import com.ugnay.ugnay.core.error.ResourceConflictException;
 import com.ugnay.ugnay.facebook.FacebookOAuthService;
 import lombok.*;
-import org.springframework.http.HttpStatus;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -19,6 +23,10 @@ import java.util.Optional;
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
 public class AuthController {
+
+    // The login form recognises this text ("security"), so keep it as is.
+    private static final String SECURITY_VERIFICATION_FAILED = "Security verification failed. Please try again.";
+    private static final String EMAIL_ALREADY_REGISTERED = "Email already registered";
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -46,15 +54,12 @@ public class AuthController {
         // 1. Turnstile verification — must happen before any business logic
         String clientIp = extractClientIp(httpRequest);
         if (!turnstileService.verify(req.turnstileToken(), clientIp)) {
-            return ResponseEntity.badRequest().body(Map.of(
-                "error", "Security Verification Failed",
-                "message", "Security verification failed. Please try again."
-            ));
+            throw new ApiException(ErrorCode.SECURITY_VERIFICATION_FAILED, SECURITY_VERIFICATION_FAILED);
         }
 
-        // 2. Email uniqueness check
+        // 2. Email uniqueness check (the unique constraint below also covers two sign-ups racing each other)
         if (userRepository.existsByEmail(req.email())) {
-            return ResponseEntity.badRequest().body("Email already registered");
+            throw new ResourceConflictException(EMAIL_ALREADY_REGISTERED);
         }
 
         // 3. Create user
@@ -71,10 +76,19 @@ public class AuthController {
             .captionAvoid(req.captionAvoid() != null ? req.captionAvoid().trim() : null)
             .tonePreference(User.TonePreference.FORMAL)
             .build();
-        userRepository.save(user);
+        saveNewUser(user);
         String token = jwtUtil.generateToken(user.getEmail(), user.getId().toString());
         setAuthCookie(httpResponse, httpRequest, token);
         return ResponseEntity.ok(new AuthResponse(token, user.getId(), user.getOrgName()));
+    }
+
+    /** A concurrent sign-up with the same email hits the unique constraint: report it like the pre-check does. */
+    private void saveNewUser(User user) {
+        try {
+            userRepository.save(user);
+        } catch (DataIntegrityViolationException ex) {
+            throw new ResourceConflictException(EMAIL_ALREADY_REGISTERED, ex);
+        }
     }
 
     @PostMapping("/login")
@@ -86,18 +100,13 @@ public class AuthController {
         // 1. Turnstile verification — must happen before any business logic
         String clientIp = extractClientIp(httpRequest);
         if (!turnstileService.verify(req.turnstileToken(), clientIp)) {
-            return ResponseEntity.badRequest().body(Map.of(
-                "error", "Security Verification Failed",
-                "message", "Security verification failed. Please try again."
-            ));
+            throw new ApiException(ErrorCode.SECURITY_VERIFICATION_FAILED, SECURITY_VERIFICATION_FAILED);
         }
 
         // 2. Account Lockout Check
         if (rateLimiterService.isAccountLocked(email)) {
-            return ResponseEntity.status(HttpStatus.LOCKED).body(Map.of(
-                "error", "Account Locked",
-                "message", "Too many failed login attempts. Your account is locked for 15 minutes."
-            ));
+            throw new ApiException(ErrorCode.ACCOUNT_LOCKED,
+                "Too many failed login attempts. Your account is locked for 15 minutes.");
         }
 
         // 3. Database Lookup & Password Verification
@@ -107,10 +116,8 @@ public class AuthController {
             rateLimiterService.recordFailedLogin(email);
             int remaining = rateLimiterService.getRemainingAttempts(email);
 
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
-                "error", "Invalid Credentials",
-                "message", "Invalid email or password. Remaining attempts before lockout: " + remaining
-            ));
+            throw new ApiException(ErrorCode.INVALID_CREDENTIALS,
+                "Invalid email or password. Remaining attempts before lockout: " + remaining);
         }
 
         // 4. Reset Fail Counters on Success
@@ -135,10 +142,8 @@ public class AuthController {
         try {
             identity = googleAuthService.verify(req.accessToken());
         } catch (GoogleAuthService.GoogleAuthException e) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
-                "error", "Google Sign-In Failed",
-                "message", e.getMessage()
-            ));
+            // GoogleAuthException messages are fixed, user-facing texts.
+            throw new ApiException(ErrorCode.AUTHENTICATION_FAILED, e.getMessage());
         }
 
         Optional<User> existing = userRepository.findByEmail(identity.email());
@@ -168,7 +173,7 @@ public class AuthController {
             .captionAvoid(req.captionAvoid() != null ? req.captionAvoid().trim() : null)
             .tonePreference(User.TonePreference.FORMAL)
             .build();
-        userRepository.save(user);
+        saveNewUser(user);
         String token = jwtUtil.generateToken(user.getEmail(), user.getId().toString());
         setAuthCookie(httpResponse, httpRequest, token);
         return ResponseEntity.ok(new GoogleAuthResponse(token, user.getId(), user.getOrgName(), false, true, user.getEmail()));
@@ -191,9 +196,7 @@ public class AuthController {
     @GetMapping("/me")
     public ResponseEntity<CurrentUserResponse> me(@AuthenticationPrincipal User user) {
         // /api/auth/** is public, so a request without a valid session arrives here with no user.
-        if (user == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        }
+        AuthenticationRequiredException.requireAuthenticated(user);
         var connection = facebookOAuthService.buildConnectionDetails(user);
         return ResponseEntity.ok(new CurrentUserResponse(
             user.getId(),
@@ -215,6 +218,8 @@ public class AuthController {
     @PatchMapping("/profile")
     public ResponseEntity<CurrentUserResponse> updateProfile(@AuthenticationPrincipal User authUser,
                                                              @RequestBody UpdateUserProfileRequest req) {
+        // Public prefix: without this, an anonymous call failed with a NullPointerException (500).
+        AuthenticationRequiredException.requireAuthenticated(authUser);
         User user = userRepository.findById(authUser.getId()).orElse(authUser);
         if (req.orgName() != null && !req.orgName().isBlank()) {
             user.setOrgName(req.orgName().trim());
@@ -267,10 +272,8 @@ public class AuthController {
             passwordResetService.resetPassword(req.token(), req.newPassword());
             return ResponseEntity.ok(Map.of("message", "Password successfully reset. You can now log in."));
         } catch (PasswordResetService.PasswordResetException e) {
-            return ResponseEntity.badRequest().body(Map.of(
-                "error", "Reset Failed",
-                "message", e.getMessage()
-            ));
+            // PasswordResetException messages are fixed, user-facing texts.
+            throw new ApiException(ErrorCode.BAD_REQUEST, e.getMessage());
         }
     }
 
@@ -289,7 +292,7 @@ public class AuthController {
     ) {}
 
     public record RegisterRequest(
-        @jakarta.validation.constraints.Email String email,
+        @jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Email String email,
         @jakarta.validation.constraints.NotBlank String password,
         @jakarta.validation.constraints.NotBlank String orgName,
         @jakarta.validation.constraints.NotBlank String turnstileToken,
@@ -303,7 +306,7 @@ public class AuthController {
     ) {}
 
     public record LoginRequest(
-        @jakarta.validation.constraints.Email String email,
+        @jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Email String email,
         @jakarta.validation.constraints.NotBlank String password,
         @jakarta.validation.constraints.NotBlank String turnstileToken
     ) {}

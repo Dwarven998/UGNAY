@@ -13,6 +13,7 @@ import java.util.concurrent.Executors;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
+import com.ugnay.ugnay.core.error.LogSanitizer;
 import com.ugnay.ugnay.facebook.FacebookService;
 
 import lombok.RequiredArgsConstructor;
@@ -146,7 +147,7 @@ public class EngagementSyncService {
                 log.warn("Failed to sync Facebook engagement for post {} ({}): {} - {}",
                     post.getId(), post.getFbPostId(), wce.getStatusCode(), wce.getResponseBodyAsString());
             } else {
-                log.warn("Failed to sync Facebook engagement for post {}: {}", post.getId(), ex.getMessage());
+                log.warn("Failed to sync Facebook engagement for post {}: {}", post.getId(), LogSanitizer.describe(ex));
             }
         }
     }

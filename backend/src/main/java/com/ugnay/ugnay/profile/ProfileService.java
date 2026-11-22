@@ -2,6 +2,7 @@ package com.ugnay.ugnay.profile;
 
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.core.UserRepository;
+import com.ugnay.ugnay.core.error.ResourceNotFoundException;
 import com.ugnay.ugnay.media.MediaAsset;
 import com.ugnay.ugnay.org.Organization;
 import com.ugnay.ugnay.org.OrganizationMembership;
@@ -44,7 +45,8 @@ public class ProfileService {
 
     @Transactional(readOnly = true)
     public ProfileDto load(UUID userId) {
-        User user = userRepository.findById(userId).orElseThrow();
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new ResourceNotFoundException("Account not found."));
 
         List<MembershipDto> memberships = membershipRepository.findByUserId(userId).stream()
             .map(ProfileService::toMembership)

@@ -21,6 +21,8 @@ import com.ugnay.ugnay.core.JwtUtil;
 import com.ugnay.ugnay.core.PooledHttpConnector;
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.core.UserRepository;
+import com.ugnay.ugnay.core.error.LogSanitizer;
+import com.ugnay.ugnay.core.error.ResourceNotFoundException;
 import com.ugnay.ugnay.media.MediaFolderRepository;
 import com.ugnay.ugnay.org.Organization;
 import com.ugnay.ugnay.org.OrganizationPermissionService;
@@ -29,6 +31,7 @@ import com.ugnay.ugnay.post.PostRepository;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import reactor.core.Exceptions;
 import reactor.util.retry.Retry;
 
 @Service
@@ -114,17 +117,23 @@ public class FacebookOAuthService {
     @Transactional
     public ConnectionResult completeAuthorization(String code, String state) {
         if (code == null || code.isBlank()) {
-            throw new IllegalArgumentException("Missing Facebook authorization code");
+            throw new FacebookOAuthException(FacebookOAuthException.Reason.MISSING_CODE);
         }
         if (state == null || state.isBlank() || !jwtUtil.isValid(state)) {
-            throw new IllegalArgumentException("Invalid Facebook OAuth state");
+            throw new FacebookOAuthException(FacebookOAuthException.Reason.INVALID_STATE);
         }
 
-        UUID userId = UUID.fromString(jwtUtil.extractUserId(state));
+        UUID userId;
+        UUID orgId;
+        try {
+            userId = UUID.fromString(jwtUtil.extractUserId(state));
+            String orgIdStr = jwtUtil.extractOrgId(state);
+            orgId = orgIdStr != null ? UUID.fromString(orgIdStr) : null;
+        } catch (RuntimeException ex) {
+            throw new FacebookOAuthException(FacebookOAuthException.Reason.INVALID_STATE);
+        }
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
-        String orgIdStr = jwtUtil.extractOrgId(state);
-        UUID orgId = orgIdStr != null ? UUID.fromString(orgIdStr) : null;
+                .orElseThrow(() -> new FacebookOAuthException(FacebookOAuthException.Reason.INVALID_STATE));
 
         FacebookPageAccount pageAccount;
         String facebookUserName;
@@ -148,7 +157,7 @@ public class FacebookOAuthService {
 
             if (orgId != null) {
                 Organization org = organizationRepository.findById(orgId)
-                        .orElseThrow(() -> new IllegalArgumentException("Organization not found"));
+                        .orElseThrow(() -> new FacebookOAuthException(FacebookOAuthException.Reason.ORGANIZATION_NOT_FOUND));
                 org.setFbPageId(pageAccount.pageId());
                 org.setFbAccessToken(pageAccount.pageAccessToken());
                 organizationRepository.save(org);
@@ -162,10 +171,16 @@ public class FacebookOAuthService {
                 postRepository.claimUnassignedForUser(user, pageAccount.pageId());
                 mediaFolderRepository.claimUnassignedForUser(user, pageAccount.pageId());
             }
-        } catch (Exception ex) {
-            log.error("Facebook OAuth completion failed for user={}, state={}: {}", user.getId(), state,
-                    ex.getMessage(), ex);
+        } catch (FacebookOAuthException ex) {
+            // Never log the state (a signed token) or the code; the reason and ids are enough to diagnose.
+            log.warn("Facebook OAuth completion failed for user={}, org={}: reason={}", user.getId(), orgId,
+                    ex.getReason());
             throw ex;
+        } catch (RuntimeException ex) {
+            FacebookOAuthException.Reason reason = classifyOAuthFailure(ex);
+            log.error("Facebook OAuth completion failed for user={}, org={}: reason={}, cause={}", user.getId(), orgId,
+                    reason, LogSanitizer.describe(ex));
+            throw new FacebookOAuthException(reason, ex);
         }
 
         eventPublisher.publishEvent(new FacebookConnectionChangedEvent(user.getId(), orgId));
@@ -176,6 +191,15 @@ public class FacebookOAuthService {
                 pageAccount.pageName(),
                 pageAccount.pagePictureUrl()
         ), facebookUserName);
+    }
+
+    private static FacebookOAuthException.Reason classifyOAuthFailure(RuntimeException ex) {
+        if (ex instanceof FacebookGraphException graph) {
+            return graph.isUnavailable()
+                    ? FacebookOAuthException.Reason.FACEBOOK_UNAVAILABLE
+                    : FacebookOAuthException.Reason.TOKEN_EXCHANGE_FAILED;
+        }
+        return FacebookOAuthException.Reason.UNKNOWN;
     }
 
     /** Name of the Facebook user who approved the connection, shown in the "connected" message. Cosmetic only. */
@@ -191,7 +215,7 @@ public class FacebookOAuthService {
             Map<String, Object> response = executeGraphGet(uri, PAGE_DETAILS_TIMEOUT, 1, Duration.ofMillis(300));
             return response != null ? stringValue(response.get("name")) : null;
         } catch (RuntimeException ex) {
-            log.warn("Could not read the Facebook user's name: {}", ex.getMessage());
+            log.warn("Could not read the Facebook user's name: {}", LogSanitizer.describe(ex));
             return null;
         }
     }
@@ -206,7 +230,7 @@ public class FacebookOAuthService {
     public FacebookConnectionDetails buildConnectionDetailsForOrg(User user, UUID orgId) {
         organizationPermissionService.requireApprovedMember(user.getId(), orgId);
         Organization org = organizationRepository.findById(orgId)
-                .orElseThrow(() -> new IllegalArgumentException("Organization not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Organization not found"));
         return resolveConnectionDetails(org.getFbPageId(), org.getFbAccessToken());
     }
 
@@ -224,7 +248,7 @@ public class FacebookOAuthService {
             pageDetailsCache.put(pageId, new CachedPageDetails(page, now));
             return toConnectionDetails(pageId, page);
         } catch (RuntimeException ex) {
-            log.warn("Could not refresh Facebook Page details for {}: {}", pageId, ex.getMessage());
+            log.warn("Could not refresh Facebook Page details for {}: {}", pageId, LogSanitizer.describe(ex));
             return cached != null
                     ? toConnectionDetails(pageId, cached.details())
                     : new FacebookConnectionDetails(true, pageId, null, null);
@@ -242,7 +266,7 @@ public class FacebookOAuthService {
         if (orgId != null) {
             organizationPermissionService.requireOfficerOrAdmin(user.getId(), orgId);
             Organization org = organizationRepository.findById(orgId)
-                    .orElseThrow(() -> new IllegalArgumentException("Organization not found"));
+                    .orElseThrow(() -> new ResourceNotFoundException("Organization not found"));
             org.setFbPageId(null);
             org.setFbAccessToken(null);
             organizationRepository.save(org);
@@ -297,7 +321,7 @@ public class FacebookOAuthService {
 
         List<Map<String, Object>> data = readList(response, "data");
         if (data.isEmpty()) {
-            throw new IllegalStateException("No Facebook Page connected to the account");
+            throw new FacebookOAuthException(FacebookOAuthException.Reason.NO_PAGE);
         }
         return toPageAccount(data.get(0));
     }
@@ -335,7 +359,7 @@ public class FacebookOAuthService {
 
     private String readToken(Map<String, Object> response) {
         if (response == null || response.get("access_token") == null) {
-            throw new IllegalStateException("Facebook token exchange failed");
+            throw new FacebookOAuthException(FacebookOAuthException.Reason.TOKEN_EXCHANGE_FAILED);
         }
         return String.valueOf(response.get("access_token"));
     }
@@ -381,23 +405,36 @@ public class FacebookOAuthService {
                                 .doBeforeRetry(signal -> log.warn(
                                 "Retrying Facebook Graph request attempt {} for {}",
                                 signal.totalRetries() + 1,
-                                uri
+                                LogSanitizer.redact(uri)
                         ))
                 )
+                // The URI carries client_secret / access_token / fb_exchange_token: only its redacted form is
+                // logged, and the error that leaves this method neither embeds it in its message nor in its causes.
                 .doOnError(error -> {
-                    if (error instanceof WebClientResponseException wre) {
-                        try {
-                            log.error("Facebook Graph response error for {}: status={}, body={}", uri, wre.getRawStatusCode(),
-                                    wre.getResponseBodyAsString());
-                        } catch (Exception e) {
-                            log.error("Failed to log response body for {}: {}", uri, e.getMessage(), e);
-                        }
+                    Throwable cause = Exceptions.isRetryExhausted(error) && error.getCause() != null ? error.getCause() : error;
+                    if (cause instanceof WebClientResponseException wre) {
+                        log.error("Facebook Graph response error for {}: status={}, body={}", LogSanitizer.redact(uri),
+                                wre.getStatusCode().value(), LogSanitizer.redact(wre.getResponseBodyAsString()));
                     } else {
-                        log.error("Facebook Graph request failed for {}: {}", uri, error.getMessage(), error);
+                        log.error("Facebook Graph request failed for {}: {}", LogSanitizer.redact(uri),
+                                LogSanitizer.describe(cause));
                     }
                 })
-                .onErrorMap(error -> error instanceof RuntimeException ? error : new IllegalStateException(error.getMessage(), error))
+                .onErrorMap(error -> !(error instanceof FacebookOAuthException), FacebookOAuthService::toGraphException)
                 .block();
+    }
+
+    private static FacebookGraphException toGraphException(Throwable error) {
+        Throwable cause = Exceptions.isRetryExhausted(error) && error.getCause() != null ? error.getCause() : error;
+        if (cause instanceof WebClientResponseException wre) {
+            int status = wre.getStatusCode().value();
+            return new FacebookGraphException(status, false, "Facebook Graph request failed (HTTP " + status + ")",
+                    LogSanitizer.scrub(cause));
+        }
+        boolean timeout = cause instanceof TimeoutException;
+        return new FacebookGraphException(0, timeout,
+                timeout ? "Facebook Graph request timed out" : "Facebook Graph request failed: " + LogSanitizer.describe(cause),
+                LogSanitizer.scrub(cause));
     }
 
     private boolean isRetryableGraphError(Throwable error) {

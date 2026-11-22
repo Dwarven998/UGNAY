@@ -1,0 +1,120 @@
+/* Error fallbacks and status banners. Colours follow the existing inline error states (home.css .hd-error). */
+
+.ug-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.ug-error-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+.ug-error-page__card {
+  width: 100%;
+  max-width: 480px;
+  padding: 32px 28px;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+}
+
+.ug-error-page__logo {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  margin-bottom: 16px;
+}
+
+.ug-error-page h1,
+.ug-error-route h2 {
+  margin: 0 0 8px;
+  font-family: 'Manrope', 'Inter', sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.ug-error-page p,
+.ug-error-route p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #475569;
+}
+
+.ug-error-route {
+  margin: 24px auto;
+  max-width: 640px;
+  padding: 28px 24px;
+  border: 1px solid #fecaca;
+  border-radius: 16px;
+  background: #fef2f2;
+}
+
+.ug-error-route h2 {
+  color: #991b1b;
+}
+
+.ug-error-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #fecaca;
+  border-radius: 14px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ug-status-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  z-index: 1000;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #f8fafc;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.25);
+}
+
+.ug-status-banner--success {
+  background: #065f46;
+}
+
+.ug-session-unavailable {
+  display: flex;
+  height: 100vh;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .ug-error-section { flex-direction: column; align-items: flex-start; }
+  .ug-error-actions .ug-btn { flex: 1 1 100%; }
+}

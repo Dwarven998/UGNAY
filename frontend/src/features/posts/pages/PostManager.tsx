@@ -9,12 +9,13 @@ import type { Post, PostConflict } from '../../../types';
 import { SETUP_FACEBOOK_RETURN_KEY } from '../../setup/setupStatus';
 import { postApi, type PostUpsertPayload } from '../api/postApi';
 import { prefillFromPost } from '../composerHandoff';
-import { facebookConnectedMessage } from '../facebookConnectedMessage';
+import { facebookConnectedMessage, facebookFailureMessage } from '../facebookConnectedMessage';
 import FacebookPageConnectButton from '../components/FacebookPageConnectButton';
 import { useFacebookConnection } from '../hooks/useFacebookConnection';
 import PostEditorModal, { type PostEditorDraft } from '../components/PostEditorModal';
 import PostPreviewModal from '../components/PostPreviewModal';
 import PostSchedulerCalendar from '../components/PostSchedulerCalendar';
+import { SectionErrorBoundary } from '../../../components/errors/SectionErrorBoundary';
 import PostThumb from '../components/PostThumb';
 import { postCache, postThumbnail } from '../postCache';
 import '../../../components/ui/dialog.css';
@@ -235,7 +236,6 @@ export default function PostManager() {
       return;
     }
 
-    const message = searchParams.get('message');
     let returnToSetup = false;
     try {
       returnToSetup = sessionStorage.getItem(SETUP_FACEBOOK_RETURN_KEY) === '1';
@@ -245,8 +245,7 @@ export default function PostManager() {
     }
     if (returnToSetup) {
       const query = new URLSearchParams({ facebook: facebookState });
-      if (message) query.set('message', message);
-      for (const key of ['page', 'fbUser']) {
+      for (const key of ['reason', 'page', 'fbUser']) {
         const value = searchParams.get(key);
         if (value) query.set(key, value);
       }
@@ -256,7 +255,7 @@ export default function PostManager() {
 
     void refreshFacebookConnection();
     if (facebookState === 'failed') {
-      setError(message || 'Facebook connection failed.');
+      setError(facebookFailureMessage(searchParams));
     } else {
       setError('');
       setInfo(facebookConnectedMessage(searchParams));
@@ -670,7 +669,9 @@ export default function PostManager() {
       {view === 'calendar' ? (
         /* ── Calendar view ── */
         <div className="upe-layout">
-          <PostSchedulerCalendar posts={posts} onDateClick={openCreate} onEventClick={handleEventClick} />
+          <SectionErrorBoundary name="post-calendar" title="The calendar couldn't be displayed. Switch to the list view, or try again." resetKeys={[posts]}>
+            <PostSchedulerCalendar posts={posts} onDateClick={openCreate} onEventClick={handleEventClick} />
+          </SectionErrorBoundary>
 
           <div className="upe-sidebar-stack">
           {pendingApprovalCard}

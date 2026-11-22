@@ -43,6 +43,9 @@ import reactor.util.retry.Retry;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ugnay.ugnay.core.PooledHttpConnector;
+import com.ugnay.ugnay.core.error.ErrorCode;
+import com.ugnay.ugnay.core.error.ExternalServiceException;
+import com.ugnay.ugnay.core.error.LogSanitizer;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -206,7 +209,7 @@ public class GeminiClient {
                 return cleaned;
             }
         } catch (Exception e) {
-            log.warn("Step 1 media describe failed, proceeding to direct write: {}", e.getMessage());
+            log.warn("Step 1 media describe failed, proceeding to direct write: {}", LogSanitizer.describe(e));
         }
         return null;
     }
@@ -248,7 +251,7 @@ public class GeminiClient {
                 return cleaned;
             }
         } catch (Exception e) {
-            log.warn("Step 1 album describe failed: {}", e.getMessage());
+            log.warn("Step 1 album describe failed: {}", LogSanitizer.describe(e));
         }
         return null;
     }
@@ -372,7 +375,7 @@ public class GeminiClient {
             parts.add(Map.of("text", "Image ID: " + asset.id()));
             ModelImage image = downloaded.get(i);
             if (image == null) {
-                log.warn("Skipping image in ranking (download failed): {}", asset.fileUrl());
+                log.warn("Skipping image in ranking (download failed): {}", LogSanitizer.redact(asset.fileUrl()));
                 continue;
             }
             parts.add(image.part());
@@ -407,7 +410,7 @@ public class GeminiClient {
         for (int i = 0; i < imageUrls.size(); i++) {
             ModelImage image = downloaded.get(i);
             if (image == null) {
-                log.warn("Skipping image in multi-caption (download failed): {}", imageUrls.get(i));
+                log.warn("Skipping image in multi-caption (download failed): {}", LogSanitizer.redact(imageUrls.get(i)));
                 continue;
             }
             parts.add(image.part()); // Images FIRST
@@ -438,8 +441,8 @@ public class GeminiClient {
         Thread thread = new Thread(() -> {
             try {
                 URI base = URI.create(apiUrl);
-                String modelsUrl = base.getScheme() + "://" + base.getHost() + "/v1beta/models?pageSize=1&key=" + apiKey;
-                webClient.get().uri(URI.create(modelsUrl)).retrieve().toBodilessEntity().block(Duration.ofSeconds(15));
+                String modelsUrl = base.getScheme() + "://" + base.getHost() + "/v1beta/models?pageSize=1";
+                webClient.get().uri(URI.create(modelsUrl)).headers(this::apiKeyHeader).retrieve().toBodilessEntity().block(Duration.ofSeconds(15));
             } catch (Exception ignored) {
                 // Only a warm-up; the first real call simply opens the connection itself.
             }
@@ -526,7 +529,10 @@ public class GeminiClient {
             );
 
             return webClient.post()
-                .uri(URI.create(modelsBaseUrl() + model + ":generateContent?key=" + apiKey))
+                // The key travels in a header, not the query string, so it can never appear in a logged URL
+                // or in a WebClientResponseException message.
+                .uri(URI.create(modelsBaseUrl() + model + ":generateContent"))
+                .headers(this::apiKeyHeader)
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
@@ -577,11 +583,14 @@ public class GeminiClient {
         for (Throwable error : errors) {
             if (error instanceof WebClientResponseException e && e.getStatusCode().is4xxClientError()
                 && e.getStatusCode().value() != 404 && e.getStatusCode().value() != 429) {
-                return new ResponseStatusException(HttpStatus.BAD_GATEWAY,
-                    "The AI assistant rejected the request: " + geminiMessage(e.getResponseBodyAsString()), e);
+                // Google's own error text is logged by generate() ("Every Gemini model failed …"), not shown to users.
+                return new ExternalServiceException(ExternalServiceException.Service.GEMINI,
+                    ErrorCode.EXTERNAL_SERVICE_ERROR,
+                    "The AI assistant could not process this request. Please try again, or adjust your notes or image.", e);
             }
         }
-        return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+        return new ExternalServiceException(ExternalServiceException.Service.GEMINI,
+            ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE,
             "The AI assistant is busy right now (Google's Gemini service is overloaded). Please try again in a moment.",
             errors.isEmpty() ? fallback : errors.get(0));
     }
@@ -594,7 +603,7 @@ public class GeminiClient {
         if (error instanceof WebClientResponseException e) {
             return "HTTP " + e.getStatusCode().value() + " " + abbreviate(geminiMessage(e.getResponseBodyAsString()));
         }
-        return error.getClass().getSimpleName() + ": " + error.getMessage();
+        return LogSanitizer.describe(error);
     }
 
     /** The configured model first, then the fallbacks, without duplicates. */
@@ -607,6 +616,13 @@ public class GeminiClient {
             if (!trimmed.isEmpty() && !models.contains(trimmed)) models.add(trimmed);
         }
         return models;
+    }
+
+    /** Gemini accepts the API key as the x-goog-api-key header, which keeps it out of request URLs. */
+    private void apiKeyHeader(org.springframework.http.HttpHeaders headers) {
+        if (apiKey != null && !apiKey.isBlank()) {
+            headers.set("x-goog-api-key", apiKey);
+        }
     }
 
     /** ".../v1beta/models/" from gemini.api.url. */
@@ -757,8 +773,8 @@ public class GeminiClient {
             } catch (Exception e) {
                 lastError = e;
             }
-            log.warn("Image download attempt {} failed for {}: {}", attempt, imageUrl,
-                lastError != null ? lastError.getMessage() : "unknown error");
+            log.warn("Image download attempt {} failed for {}: {}", attempt, LogSanitizer.redact(imageUrl),
+                lastError != null ? LogSanitizer.describe(lastError) : "unknown error");
             if (attempt < DOWNLOAD_ATTEMPTS) sleepQuietly(400L * attempt);
         }
         throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
@@ -1225,12 +1241,12 @@ public class GeminiClient {
     }
 
     private RuntimeException quotaExceededException(Throwable cause) {
-        return new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
-            "Gemini API quota exceeded for this key/model. The free tier only allows a limited number "
-                + "of requests per minute and per day — wait a moment (or for the daily reset), or switch to an "
-                + "API key/model with a higher quota.",
-            cause
-        );
+        // Still a ResponseStatusException with status 429, so callers that check for it keep working.
+        log.warn("Gemini API quota exceeded for the configured key/model (free tier per-minute or daily limit).");
+        return new ExternalServiceException(ExternalServiceException.Service.GEMINI, ErrorCode.AI_QUOTA_EXCEEDED,
+            "The AI assistant has reached its usage limit for now. Please wait a minute and try again; "
+                + "if it keeps happening, the daily limit was reached and it will reset tomorrow.",
+            cause);
     }
 
     private static void sleepQuietly(long millis) {

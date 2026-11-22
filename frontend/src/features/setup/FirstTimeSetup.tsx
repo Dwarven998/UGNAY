@@ -7,7 +7,7 @@ import { useOrganization } from '../../context/useOrganization';
 import type { OrgType } from '../../types';
 import { organizationAdminApi, organizationApi } from '../organizations/api/organizationApi';
 import { useFacebookConnection } from '../posts/hooks/useFacebookConnection';
-import { facebookConnectedMessage } from '../posts/facebookConnectedMessage';
+import { facebookConnectedMessage, facebookFailureMessage } from '../posts/facebookConnectedMessage';
 import GuideTooltip from '../../components/ui/GuideTooltip';
 import {
   FACEBOOK_OAUTH_GUIDE_STEPS,
@@ -45,7 +45,7 @@ export default function FirstTimeSetup() {
     return 'workspace';
   });
   const [mode, setMode] = useState<WorkspaceMode>('choose');
-  const [error, setError] = useState(facebookParam === 'failed' ? (searchParams.get('message') || 'Facebook connection failed.') : '');
+  const [error, setError] = useState(facebookParam === 'failed' ? facebookFailureMessage(searchParams) : '');
   const [info, setInfo] = useState(facebookParam === 'connected' ? facebookConnectedMessage(searchParams) : '');
   const [busy, setBusy] = useState(false);
   const [guideModalOpen, setGuideModalOpen] = useState(false);
