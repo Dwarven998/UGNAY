@@ -190,6 +190,10 @@ public class AuthController {
 
     @GetMapping("/me")
     public ResponseEntity<CurrentUserResponse> me(@AuthenticationPrincipal User user) {
+        // /api/auth/** is public, so a request without a valid session arrives here with no user.
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
         var connection = facebookOAuthService.buildConnectionDetails(user);
         return ResponseEntity.ok(new CurrentUserResponse(
             user.getId(),

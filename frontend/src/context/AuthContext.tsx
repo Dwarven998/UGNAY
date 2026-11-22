@@ -55,9 +55,35 @@ interface AuthContextType {
 
 export const AuthContext = createContext<AuthContextType | null>(null);
 
+/**
+ * A plain UI hint (not a credential) that this browser had a signed-in session. Without it there is no
+ * session cookie worth checking, so the app shows the login page at once instead of waiting on
+ * /api/auth/me, which can take minutes while the hosted backend wakes from sleep. The server still
+ * checks every request. Starts with 'ugnay_' so secureStorage.clear() removes it on sign-out.
+ */
+const SESSION_HINT_KEY = 'ugnay_session_hint';
+
+function readSessionHint(): boolean {
+  try {
+    return localStorage.getItem(SESSION_HINT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeSessionHint(signedIn: boolean) {
+  try {
+    if (signedIn) localStorage.setItem(SESSION_HINT_KEY, '1');
+    else localStorage.removeItem(SESSION_HINT_KEY);
+  } catch {
+    // storage unavailable: the app falls back to the login page
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // Only block on the session check when this browser was signed in before.
+  const [isLoading, setIsLoading] = useState(readSessionHint);
 
   // Install active storage protection and purge legacy sensitive credentials from localStorage.
   // When another tab signs out, confirm with the server (the HttpOnly session cookie is shared by all tabs)
@@ -82,14 +108,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data } = await axiosClient.get<CurrentUserProfile>('/api/auth/me');
       if (data && data.userId) {
+        writeSessionHint(true);
         setUser({
           ...data,
           token: '', // Session is managed via HttpOnly cookie
         });
       } else {
+        writeSessionHint(false);
         setUser(null);
       }
     } catch {
+      writeSessionHint(false);
       setUser(null);
     } finally {
       setIsLoading(false);
@@ -158,6 +187,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // This tab forgets the user at once.
     scopedCache.clear();
     secureStorage.purgeSensitiveKeys();
+    writeSessionHint(false);
     setUser(null);
     // Storage (and its signing secret) is cleared only after the server has ended the session, because
     // clearing it is what tells the other open tabs to sign out, and they check the session when told.

@@ -44,6 +44,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers("/api/facebook/**").permitAll()
                 .requestMatchers("/error").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/health").permitAll()
                 .anyRequest().authenticated()
             )
             // Execute rate limiting filter before JWT processing and authentication

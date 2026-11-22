@@ -23,9 +23,25 @@ import OrganizationsPage from './features/organizations/user/pages/Organizations
 import OrganizationAdminPage from './features/organizations/admin/pages/OrganizationAdminPage.tsx';
 import ProfilePage from './features/profile/pages/ProfilePage.tsx';
 
+function SessionCheckScreen() {
+  // The hosted backend sleeps when idle and can take a while to wake; say so instead of a bare "Loading…".
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSlow(true), 4000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  return (
+    <div className="flex h-screen flex-col items-center justify-center gap-2 text-center" role="status">
+      <p>Checking your session…</p>
+      {slow && <p className="text-sm opacity-70">The server is waking up. This can take up to a minute.</p>}
+    </div>
+  );
+}
+
 function ProtectedRoute({ children }: Readonly<{ children: ReactNode }>) {
   const { user, isLoading } = useAuth();
-  if (isLoading) return <div className="flex h-screen items-center justify-center" role="status">Loading…</div>;
+  if (isLoading) return <SessionCheckScreen />;
   return user ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
