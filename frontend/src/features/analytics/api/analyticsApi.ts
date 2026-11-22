@@ -1,5 +1,5 @@
 import axiosClient from '../../../api/axiosClient';
-import type { ApiResponse } from '../../../api/axiosClient';
+import type { ApiResponse, RequestOptions } from '../../../api/axiosClient';
 
 export interface Trend { value: number; previous: number; changePercent: number | null }
 export interface DayPoint { date: string; value: number }
@@ -100,14 +100,17 @@ const withOrg = (path: string, orgId?: string | null, extra = '') => {
   return params ? `${path}?${params}` : path;
 };
 
+// Polled every few seconds (usePolling): the next tick is the retry, so the client doesn't add its own.
+const POLLING: RequestOptions = { retries: 0 };
+
 export const analyticsApi = {
   getDashboard: (orgId: string | null | undefined, days: number) =>
     axiosClient
-      .get<Dashboard>(withOrg('/api/analytics/dashboard', orgId, `days=${days}`))
+      .get<Dashboard>(withOrg('/api/analytics/dashboard', orgId, `days=${days}`), POLLING)
       .then((r: ApiResponse<Dashboard>) => r.data),
   getPostDetail: (orgId: string | null | undefined, fbPostId: string) =>
     axiosClient
-      .get<PostDetail>(withOrg(`/api/analytics/posts/${encodeURIComponent(fbPostId)}`, orgId))
+      .get<PostDetail>(withOrg(`/api/analytics/posts/${encodeURIComponent(fbPostId)}`, orgId), POLLING)
       .then((r: ApiResponse<PostDetail>) => r.data),
   getRecommendation: (orgId: string | null | undefined) =>
     axiosClient

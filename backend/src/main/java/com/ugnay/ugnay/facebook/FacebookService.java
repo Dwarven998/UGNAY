@@ -16,6 +16,8 @@ import org.springframework.web.reactive.function.client.WebClientRequestExceptio
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.util.retry.Retry;
 
+import com.ugnay.ugnay.core.error.LogSanitizer;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -281,11 +283,12 @@ public class FacebookService {
                 .block();
         } catch (WebClientResponseException ex) {
             log.debug("Primary Graph API engagement query failed for post {} (HTTP {}): {}, attempting resilient fallback",
-                fbPostId, ex.getStatusCode(), ex.getResponseBodyAsString());
+                fbPostId, ex.getStatusCode(), LogSanitizer.redact(ex.getResponseBodyAsString()));
             return fetchInsightsResiliently(accessToken, fbPostId);
         } catch (Exception ex) {
+            // The request URL carries the access token, and exception messages can include it.
             log.debug("Primary Graph API engagement query error for post {}: {}, attempting resilient fallback",
-                fbPostId, ex.getMessage());
+                fbPostId, LogSanitizer.describe(ex));
             return fetchInsightsResiliently(accessToken, fbPostId);
         }
     }

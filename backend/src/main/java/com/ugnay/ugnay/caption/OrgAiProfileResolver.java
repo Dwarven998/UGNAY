@@ -1,6 +1,6 @@
 package com.ugnay.ugnay.caption;
 
-import java.util.NoSuchElementException;
+import com.ugnay.ugnay.core.error.ResourceNotFoundException;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -29,7 +29,7 @@ public class OrgAiProfileResolver {
         if (orgId != null) {
             permissionService.requireApprovedMember(user.getId(), orgId);
             Organization org = organizationRepository.findById(orgId)
-                .orElseThrow(() -> new NoSuchElementException("Organization not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Organization not found"));
             return new OrgAiProfile(
                 org.getName(),
                 org.getFullName(),

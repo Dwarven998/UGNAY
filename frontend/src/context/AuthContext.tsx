@@ -1,7 +1,10 @@
 import { createContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 
-import axiosClient from '../api/axiosClient.ts';
+import axiosClient, { resetSessionExpiryGuard } from '../api/axiosClient.ts';
+import { getErrorMessage, isApiError } from '../api/errors';
+import { sessionEvents } from '../api/sessionEvents';
+import type { SessionEndReason } from '../api/sessionEvents';
 import { scopedCache } from '../features/posts/postCache';
 import { secureStorage } from '../utils/secureStorage';
 
@@ -51,6 +54,18 @@ interface AuthContextType {
   logout: () => void;
   isLoading: boolean;
   refreshUserProfile: () => Promise<void>;
+  /**
+   * Set when the session could not be checked because the server was unreachable, slow or failing (not
+   * because it was refused). The user is not signed out for this; screens offer a retry instead.
+   */
+  sessionError: string | null;
+  /** Why the last session ended on its own ("expired"), for the login page to explain. Null after a sign-in. */
+  sessionEndReason: SessionEndReason | null;
+}
+
+/** Only an explicit 401 means the session is gone; network errors, timeouts and 5xx do not sign anyone out. */
+function isSessionRefused(error: unknown): boolean {
+  return isApiError(error) && error.status === 401;
 }
 
 export const AuthContext = createContext<AuthContextType | null>(null);
@@ -84,6 +99,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   // Only block on the session check when this browser was signed in before.
   const [isLoading, setIsLoading] = useState(readSessionHint);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [sessionEndReason, setSessionEndReason] = useState<SessionEndReason | null>(null);
 
   // Install active storage protection and purge legacy sensitive credentials from localStorage.
   // When another tab signs out, confirm with the server (the HttpOnly session cookie is shared by all tabs)
@@ -93,16 +110,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       onSignedOutElsewhere: () => {
         axiosClient.get<CurrentUserProfile>('/api/auth/me')
           .then(({ data }) => {
-            if (!data?.userId) throw new Error('signed out');
+            if (!data?.userId) {
+              scopedCache.clear();
+              setUser(null);
+            }
           })
-          .catch(() => {
-            scopedCache.clear();
-            setUser(null);
+          .catch(error => {
+            // Can't reach the server: keep this tab as it is; its next request will find out.
+            if (isSessionRefused(error)) {
+              scopedCache.clear();
+              setUser(null);
+            }
           });
       },
     });
     return cleanup;
   }, []);
+
+  // Any API call answered with 401 (expired or revoked session) signs this tab out in-app.
+  useEffect(() => sessionEvents.onSessionEnded(reason => {
+    scopedCache.clear();
+    writeSessionHint(false);
+    setUser(null);
+    setSessionError(null);
+    setSessionEndReason(reason);
+  }), []);
 
   const refreshUserProfile = async () => {
     try {
@@ -113,13 +145,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ...data,
           token: '', // Session is managed via HttpOnly cookie
         });
+        setSessionError(null);
+        setSessionEndReason(null);
+        resetSessionExpiryGuard();
       } else {
         writeSessionHint(false);
         setUser(null);
+        setSessionError(null);
       }
-    } catch {
-      writeSessionHint(false);
-      setUser(null);
+    } catch (error) {
+      if (isSessionRefused(error)) {
+        writeSessionHint(false);
+        setUser(null);
+        setSessionError(null);
+      } else {
+        // Temporary failure (offline, server waking up, 5xx): don't sign out. Keep the current user, if any,
+        // and the session hint, and let the UI offer a retry.
+        setSessionError(getErrorMessage(error, "We couldn't reach the server to check your session."));
+      }
     } finally {
       setIsLoading(false);
     }
@@ -207,6 +250,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         isLoading,
         refreshUserProfile,
+        sessionError,
+        sessionEndReason,
       }}
     >
       {children}

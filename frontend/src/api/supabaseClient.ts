@@ -22,6 +22,8 @@ export async function uploadToSupabase(file: File, path: string): Promise<string
 */
 
 //new
+import { ApiError } from './errors';
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 const BUCKET = import.meta.env.VITE_SUPABASE_BUCKET || 'media';
@@ -44,6 +46,7 @@ export async function uploadToSupabase(file: File, path: string, onProgress?: (f
     await new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', url);
+      xhr.timeout = UPLOAD_TIMEOUT_MS;
       xhr.setRequestHeader('Authorization', `Bearer ${anonKey}`);
       xhr.setRequestHeader('apikey', anonKey);
       xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
@@ -53,29 +56,63 @@ export async function uploadToSupabase(file: File, path: string, onProgress?: (f
       };
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) resolve();
-        else reject(new Error(`Supabase upload failed (${xhr.status}): ${xhr.responseText}`));
+        else reject(storageUploadError(xhr.status, xhr.responseText));
       };
-      xhr.onerror = () => reject(new Error('Upload failed. Check your connection and try again.'));
+      xhr.onerror = () => reject(uploadNetworkError());
+      xhr.ontimeout = () => reject(uploadTimeoutError());
       xhr.send(file);
     });
     return publicUrl;
   }
 
-  const res = await fetch(url, {
-    method: 'PUT', 
-    headers: {
-      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-      'apikey': SUPABASE_ANON_KEY, 
-      'Content-Type': file.type || 'application/octet-stream',
-      'x-upsert': 'true',
-    },
-    body: file,
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'apikey': SUPABASE_ANON_KEY,
+        'Content-Type': file.type || 'application/octet-stream',
+        'x-upsert': 'true',
+      },
+      body: file,
+      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw error instanceof DOMException && error.name === 'TimeoutError' ? uploadTimeoutError() : uploadNetworkError();
+  }
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Supabase upload failed (${res.status}): ${text}`);
+    throw storageUploadError(res.status, await res.text().catch(() => ''));
   }
 
   return publicUrl;
+}
+
+/*
+ * Uploads go straight to Supabase Storage (not through the UGNAY API client), so their failures are turned into
+ * the same ApiError type here. The storage service's own response is logged for diagnosis but never shown.
+ */
+const UPLOAD_TIMEOUT_MS = 5 * 60_000;
+
+export function storageUploadError(status: number, responseText: string): ApiError {
+  console.warn(`[UGNAY] Storage upload failed (HTTP ${status}):`, responseText.slice(0, 300));
+  let message: string;
+  if (status === 413) message = 'This file is too large to upload.';
+  else if (status === 401 || status === 403) message = 'The file could not be stored: uploads are not permitted right now. Please contact your administrator.';
+  else if (status === 415 || status === 422) message = 'This file type cannot be uploaded. Use JPG, PNG, WebP or MP4.';
+  else if (status === 429) message = 'Too many uploads at once. Please wait a moment and try again.';
+  else if (status >= 500) message = 'File storage is temporarily unavailable. Please try again in a moment.';
+  else message = 'The file could not be uploaded. Please try again.';
+  return new ApiError(status, message, null, { code: `STORAGE_UPLOAD_FAILED` });
+}
+
+function uploadNetworkError(): ApiError {
+  return new ApiError(0, 'Upload failed. Check your connection and try again.', null, { code: 'NETWORK_ERROR', kind: 'network' });
+}
+
+function uploadTimeoutError(): ApiError {
+  return new ApiError(0, 'The upload took too long and was stopped. Check your connection and try again.', null, {
+    code: 'TIMEOUT', kind: 'timeout',
+  });
 }

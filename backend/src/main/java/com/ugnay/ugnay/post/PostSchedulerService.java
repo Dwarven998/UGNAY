@@ -3,7 +3,6 @@ package com.ugnay.ugnay.post;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -18,6 +17,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.ugnay.ugnay.core.User;
+import com.ugnay.ugnay.core.error.BusinessRuleException;
+import com.ugnay.ugnay.core.error.RequestValidationException;
+import com.ugnay.ugnay.core.error.ResourceNotFoundException;
 import com.ugnay.ugnay.media.MediaAsset;
 import com.ugnay.ugnay.media.MediaAssetRepository;
 import com.ugnay.ugnay.media.MediaFolder;
@@ -73,10 +75,10 @@ public class PostSchedulerService {
         Post post = postRepository.findDetailedById(postId)
             .filter(existing -> canManage(user, existing))
             .filter(this::isOnConnectedPage)
-            .orElseThrow(() -> new NoSuchElementException("Post not found"));
+            .orElseThrow(() -> new ResourceNotFoundException("Post not found"));
 
         if (isEditLockedForOwner(user, post)) {
-            throw new IllegalStateException(
+            throw new BusinessRuleException(
                 "This post is already scheduled — request an edit appeal for officer/admin approval before changing it.");
         }
 
@@ -85,7 +87,7 @@ public class PostSchedulerService {
         if (moderatorEdit) {
             UUID postOrgId = post.getOrganization().getId();
             if (req.orgId() != null && !req.orgId().equals(postOrgId)) {
-                throw new IllegalStateException("This post belongs to a different organization.");
+                throw new BusinessRuleException("This post belongs to a different organization.");
             }
         }
         boolean wasPendingReview = post.getStatus() == Post.PostStatus.PENDING_REVIEW;
@@ -119,7 +121,7 @@ public class PostSchedulerService {
                 boolean isModerator = post.getOrganization() != null
                     && organizationPermissionService.isOfficerOrAdmin(user.getId(), post.getOrganization().getId());
                 if (!isModerator && isOrgScopedAndScheduled(post)) {
-                    throw new IllegalStateException(
+                    throw new BusinessRuleException(
                         "This post is already scheduled — request a cancel appeal for officer/admin approval before deleting it.");
                 }
                 cancelScheduledTask(post.getId());
@@ -136,13 +138,13 @@ public class PostSchedulerService {
         Post post = postRepository.findDetailedById(postId)
             .filter(existing -> existing.getUser().getId().equals(user.getId()))
             .filter(this::isOnConnectedPage)
-            .orElseThrow(() -> new NoSuchElementException("Post not found"));
+            .orElseThrow(() -> new ResourceNotFoundException("Post not found"));
 
         if (!isOrgScopedAndScheduled(post)) {
-            throw new IllegalStateException("Only a scheduled post can be appealed.");
+            throw new BusinessRuleException("Only a scheduled post can be appealed.");
         }
         if (post.getAppealType() != null) {
-            throw new IllegalStateException("An appeal is already pending for this post.");
+            throw new BusinessRuleException("An appeal is already pending for this post.");
         }
 
         post.setAppealType(type);
@@ -158,15 +160,15 @@ public class PostSchedulerService {
     public void resolveAppeal(User approver, UUID postId, boolean approve) {
         Post post = postRepository.findDetailedById(postId)
             .filter(this::isOnConnectedPage)
-            .orElseThrow(() -> new NoSuchElementException("Post not found"));
+            .orElseThrow(() -> new ResourceNotFoundException("Post not found"));
         if (post.getOrganization() == null) {
-            throw new IllegalStateException("This post is not scoped to an organization");
+            throw new BusinessRuleException("This post is not scoped to an organization");
         }
         organizationPermissionService.requireOfficerOrAdmin(approver.getId(), post.getOrganization().getId());
 
         Post.PostAppealType type = post.getAppealType();
         if (type == null) {
-            throw new IllegalStateException("This post has no pending appeal");
+            throw new BusinessRuleException("This post has no pending appeal");
         }
 
         if (approve && type == Post.PostAppealType.CANCEL) {
@@ -204,7 +206,7 @@ public class PostSchedulerService {
     public PostController.PostDto approvePost(User approver, UUID postId) {
         Post post = postRepository.findDetailedById(postId)
             .filter(this::isOnConnectedPage)
-            .orElseThrow(() -> new NoSuchElementException("Post not found"));
+            .orElseThrow(() -> new ResourceNotFoundException("Post not found"));
         requireModeratable(approver, post);
 
         post.setStatus(post.getScheduledAt() != null ? Post.PostStatus.SCHEDULED : Post.PostStatus.DRAFT);
@@ -217,7 +219,7 @@ public class PostSchedulerService {
     public PostController.PostDto rejectPost(User approver, UUID postId) {
         Post post = postRepository.findDetailedById(postId)
             .filter(this::isOnConnectedPage)
-            .orElseThrow(() -> new NoSuchElementException("Post not found"));
+            .orElseThrow(() -> new ResourceNotFoundException("Post not found"));
         requireModeratable(approver, post);
 
         post.setStatus(Post.PostStatus.REJECTED);
@@ -227,11 +229,11 @@ public class PostSchedulerService {
 
     private void requireModeratable(User approver, Post post) {
         if (post.getOrganization() == null) {
-            throw new IllegalStateException("This post is not scoped to an organization");
+            throw new BusinessRuleException("This post is not scoped to an organization");
         }
         organizationPermissionService.requireOfficerOrAdmin(approver.getId(), post.getOrganization().getId());
         if (post.getStatus() != Post.PostStatus.PENDING_REVIEW) {
-            throw new IllegalStateException("Only pending posts can be approved or rejected");
+            throw new BusinessRuleException("Only pending posts can be approved or rejected");
         }
     }
 
@@ -257,10 +259,10 @@ public class PostSchedulerService {
         Post post = postRepository.findDetailedById(postId)
             .filter(existing -> canPublishNow(user, existing))
             .filter(this::isOnConnectedPage)
-            .orElseThrow(() -> new NoSuchElementException("Post not found"));
+            .orElseThrow(() -> new ResourceNotFoundException("Post not found"));
         Post.PostStatus status = post.getStatus();
         if (status != Post.PostStatus.DRAFT && status != Post.PostStatus.SCHEDULED && status != Post.PostStatus.FAILED) {
-            throw new IllegalStateException("Only draft, scheduled or failed posts can be published now.");
+            throw new BusinessRuleException("Only draft, scheduled or failed posts can be published now.");
         }
         cancelScheduledTask(post.getId());
         facebookPublishingJob.publishImmediately(post.getId());
@@ -300,7 +302,7 @@ public class PostSchedulerService {
             // Only the present or the future can be scheduled (one minute of slack for clock skew
             // and the time it takes to submit the form).
             if (scheduledAt.isBefore(Instant.now().minusSeconds(60))) {
-                throw new IllegalStateException(
+                throw new BusinessRuleException(
                     "You can't schedule a post in the past. Pick a date and time from now onward.");
             }
             requireFacebookConnection(user, organization);
@@ -378,7 +380,7 @@ public class PostSchedulerService {
         }
         organizationPermissionService.requireApprovedMember(user.getId(), orgId);
         return organizationRepository.findById(orgId)
-            .orElseThrow(() -> new NoSuchElementException("Organization not found"));
+            .orElseThrow(() -> new ResourceNotFoundException("Organization not found"));
     }
 
     private void requireFacebookConnection(User user, Organization organization) {
@@ -399,7 +401,12 @@ public class PostSchedulerService {
         if (scheduledAt == null || scheduledAt.isBlank()) {
             return null;
         }
-        return Instant.parse(scheduledAt);
+        try {
+            return Instant.parse(scheduledAt);
+        } catch (java.time.format.DateTimeParseException ex) {
+            // Was an unhandled 500; malformed input is the client's problem.
+            throw new RequestValidationException("Enter a valid date and time for the post.");
+        }
     }
 
     private void schedulePost(Post post) {

@@ -4,19 +4,31 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.http.HttpStatus;
+import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import java.io.IOException;
+import com.ugnay.ugnay.core.error.ErrorCode;
+import com.ugnay.ugnay.core.error.ErrorResponseWriter;
 
+import java.io.IOException;
+import java.util.Map;
+
+@Slf4j
 @Component
 public class LoginRateLimitFilter extends OncePerRequestFilter {
 
-    private final LoginRateLimiterService rateLimiterService;
+    /** The IP bucket refills within a minute. */
+    private static final String RETRY_AFTER_SECONDS = "60";
 
-    public LoginRateLimitFilter(LoginRateLimiterService rateLimiterService) {
+    private final LoginRateLimiterService rateLimiterService;
+    private final ErrorResponseWriter errorResponseWriter;
+
+    public LoginRateLimitFilter(LoginRateLimiterService rateLimiterService, ErrorResponseWriter errorResponseWriter) {
         this.rateLimiterService = rateLimiterService;
+        this.errorResponseWriter = errorResponseWriter;
     }
 
     @Override
@@ -29,14 +41,10 @@ public class LoginRateLimitFilter extends OncePerRequestFilter {
             String clientIp = extractClientIp(request);
 
             if (!rateLimiterService.tryConsumeIp(clientIp)) {
-                response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
-                response.setContentType("application/json");
-                response.getWriter().write("""
-                    {
-                      "error": "Too Many Requests",
-                      "message": "Too many login attempts from this IP. Please wait 1 minute before trying again."
-                    }
-                    """);
+                log.warn("HTTP 429 RATE_LIMIT_EXCEEDED POST /api/auth/login: IP login rate limit reached");
+                errorResponseWriter.write(request, response, ErrorCode.RATE_LIMIT_EXCEEDED,
+                    "Too many login attempts from this IP. Please wait 1 minute before trying again.",
+                    Map.of(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS));
                 return;
             }
         }

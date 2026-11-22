@@ -19,6 +19,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.ugnay.ugnay.core.User;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
+
 import lombok.RequiredArgsConstructor;
 
 @RestController
@@ -93,7 +97,7 @@ public class PostController {
     @PostMapping("/{postId}/appeal")
     public ResponseEntity<PostDto> requestAppeal(@AuthenticationPrincipal User user,
                                                  @PathVariable UUID postId,
-                                                 @RequestBody AppealRequest req) {
+                                                 @Valid @RequestBody AppealRequest req) {
         return ResponseEntity.ok(postService.requestAppeal(user, postId, req.type()));
     }
 
@@ -119,7 +123,11 @@ public class PostController {
         UUID orgId
     ) {}
 
-    public record AppealRequest(String type) {} // "EDIT" | "CANCEL"
+    public record AppealRequest(
+        @NotNull(message = "Choose an appeal type: EDIT or CANCEL.")
+        @Pattern(regexp = "EDIT|CANCEL", message = "Choose an appeal type: EDIT or CANCEL.")
+        String type
+    ) {}
 
     public record PostDto(
         UUID id, String caption, String[] hashtags, String tone,

@@ -9,6 +9,7 @@ import TimeChart from '../components/TimeChart.tsx';
 import { Icon } from '../components/icons.tsx';
 import { SyncBadge, SyncingPanel } from '../components/SyncIndicator.tsx';
 import RecommendationCard from '../components/RecommendationCard.tsx';
+import { SectionErrorBoundary } from '../../../components/errors/SectionErrorBoundary';
 import type { IconName } from '../components/icons.tsx';
 import { dayToMs, formatCount, formatDate, formatDay, formatDuration, formatLongDay } from '../format.ts';
 import '../analytics.css';
@@ -182,14 +183,16 @@ function OverviewCard({ data }: Readonly<{ data: Dashboard }>) {
         </div>
 
         <div className="an-overview-grid">
-          <TimeChart
-            points={chartPoints}
-            snapTicks
-            formatX={formatDay}
-            formatTooltipX={formatLongDay}
-            valueLabel={active.label}
-            ariaLabel={`Daily ${active.label} from ${o.periodStart} to ${o.periodEnd}`}
-          />
+          <SectionErrorBoundary name="analytics-chart" title="The chart couldn't be displayed." resetKeys={[chartPoints]}>
+            <TimeChart
+              points={chartPoints}
+              snapTicks
+              formatX={formatDay}
+              formatTooltipX={formatLongDay}
+              valueLabel={active.label}
+              ariaLabel={`Daily ${active.label} from ${o.periodStart} to ${o.periodEnd}`}
+            />
+          </SectionErrorBoundary>
           <aside className="an-side">
             <div>
               <h3>Views breakdown</h3>
@@ -331,14 +334,20 @@ export default function Analytics() {
             ))}
           </div>
 
-          <RecommendationCard
-            recommendation={recommendation}
-            data={recommendation}
-            loading={recLoading}
-            error={recError}
-          />
+          <SectionErrorBoundary name="recommendation-card" title="The posting recommendation couldn't be displayed.">
+            <RecommendationCard
+              recommendation={recommendation}
+              data={recommendation}
+              loading={recLoading}
+              error={recError}
+            />
+          </SectionErrorBoundary>
 
-          {data.connected && <OverviewCard data={data} />}
+          {data.connected && (
+            <SectionErrorBoundary name="analytics-overview" title="The performance overview couldn't be displayed.">
+              <OverviewCard data={data} />
+            </SectionErrorBoundary>
+          )}
 
           {data.connected && (
             <section className="an-card" style={{ animationDelay: '0.15s' }}>

@@ -2,6 +2,7 @@ package com.ugnay.ugnay.auth;
 
 import com.ugnay.ugnay.core.User;
 import com.ugnay.ugnay.core.UserRepository;
+import com.ugnay.ugnay.core.error.ResourceNotFoundException;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -131,7 +132,8 @@ public class PasswordResetService {
      */
     @Transactional
     public void requestPasswordResetForSignedInUser(UUID userId) {
-        User user = userRepository.findById(userId).orElseThrow();
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new ResourceNotFoundException("Account not found."));
         // The account is the caller's own, so (unlike the public path) a missing mail setup can be reported.
         if (!issueAndSend(user)) {
             throw new EmailDeliveryException(

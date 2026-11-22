@@ -20,6 +20,12 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class JwtFilter extends OncePerRequestFilter {
 
+    /**
+     * Set when the request carried a session token that was refused (expired, invalid signature, or issued
+     * before a password change), so a 401 can say "session expired" rather than "please sign in".
+     */
+    public static final String TOKEN_REJECTED_ATTRIBUTE = JwtFilter.class.getName() + ".tokenRejected";
+
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
 
@@ -41,18 +47,25 @@ public class JwtFilter extends OncePerRequestFilter {
             }
         }
 
-        var claims = token == null ? java.util.Optional.<io.jsonwebtoken.Claims>empty() : jwtUtil.parseValid(token);
+        var claims = token == null || token.isBlank()
+            ? java.util.Optional.<io.jsonwebtoken.Claims>empty()
+            : jwtUtil.parseValid(token);
+        boolean authenticated = false;
         if (claims.isPresent()) {
             String email = claims.get().getSubject();
             java.util.Date issuedAt = claims.get().getIssuedAt();
-            userRepository.findByEmail(email)
-                .filter(user -> issuedAfterPasswordChange(user, issuedAt))
-                .ifPresent(user -> {
+            var user = userRepository.findByEmail(email)
+                .filter(candidate -> issuedAfterPasswordChange(candidate, issuedAt));
+            if (user.isPresent()) {
                 UsernamePasswordAuthenticationToken auth =
-                    new UsernamePasswordAuthenticationToken(user, null, List.of());
+                    new UsernamePasswordAuthenticationToken(user.get(), null, List.of());
                 auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(req));
                 SecurityContextHolder.getContext().setAuthentication(auth);
-            });
+                authenticated = true;
+            }
+        }
+        if (!authenticated && token != null && !token.isBlank()) {
+            req.setAttribute(TOKEN_REJECTED_ATTRIBUTE, Boolean.TRUE);
         }
         chain.doFilter(req, res);
     }

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import {useAuth } from './context/useAuth';
@@ -22,6 +22,9 @@ import PostInsights from './features/analytics/pages/PostInsights.tsx';
 import OrganizationsPage from './features/organizations/user/pages/OrganizationsPage.tsx';
 import OrganizationAdminPage from './features/organizations/admin/pages/OrganizationAdminPage.tsx';
 import ProfilePage from './features/profile/pages/ProfilePage.tsx';
+import { NetworkStatusBanner } from './components/errors/NetworkStatusBanner';
+import './components/ui/dialog.css';
+import './components/errors/errors.css';
 
 function SessionCheckScreen() {
   // The hosted backend sleeps when idle and can take a while to wake; say so instead of a bare "Loading…".
@@ -39,10 +42,32 @@ function SessionCheckScreen() {
   );
 }
 
+/** The session could not be checked (offline, server down or still waking up): retry instead of signing out. */
+function SessionUnavailableScreen({ message, onRetry }: Readonly<{ message: string; onRetry: () => void }>) {
+  const [retrying, setRetrying] = useState(false);
+  const retry = () => {
+    setRetrying(true);
+    void Promise.resolve(onRetry()).finally(() => setRetrying(false));
+  };
+  return (
+    <div className="ug-session-unavailable" role="alert">
+      <p>{message}</p>
+      <p className="text-sm opacity-70">You are still signed in. Check your connection, then try again.</p>
+      <button type="button" className="ug-btn ug-btn-primary" onClick={retry} disabled={retrying}>
+        {retrying ? 'Checking…' : 'Try again'}
+      </button>
+    </div>
+  );
+}
+
 function ProtectedRoute({ children }: Readonly<{ children: ReactNode }>) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, sessionError, refreshUserProfile } = useAuth();
+  const location = useLocation();
   if (isLoading) return <SessionCheckScreen />;
-  return user ? <>{children}</> : <Navigate to="/login" replace />;
+  if (user) return <>{children}</>;
+  if (sessionError) return <SessionUnavailableScreen message={sessionError} onRetry={refreshUserProfile} />;
+  // Remember where the user was so signing in brings them back there.
+  return <Navigate to="/login" replace state={{ from: `${location.pathname}${location.search}` }} />;
 }
 
 export default function App() {
@@ -76,6 +101,7 @@ export default function App() {
             <div className="app-splash__loader" aria-hidden="true"><span /></div>
           </div>
         )}
+        <NetworkStatusBanner />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegistrationForm />} />

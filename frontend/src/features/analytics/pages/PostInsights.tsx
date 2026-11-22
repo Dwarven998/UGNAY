@@ -5,6 +5,7 @@ import { useOrganization } from '../../../context/useOrganization';
 import { useFacebookConnection } from '../../posts/hooks/useFacebookConnection';
 import { usePolling } from '../usePolling.ts';
 import TimeChart from '../components/TimeChart.tsx';
+import { SectionErrorBoundary } from '../../../components/errors/SectionErrorBoundary';
 import { Icon } from '../components/icons.tsx';
 import { SyncBadge, SyncingPanel } from '../components/SyncIndicator.tsx';
 import { formatClock, formatCount, formatDateTime, timeAgo } from '../format.ts';
@@ -124,14 +125,16 @@ function PostBody({ post, pageName }: Readonly<{ post: PostDetail; pageName: str
             {post.viewsAvailable && (
               <>
                 {post.comparison && <p className={`an-compare ${post.comparison}`}><i />{COMPARISON_TEXT[post.comparison]}</p>}
-                <TimeChart
-                  points={chartPoints}
-                  step
-                  baseline={baseline}
-                  formatX={formatClock}
-                  valueLabel="views"
-                  ariaLabel={`Views of this post over time, currently ${post.views ?? 0}`}
-                />
+                <SectionErrorBoundary name="post-insights-chart" title="The views chart couldn't be displayed." resetKeys={[chartPoints]}>
+                  <TimeChart
+                    points={chartPoints}
+                    step
+                    baseline={baseline}
+                    formatX={formatClock}
+                    valueLabel="views"
+                    ariaLabel={`Views of this post over time, currently ${post.views ?? 0}`}
+                  />
+                </SectionErrorBoundary>
                 <p className="an-note">
                   {post.trackingSince
                     ? `History recorded since ${formatClock(new Date(post.trackingSince).getTime())}; Facebook reports only a running total, so earlier views appear as the starting value.`

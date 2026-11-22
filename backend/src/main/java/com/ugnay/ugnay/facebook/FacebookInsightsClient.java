@@ -20,6 +20,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ugnay.ugnay.core.PooledHttpConnector;
+import com.ugnay.ugnay.core.error.LogSanitizer;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -103,7 +104,7 @@ public class FacebookInsightsClient {
                     results.add(entry.path("code").asInt(0) == 200 ? objectMapper.readTree(entry.path("body").asText("{}")) : null);
                 }
             } catch (Exception ex) {
-                log.warn("Graph batch request failed: {}", ex.getMessage());
+                log.warn("Graph batch request failed: {}", LogSanitizer.describe(ex));
                 for (int i = 0; i < chunk.size(); i++) results.add(null);
             }
         }
@@ -120,11 +121,13 @@ public class FacebookInsightsClient {
             String body = webClient.get().uri(uri).retrieve().bodyToMono(String.class).block(TIMEOUT);
             return body == null || body.isBlank() ? objectMapper.createObjectNode() : objectMapper.readTree(body);
         } catch (WebClientResponseException ex) {
-            throw new GraphException(ex.getStatusCode().value(), graphMessage(ex.getResponseBodyAsString()), ex);
+            // The request URL carries the access token: keep only a scrubbed copy of the cause.
+            throw new GraphException(ex.getStatusCode().value(), graphMessage(ex.getResponseBodyAsString()),
+                LogSanitizer.scrub(ex));
         } catch (GraphException ex) {
             throw ex;
         } catch (Exception ex) {
-            throw new GraphException(502, "Facebook did not respond in time", ex);
+            throw new GraphException(502, "Facebook did not respond in time", LogSanitizer.scrub(ex));
         }
     }
 
